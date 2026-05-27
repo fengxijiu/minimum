@@ -1,0 +1,59 @@
+{
+  "name": "minimum",
+  "version": "1.0.0",
+  "description": "MiMo Coding Experience Optimization - 针对MiMo模型的编码体验优化",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "minimum": "bin/minimum-ink.js",
+    "minimum-ink": "bin/minimum-ink.js",
+    "minimum-legacy": "bin/minimum-tui.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "node node_modules/typescript/lib/tsc.js",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "biome check src tests",
+    "lint:fix": "biome check --write src tests",
+    "format": "biome format --write src tests",
+    "typecheck": "node node_modules/typescript/lib/tsc.js --noEmit"
+  },
+  "keywords": [
+    "mimo",
+    "coding",
+    "ai",
+    "agent",
+    "optimization",
+    "code-validation",
+    "tool-repair"
+  ],
+  "author": "MiMo Team",
+  "license": "MIT",
+  "dependencies": {
+    "@types/react": "^19.2.15",
+    "ink": "^7.0.4",
+    "ink-text-input": "^6.0.0",
+    "react": "^19.2.6"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.0",
+    "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^4.1.7",
+    "tsup": "^8.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.0.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
