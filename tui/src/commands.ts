@@ -1,4 +1,4 @@
-import type { AppState, Message, PlanStep } from './types.js';
+import type { AppState, Message, PlanStep, Permission } from './types.js';
 
 export type CommandCategory = 'session' | 'context' | 'view' | 'system';
 
@@ -29,6 +29,7 @@ export const COMMANDS: TuiCommand[] = [
   { name: 'mode',   desc: 'Switch agent / chat mode',       category: 'view', usage: '/mode <agent|chat>' },
   { name: 'clear',  desc: 'Clear the chat stream',          category: 'view', aliases: ['cls'] },
   // system
+  { name: 'run',    desc: 'Run a shell command (asks first)', category: 'system', usage: '/run <cmd>' },
   { name: 'status', desc: 'Show session status',            category: 'system' },
   { name: 'tools',  desc: 'List available tools',           category: 'system' },
   { name: 'model',  desc: 'Show the active model',          category: 'system' },
@@ -61,6 +62,7 @@ export type CommandOutcome =
   | { kind: 'patch'; patch: Partial<AppState>; note?: string; tone?: 'info' | 'warn' | 'ok' }
   | { kind: 'help' }
   | { kind: 'quit' }
+  | { kind: 'permission'; perm: Permission }
   | { kind: 'note'; note: string; tone?: 'info' | 'warn' | 'ok' };
 
 let msgSeq = 0;
@@ -164,8 +166,21 @@ export function runCommand(raw: string, state: AppState): CommandOutcome {
         note: `${state.path} · ${state.branch} · ${state.mode} · ${state.edits.length} staged · ctx ${state.ctx.used}k/${state.ctx.max}k`,
       };
 
+    case 'run': {
+      const cmd = args.join(' ') || 'pytest -q';
+      return {
+        kind: 'permission',
+        perm: {
+          tool: 'run shell',
+          cmd: `$ ${cmd}`,
+          cwd: state.path,
+          note: "this command can read files and start processes. it can't reach the network.",
+        },
+      };
+    }
+
     case 'tools':
-      return { kind: 'note', note: 'Tools: read · edit · run · find · git · grep' };
+      return { kind: 'note', note: 'Tools: read · edit · run · find · diff · undo' };
 
     case 'model':
       return { kind: 'note', note: 'Model: mimo-v2.5-pro · 1.0M ctx · 131k out' };

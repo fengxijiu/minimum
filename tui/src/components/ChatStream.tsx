@@ -2,7 +2,7 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import { theme } from '../theme.js';
 import type { Message } from '../types.js';
-import { ToolLine, DiffBlock, ChipsRow } from './atoms.js';
+import { ToolLine, DiffBlock, ChipsRow, PermissionCard, ErrorBlock } from './atoms.js';
 
 export function ChatStream({ stepLabel, messages }: {
   stepLabel?: string;
@@ -55,6 +55,10 @@ export function ChatStream({ stepLabel, messages }: {
             return <DiffBlock key={m.id} diff={m.diff} />;
           case 'chips':
             return <ChipsRow key={m.id} chips={m.chips} />;
+          case 'permission':
+            return <PermissionCard key={m.id} perm={m.perm} />;
+          case 'error':
+            return <ErrorBlock key={m.id} error={m.error} />;
         }
       })}
     </Box>

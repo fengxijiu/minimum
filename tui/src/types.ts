@@ -18,13 +18,29 @@ export type Diff = {
 
 export type Chip = { key: string; label: string; primary?: boolean };
 
+export type Permission = {
+  tool: string;        // e.g. 'run shell'
+  cmd: string;         // e.g. '$ pytest -q'
+  cwd: string;
+  note: string;
+};
+
+export type ErrorReport = {
+  title: string;       // e.g. 'STDERR · 1 FAILURE'
+  lines: string[];
+};
+
 export type Message =
   | { id: string; type: 'user'; text: string }
   | { id: string; type: 'assistant'; text: string }
   | { id: string; type: 'system'; text: string; tone?: 'info' | 'warn' | 'ok' }
   | { id: string; type: 'tool'; tool: ToolCall }
   | { id: string; type: 'diff'; diff: Diff }
-  | { id: string; type: 'chips'; chips: Chip[] };
+  | { id: string; type: 'chips'; chips: Chip[] }
+  | { id: string; type: 'permission'; perm: Permission }
+  | { id: string; type: 'error'; error: ErrorReport };
+
+export type SessionState = 'agent' | 'mimo' | 'paused' | 'error';
 
 export type PlanStep = {
   label: string;
