@@ -38,6 +38,17 @@ export function ChatStream({ stepLabel, messages }: {
                 <Text color={theme.ink}>{m.text}</Text>
               </Box>
             );
+          case 'system': {
+            const c = m.tone === 'warn' ? theme.warn
+                    : m.tone === 'ok' ? theme.plus
+                    : theme.muted;
+            return (
+              <Box key={m.id} marginTop={1} paddingLeft={3}>
+                <Text color={c}>· </Text>
+                <Text color={theme.inkSoft}>{m.text}</Text>
+              </Box>
+            );
+          }
           case 'tool':
             return <ToolLine key={m.id} tool={m.tool} />;
           case 'diff':

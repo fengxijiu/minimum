@@ -21,6 +21,7 @@ export type Chip = { key: string; label: string; primary?: boolean };
 export type Message =
   | { id: string; type: 'user'; text: string }
   | { id: string; type: 'assistant'; text: string }
+  | { id: string; type: 'system'; text: string; tone?: 'info' | 'warn' | 'ok' }
   | { id: string; type: 'tool'; tool: ToolCall }
   | { id: string; type: 'diff'; diff: Diff }
   | { id: string; type: 'chips'; chips: Chip[] };
