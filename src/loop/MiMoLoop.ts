@@ -7,6 +7,11 @@ import type { ICompletenessChecker } from '../types/completeness.js';
 import type { IContextManager, TaskState } from '../types/context.js';
 import type { IIterationManager } from '../types/iteration.js';
 import { StormBreaker } from '../repair/StormBreaker.js';
+import { CapacityController } from '../capacity/CapacityController.js';
+import type { CapacityConfig, CapacitySnapshot } from '../capacity/types.js';
+import { ReadTracker, isReadTool, isEditTool } from './ReadTracker.js';
+import { SnapshotManager } from './SnapshotManager.js';
+import { countMessagesTokens } from '../utils/token-counter.js';
 
 // ============ Types ============
 
@@ -20,6 +25,9 @@ export interface MiMoLoopConfig {
   iterationManager?: any;
   hookManager?: any;
   approvalManager?: any;
+  capacity?: Partial<CapacityConfig>;
+  storm?: { windowSize?: number; threshold?: number };
+  enableReadGuard?: boolean;
   maxTokens?: number;
   maxSteps?: number;
   budgetUsd?: number;
@@ -50,6 +58,7 @@ export type LoopEvent =
   | { type: 'context_optimized'; result: any }
   | { type: 'iteration'; attempt: number; maxAttempts: number; error?: string }
   | { type: 'usage'; usage: any }
+  | { type: 'capacity'; snapshot: CapacitySnapshot }
   | { type: 'error'; error: string; recoverable: boolean }
   | { type: 'done'; success: boolean; result?: string }
   | { type: 'steer_accepted'; content: string };
@@ -72,6 +81,9 @@ export class MiMoLoop {
   private messages: ChatMessage[] = [];
   private abortController: AbortController | null = null;
   private stormBreaker: StormBreaker;
+  private capacity: CapacityController;
+  private readTracker: ReadTracker;
+  private snapshotManager: SnapshotManager;
   private steerQueue: string[] = [];
 
   constructor(config: MiMoLoopConfig) {
@@ -85,10 +97,16 @@ export class MiMoLoop {
       errors: 0
     };
     this.stormBreaker = new StormBreaker(
-      { windowSize: 6, threshold: 3 },
+      {
+        windowSize: config.storm?.windowSize ?? 6,
+        threshold: config.storm?.threshold ?? 3,
+      },
       (call) => this.isMutatingTool(call),
       (call) => this.isStormExemptTool(call)
     );
+    this.capacity = new CapacityController(config.capacity);
+    this.readTracker = new ReadTracker();
+    this.snapshotManager = new SnapshotManager();
   }
 
   /**
@@ -99,6 +117,8 @@ export class MiMoLoop {
     this.state.running = true;
     this.state.startTime = Date.now();
     this.stormBreaker.reset();
+    this.readTracker.reset();
+    this.snapshotManager.reset();
 
     try {
       // 1. 添加用户消息
@@ -138,6 +158,18 @@ export class MiMoLoop {
           if (optimized) {
             yield { type: 'context_optimized', result: optimized };
           }
+        }
+
+        // 3.5 容量检查点 - 参考 CodeWhale 的 capacity checkpoint
+        if (this.capacity.isEnabled()) {
+          const snapshot = this.capacity.observe({
+            turnIndex: step,
+            promptTokens: countMessagesTokens(this.messages),
+            maxTokens: this.config.maxTokens || 131072,
+            toolCalls: this.state.toolCalls
+          });
+          yield { type: 'capacity', snapshot };
+          await this.applyCapacityAction(snapshot, step);
         }
 
         // 4. 调用模型
@@ -189,6 +221,29 @@ export class MiMoLoop {
               repaired: report.scavenged > 0 || report.truncationsFixed > 0
             };
 
+            // 先读后写守卫 - 防止 MiMo 盲改文件 (Code Defect)
+            if (this.config.enableReadGuard !== false && isEditTool(toolCall)) {
+              const editArgs = this.safeParseArgs(toolCall);
+              const blockReason = this.readTracker.guardEdit(
+                editArgs.path,
+                this.config.workingDirectory
+              );
+              if (blockReason) {
+                yield {
+                  type: 'tool_result',
+                  toolCall,
+                  result: { content: blockReason, isError: true },
+                  success: false
+                };
+                this.messages.push({
+                  role: 'tool',
+                  content: blockReason,
+                  tool_call_id: toolCall.id
+                });
+                continue;
+              }
+            }
+
             // 审批检查
             if (this.config.approvalManager) {
               const request = await this.config.approvalManager.requestApproval(
@@ -214,33 +269,76 @@ export class MiMoLoop {
               }
             }
 
+            // P1-2 预快照：edit/write 工具执行前保存原始文件内容
+            const editArgs = isEditTool(toolCall) ? this.safeParseArgs(toolCall) : null;
+            if (editArgs?.path) {
+              await this.snapshotManager.snapshot(
+                editArgs.path,
+                this.config.workingDirectory
+              );
+            }
+
             // 执行工具
             this.state.toolCalls++;
             const result = await this.executeTool(toolCall);
 
-            // 验证结果
+            // 记录已读文件 - 供先读后写守卫使用
+            if (isReadTool(toolCall) && !result.isError) {
+              const readArgs = this.safeParseArgs(toolCall);
+              this.readTracker.markRead(readArgs.path, this.config.workingDirectory);
+            }
+
+            // P1-1 + P1-2 验证结果，失败时回滚文件并丰富反馈
+            let finalResult = result;
             if (this.config.validator && !result.isError) {
+              const toolArgs = this.safeParseArgs(toolCall);
               const validation = await this.config.validator.validate({
                 toolName: toolCall.function.name,
-                toolArgs: JSON.parse(toolCall.function.arguments || '{}'),
-                toolResult: result
+                toolArgs,
+                toolResult: result,
+                filePath: toolArgs.path,
+                workingDirectory: this.config.workingDirectory
               });
-              
+
               if (!validation.passed) {
                 yield { type: 'validation', result: validation };
+
+                // P1-2 回滚文件到编辑前状态，防止脏状态叠加
+                if (editArgs?.path) {
+                  const restored = await this.snapshotManager.restore(
+                    editArgs.path,
+                    this.config.workingDirectory
+                  );
+                  const diagLines = (validation.checks as any[])
+                    .filter((c: any) => !c.passed)
+                    .map((c: any) => `  ${c.location ? `${c.location.file}(${c.location.line},${c.location.column}): ` : ''}${c.message}`)
+                    .join('\n');
+                  finalResult = {
+                    content: [
+                      result.content,
+                      '',
+                      `Validation failed with ${(validation.checks as any[]).filter((c: any) => !c.passed).length} issue(s):`,
+                      diagLines,
+                      restored
+                        ? '\nFile has been restored to its pre-edit state. Please provide a corrected version.'
+                        : ''
+                    ].join('\n').trim(),
+                    isError: true
+                  };
+                }
               }
             }
 
             yield {
               type: 'tool_result',
               toolCall,
-              result,
-              success: !result.isError
+              result: finalResult,
+              success: !finalResult.isError
             };
 
             this.messages.push({
               role: 'tool',
-              content: result.content,
+              content: finalResult.content,
               tool_call_id: toolCall.id
             });
           }
@@ -353,6 +451,39 @@ export class MiMoLoop {
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
       usage
     };
+  }
+
+  /**
+   * 响应容量检查点决策 - 参考 CodeWhale 的 GuardrailAction
+   *
+   * targeted_refresh: 尽力折叠上下文回收 token
+   * verify_and_replan: 注入复核指令，逼模型收尾而非半途断（缓解部分实现）
+   */
+  private async applyCapacityAction(snapshot: CapacitySnapshot, step: number): Promise<void> {
+    if (snapshot.action === 'targeted_refresh') {
+      if (this.config.contextManager) {
+        await this.optimizeContext();
+      }
+      this.capacity.recordRefresh(step);
+    } else if (snapshot.action === 'verify_and_replan') {
+      this.messages.push({
+        role: 'user',
+        content:
+          '[Capacity guard] Context is nearly full. Before continuing, verify what is already done, finish any partially-implemented work, and avoid starting new subtasks.'
+      });
+      this.capacity.recordRefresh(step);
+    }
+  }
+
+  /**
+   * 安全解析工具调用参数
+   */
+  private safeParseArgs(toolCall: ToolCall): Record<string, any> {
+    try {
+      return JSON.parse(toolCall.function.arguments || '{}');
+    } catch {
+      return {};
+    }
   }
 
   /**

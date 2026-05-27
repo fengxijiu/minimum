@@ -1,6 +1,7 @@
 // Core types and interfaces
 export * from "./types";
 export * from "./utils";
+export * from "./config";
 
 // Core modules
 export * from "./validators";
