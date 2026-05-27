@@ -14,6 +14,7 @@ import { initialState }   from './mock.js';
 import {
   filterCommands, runCommand, sysMessage, type CommandOutcome,
 } from './commands.js';
+import { mockRunner, uiEventToMessages, type Runner } from './engine.js';
 import type { AppState, Message, FileEntry, SessionState, Chip } from './types.js';
 
 type Overlay = 'none' | 'cmd' | 'file';
@@ -27,7 +28,7 @@ function activeAtToken(input: string): string | null {
   return m ? (m[1] ?? '') : null;
 }
 
-export function App() {
+export function App({ runner = mockRunner }: { runner?: Runner } = {}) {
   const { exit } = useApp();
   const [state, setState] = useState<AppState>(initialState);
   const [input, setInput] = useState('');
@@ -163,11 +164,16 @@ export function App() {
     if (!trimmed) return;
     if (pending) setPending(null); // a typed message redirects the agent
 
-    push(
-      { id: mid('u'), type: 'user', text: trimmed },
-      { id: mid('a'), type: 'assistant', text: '(mock) wire your MiMo stream in src/app.tsx → handleSubmit' },
-    );
+    push({ id: mid('u'), type: 'user', text: trimmed });
     changeInput('');
+
+    // Stream the engine's normalized events into the chat.
+    void (async () => {
+      for await (const ev of runner.send(trimmed)) {
+        const msgs = uiEventToMessages(ev);
+        if (msgs.length) push(...msgs);
+      }
+    })();
   };
 
   useInput((_in, key) => {

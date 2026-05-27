@@ -28,6 +28,7 @@ export interface MiMoLoopConfig {
   capacity?: Partial<CapacityConfig>;
   storm?: { windowSize?: number; threshold?: number };
   enableReadGuard?: boolean;
+  planMode?: boolean;
   maxTokens?: number;
   maxSteps?: number;
   budgetUsd?: number;
@@ -59,6 +60,8 @@ export type LoopEvent =
   | { type: 'iteration'; attempt: number; maxAttempts: number; error?: string }
   | { type: 'usage'; usage: any }
   | { type: 'capacity'; snapshot: CapacitySnapshot }
+  | { type: 'hook'; event: string; results: any[] }
+  | { type: 'plan_blocked'; toolCall: ToolCall }
   | { type: 'error'; error: string; recoverable: boolean }
   | { type: 'done'; success: boolean; result?: string }
   | { type: 'steer_accepted'; content: string };
@@ -123,6 +126,12 @@ export class MiMoLoop {
     try {
       // 1. 添加用户消息
       this.messages.push({ role: 'user', content: userInput });
+
+      // P0-2 UserPromptSubmit hook
+      const submitHook = await this.runHooks('UserPromptSubmit', { userPrompt: userInput });
+      if (submitHook.results.length) {
+        yield { type: 'hook', event: 'UserPromptSubmit', results: submitHook.results };
+      }
 
       // 2. 主循环
       const maxSteps = this.config.maxSteps || 50;
@@ -244,6 +253,40 @@ export class MiMoLoop {
               }
             }
 
+            // P0-3 Plan mode：只读模式下拦截一切变异工具
+            if (this.config.planMode && this.isMutatingTool(toolCall)) {
+              const reason = `Plan mode is read-only — ${toolCall.function.name} is blocked. Present the plan; switch off plan mode to execute.`;
+              yield { type: 'plan_blocked', toolCall };
+              yield {
+                type: 'tool_result',
+                toolCall,
+                result: { content: reason, isError: true },
+                success: false
+              };
+              this.messages.push({ role: 'tool', content: reason, tool_call_id: toolCall.id });
+              continue;
+            }
+
+            // P0-2 PreToolUse hook（非零退出可阻断工具）
+            const preHook = await this.runHooks('PreToolUse', {
+              toolName: toolCall.function.name,
+              toolArgs: this.safeParseArgs(toolCall)
+            });
+            if (preHook.results.length) {
+              yield { type: 'hook', event: 'PreToolUse', results: preHook.results };
+            }
+            if (preHook.block) {
+              const reason = `Blocked by PreToolUse hook: ${preHook.reason || 'non-zero exit'}`;
+              yield {
+                type: 'tool_result',
+                toolCall,
+                result: { content: reason, isError: true },
+                success: false
+              };
+              this.messages.push({ role: 'tool', content: reason, tool_call_id: toolCall.id });
+              continue;
+            }
+
             // 审批检查
             if (this.config.approvalManager) {
               const request = await this.config.approvalManager.requestApproval(
@@ -281,6 +324,16 @@ export class MiMoLoop {
             // 执行工具
             this.state.toolCalls++;
             const result = await this.executeTool(toolCall);
+
+            // P0-2 PostToolUse hook
+            const postHook = await this.runHooks('PostToolUse', {
+              toolName: toolCall.function.name,
+              toolArgs: this.safeParseArgs(toolCall),
+              toolResult: result
+            });
+            if (postHook.results.length) {
+              yield { type: 'hook', event: 'PostToolUse', results: postHook.results };
+            }
 
             // 记录已读文件 - 供先读后写守卫使用
             if (isReadTool(toolCall) && !result.isError) {
@@ -381,6 +434,12 @@ export class MiMoLoop {
         break;
       }
 
+      // P0-2 Stop hook
+      const stopHook = await this.runHooks('Stop', {});
+      if (stopHook.results.length) {
+        yield { type: 'hook', event: 'Stop', results: stopHook.results };
+      }
+
       // 使用量统计
       yield {
         type: 'usage',
@@ -472,6 +531,31 @@ export class MiMoLoop {
           '[Capacity guard] Context is nearly full. Before continuing, verify what is already done, finish any partially-implemented work, and avoid starting new subtasks.'
       });
       this.capacity.recordRefresh(step);
+    }
+  }
+
+  /**
+   * 运行生命周期钩子 - 参考 Claude Code 的 hook 语义
+   * 仅 PreToolUse 在非零退出时阻断工具执行。
+   */
+  private async runHooks(
+    event: 'UserPromptSubmit' | 'PreToolUse' | 'PostToolUse' | 'Stop',
+    ctx: { toolName?: string; toolArgs?: Record<string, any>; toolResult?: any; userPrompt?: string }
+  ): Promise<{ block: boolean; reason?: string; results: any[] }> {
+    if (!this.config.hookManager) return { block: false, results: [] };
+    try {
+      const results = await this.config.hookManager.execute(event, {
+        workingDirectory: this.config.workingDirectory,
+        ...ctx
+      });
+      const failed = (results as any[]).find((r) => r.success === false);
+      return {
+        block: event === 'PreToolUse' && !!failed,
+        reason: failed?.stderr,
+        results: results || []
+      };
+    } catch {
+      return { block: false, results: [] };
     }
   }
 

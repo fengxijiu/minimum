@@ -64,6 +64,8 @@ export interface MiMoConfig {
 	budgetUsd?: number;
 	/** 是否启用先读后写守卫（默认 true） */
 	enableReadGuard?: boolean;
+	/** plan mode：只读规划，禁止变异工具（默认 false） */
+	planMode?: boolean;
 	/** 上下文管理阈值 */
 	context?: ContextConfig;
 	/** 容量检查点配置 */
@@ -82,6 +84,7 @@ export const DEFAULT_MIMO_CONFIG: Required<MiMoConfig> = {
 	maxSteps: 50,
 	budgetUsd: 0,
 	enableReadGuard: true,
+	planMode: false,
 	context: {
 		foldThreshold: 0.70,
 		aggressiveThreshold: 0.75,
@@ -117,6 +120,7 @@ export function mergeConfig(user: MiMoConfig = {}): Required<MiMoConfig> {
 		// 0 means no limit; undefined from user also means no limit
 		budgetUsd: user.budgetUsd ?? DEFAULT_MIMO_CONFIG.budgetUsd,
 		enableReadGuard: user.enableReadGuard ?? DEFAULT_MIMO_CONFIG.enableReadGuard,
+		planMode: user.planMode ?? DEFAULT_MIMO_CONFIG.planMode,
 		context: { ...DEFAULT_MIMO_CONFIG.context, ...user.context },
 		capacity: { ...DEFAULT_MIMO_CONFIG.capacity, ...user.capacity },
 		storm: { ...DEFAULT_MIMO_CONFIG.storm, ...user.storm },

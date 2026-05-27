@@ -27,6 +27,7 @@ export function createMiMoStack(
 	tools: any,
 	workingDirectory: string,
 	userConfig: MiMoConfig = {},
+	deps: { hookManager?: any; approvalManager?: any } = {},
 ): MiMoStack {
 	const cfg = mergeConfig(userConfig);
 
@@ -61,6 +62,9 @@ export function createMiMoStack(
 		capacity: cfg.capacity,
 		storm: cfg.storm,
 		enableReadGuard: cfg.enableReadGuard,
+		planMode: cfg.planMode,
+		hookManager: deps.hookManager,
+		approvalManager: deps.approvalManager,
 		maxTokens: cfg.maxTokens,
 		maxSteps: cfg.maxSteps,
 		budgetUsd: cfg.budgetUsd || undefined,
