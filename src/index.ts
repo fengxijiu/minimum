@@ -2,6 +2,7 @@
 export * from "./types";
 export * from "./utils";
 export * from "./config";
+export * from "./bridge";
 
 // Core modules
 export * from "./validators";

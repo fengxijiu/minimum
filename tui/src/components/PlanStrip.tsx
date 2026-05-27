@@ -8,11 +8,21 @@ export function PlanStrip({ title, steps }: {
   steps: PlanStep[];
 }) {
   const done = steps.filter(s => s.status === 'done').length;
+
+  if (steps.length === 0) {
+    return (
+      <Box paddingX={1}>
+        <Text color={theme.muted}>PLAN  </Text>
+        <Text color={theme.inkSoft}>{title}</Text>
+      </Box>
+    );
+  }
+
   return (
     <Box flexDirection="column" paddingX={1}>
       <Box justifyContent="space-between">
         <Text>
-          <Text color={theme.muted}>PLAN  </Text>
+          <Text color={theme.muted}>PLAN · </Text>
           <Text color={theme.ink} bold>{title}</Text>
         </Text>
         <Text color={theme.muted}>{done} of {steps.length} done · edit plan</Text>
@@ -21,17 +31,22 @@ export function PlanStrip({ title, steps }: {
         {steps.map((s, i) => {
           const isNow  = s.status === 'now';
           const isDone = s.status === 'done';
+          const isNext = s.status === 'next';
           const sigil  = isDone ? '✓' : isNow ? '●' : '○';
-          const color  = isNow ? theme.accent : isDone ? theme.inkSoft : theme.muted;
+          const num    = String(i + 1).padStart(2, '0');
+          const kickerColor = isNow ? theme.accent : theme.muted;
+          const labelColor  = isNow ? theme.accent : isNext ? theme.muted : theme.inkSoft;
           return (
             <Box
               key={i}
+              flexDirection="column"
               marginRight={1}
               borderStyle="round"
               borderColor={isNow ? theme.accent : theme.line}
               paddingX={1}
             >
-              <Text color={color} bold={isNow}>{sigil} {s.label}</Text>
+              <Text color={kickerColor}>{num} · {sigil}</Text>
+              <Text color={labelColor} bold={isNow}>{s.label}</Text>
             </Box>
           );
         })}

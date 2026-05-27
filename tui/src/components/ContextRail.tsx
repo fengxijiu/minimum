@@ -8,6 +8,8 @@ const TOOLS = [
   { k: '✎', n: 'edit' },
   { k: '▶', n: 'run'  },
   { k: '⌕', n: 'find' },
+  { k: '⎘', n: 'diff' },
+  { k: '⤺', n: 'undo' },
 ];
 
 function truncate(s: string, n: number) {
