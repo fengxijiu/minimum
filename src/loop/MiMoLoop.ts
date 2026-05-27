@@ -10,6 +10,7 @@ import { StormBreaker } from '../repair/StormBreaker.js';
 import { CapacityController } from '../capacity/CapacityController.js';
 import type { CapacityConfig, CapacitySnapshot } from '../capacity/types.js';
 import { ReadTracker, isReadTool, isEditTool } from './ReadTracker.js';
+import { SnapshotManager } from './SnapshotManager.js';
 import { countMessagesTokens } from '../utils/token-counter.js';
 
 // ============ Types ============
@@ -81,6 +82,7 @@ export class MiMoLoop {
   private stormBreaker: StormBreaker;
   private capacity: CapacityController;
   private readTracker: ReadTracker;
+  private snapshotManager: SnapshotManager;
   private steerQueue: string[] = [];
 
   constructor(config: MiMoLoopConfig) {
@@ -100,6 +102,7 @@ export class MiMoLoop {
     );
     this.capacity = new CapacityController(config.capacity);
     this.readTracker = new ReadTracker();
+    this.snapshotManager = new SnapshotManager();
   }
 
   /**
@@ -111,6 +114,7 @@ export class MiMoLoop {
     this.state.startTime = Date.now();
     this.stormBreaker.reset();
     this.readTracker.reset();
+    this.snapshotManager.reset();
 
     try {
       // 1. 添加用户消息
@@ -261,6 +265,15 @@ export class MiMoLoop {
               }
             }
 
+            // P1-2 预快照：edit/write 工具执行前保存原始文件内容
+            const editArgs = isEditTool(toolCall) ? this.safeParseArgs(toolCall) : null;
+            if (editArgs?.path) {
+              await this.snapshotManager.snapshot(
+                editArgs.path,
+                this.config.workingDirectory
+              );
+            }
+
             // 执行工具
             this.state.toolCalls++;
             const result = await this.executeTool(toolCall);
@@ -271,29 +284,57 @@ export class MiMoLoop {
               this.readTracker.markRead(readArgs.path, this.config.workingDirectory);
             }
 
-            // 验证结果
+            // P1-1 + P1-2 验证结果，失败时回滚文件并丰富反馈
+            let finalResult = result;
             if (this.config.validator && !result.isError) {
+              const toolArgs = this.safeParseArgs(toolCall);
               const validation = await this.config.validator.validate({
                 toolName: toolCall.function.name,
-                toolArgs: JSON.parse(toolCall.function.arguments || '{}'),
-                toolResult: result
+                toolArgs,
+                toolResult: result,
+                filePath: toolArgs.path,
+                workingDirectory: this.config.workingDirectory
               });
-              
+
               if (!validation.passed) {
                 yield { type: 'validation', result: validation };
+
+                // P1-2 回滚文件到编辑前状态，防止脏状态叠加
+                if (editArgs?.path) {
+                  const restored = await this.snapshotManager.restore(
+                    editArgs.path,
+                    this.config.workingDirectory
+                  );
+                  const diagLines = (validation.checks as any[])
+                    .filter((c: any) => !c.passed)
+                    .map((c: any) => `  ${c.location ? `${c.location.file}(${c.location.line},${c.location.column}): ` : ''}${c.message}`)
+                    .join('\n');
+                  finalResult = {
+                    content: [
+                      result.content,
+                      '',
+                      `Validation failed with ${(validation.checks as any[]).filter((c: any) => !c.passed).length} issue(s):`,
+                      diagLines,
+                      restored
+                        ? '\nFile has been restored to its pre-edit state. Please provide a corrected version.'
+                        : ''
+                    ].join('\n').trim(),
+                    isError: true
+                  };
+                }
               }
             }
 
             yield {
               type: 'tool_result',
               toolCall,
-              result,
-              success: !result.isError
+              result: finalResult,
+              success: !finalResult.isError
             };
 
             this.messages.push({
               role: 'tool',
-              content: result.content,
+              content: finalResult.content,
               tool_call_id: toolCall.id
             });
           }

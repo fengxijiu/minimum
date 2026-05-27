@@ -6,6 +6,7 @@ export interface ValidationRequest {
 	toolResult: ToolResult;
 	filePath?: string;
 	language?: string;
+	workingDirectory?: string;
 }
 
 export interface ValidationCheck {

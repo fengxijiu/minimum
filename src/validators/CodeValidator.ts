@@ -8,6 +8,7 @@ import type {
 import { PatternChecker } from "./PatternChecker";
 import { SyntaxChecker } from "./SyntaxChecker";
 import { TypeChecker } from "./TypeChecker";
+import { TscChecker } from "./TscChecker";
 
 /**
  * Configuration options for CodeValidator.
@@ -32,6 +33,7 @@ export class CodeValidator implements ICodeValidator {
 	constructor(options?: CodeValidatorOptions) {
 		// Register default checkers
 		this.registerChecker(new SyntaxChecker());
+		this.registerChecker(new TscChecker()); // replaces TypeChecker for TS/JS files
 		this.registerChecker(new TypeChecker());
 		this.registerChecker(new PatternChecker());
 
