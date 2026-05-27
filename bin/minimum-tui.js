@@ -9,7 +9,7 @@
  */
 
 import readline from 'readline';
-import { MiMoLoop, CodeValidator, ToolCallRepair, CompletenessChecker, ContextManager, IterationManager, MockClient, MockToolRegistry } from '../dist/index.js';
+import { createMiMoStack, loadMiMoConfig, MockClient, MockToolRegistry } from '../dist/index.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -358,17 +358,8 @@ async function processTask(task) {
   client.setDefaultResponse(`我来处理这个任务: "${task}"\n\n这是一个示例响应。要使用完整的MiMo功能，请配置真实的模型客户端。`);
   
   const tools = new MockToolRegistry();
-  
-  const loop = new MiMoLoop({
-    client,
-    tools,
-    validator: new CodeValidator(),
-    toolRepair: new ToolCallRepair(),
-    completenessChecker: new CompletenessChecker(),
-    contextManager: new ContextManager(),
-    iterationManager: new IterationManager(),
-    workingDirectory: process.cwd()
-  });
+  const userConfig = await loadMiMoConfig(process.cwd());
+  const { loop } = createMiMoStack(client, tools, process.cwd(), userConfig);
   
   try {
     for await (const event of loop.run(task)) {

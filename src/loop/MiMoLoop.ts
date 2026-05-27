@@ -26,6 +26,7 @@ export interface MiMoLoopConfig {
   hookManager?: any;
   approvalManager?: any;
   capacity?: Partial<CapacityConfig>;
+  storm?: { windowSize?: number; threshold?: number };
   enableReadGuard?: boolean;
   maxTokens?: number;
   maxSteps?: number;
@@ -96,7 +97,10 @@ export class MiMoLoop {
       errors: 0
     };
     this.stormBreaker = new StormBreaker(
-      { windowSize: 6, threshold: 3 },
+      {
+        windowSize: config.storm?.windowSize ?? 6,
+        threshold: config.storm?.threshold ?? 3,
+      },
       (call) => this.isMutatingTool(call),
       (call) => this.isStormExemptTool(call)
     );
