@@ -2,12 +2,12 @@ import type {
 	IChecker,
 	ValidationCheck,
 	ValidationRequest,
-} from "../types/validator";
+} from "../types/validator.js";
 import {
 	checkJsonSyntax,
 	checkPythonSyntax,
 	checkTypeScriptSyntax,
-} from "../utils/syntax-checker";
+} from "../utils/syntax-checker.js";
 
 /**
  * SyntaxChecker implements syntax validation for various file types.

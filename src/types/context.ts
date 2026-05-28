@@ -1,4 +1,4 @@
-import type { ChatMessage } from "./common";
+import type { ChatMessage } from "./common.js";
 
 export interface TaskState {
 	objective: string;

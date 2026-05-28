@@ -1,5 +1,5 @@
-import type { ChatMessage } from "../types/common";
-import type { KeyInfo } from "../types/context";
+import type { ChatMessage } from "../types/common.js";
+import type { KeyInfo } from "../types/context.js";
 
 export class SummaryGenerator {
 	async generate(messages: ChatMessage[], keyInfo: KeyInfo): Promise<string> {

@@ -1,4 +1,4 @@
-import type { ToolSchema } from "../types/repair";
+import type { ToolSchema } from "../types/repair.js";
 
 export class TypeRepair {
 	repair(args: Record<string, any>, schema: ToolSchema): Record<string, any> {

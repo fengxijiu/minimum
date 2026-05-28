@@ -2,7 +2,7 @@ import type {
 	IChecker,
 	ValidationCheck,
 	ValidationRequest,
-} from "../types/validator";
+} from "../types/validator.js";
 
 /**
  * PatternChecker scans code content for predefined patterns that may indicate

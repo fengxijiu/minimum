@@ -51,6 +51,7 @@ const COMMANDS: CommandSpec[] = [
 	{ name: "/steer", description: "Inject guidance into current turn", category: "Flow" },
 	{ name: "/cancel", description: "Cancel current turn", category: "Flow" },
 	{ name: "/loop", description: "Run a prompt repeatedly", category: "Flow", usage: "/loop 30s task" },
+	{ name: "/init", description: "Interactive setup wizard", category: "System" },
 	{ name: "/exit", description: "Exit", category: "System" },
 ];
 
@@ -347,6 +348,30 @@ export const App: React.FC = () => {
 						startLoop(parsed.intervalMs, parsed.prompt);
 					} else {
 						appendSystem(parsed.message);
+					}
+					return;
+				}
+				case "/init": {
+					// Temporarily release stdin from Ink's raw mode so readline works
+					setBusy(true);
+					appendSystem("Starting interactive setup...");
+					try {
+						const wasRaw = process.stdin.isRaw;
+						process.stdin.setRawMode?.(false);
+						process.stdin.pause();
+
+						const output = await controllerRef.current!.runInitInteractive();
+
+						process.stdin.setRawMode?.(wasRaw ?? true);
+						process.stdin.resume();
+
+						appendSystem(output);
+					} catch (err: any) {
+						process.stdin.setRawMode?.(true);
+						process.stdin.resume();
+						appendSystem(`Init failed: ${err.message}`);
+					} finally {
+						setBusy(false);
 					}
 					return;
 				}

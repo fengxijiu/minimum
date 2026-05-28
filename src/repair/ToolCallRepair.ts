@@ -1,4 +1,4 @@
-import type { ToolCall } from "../types/common";
+import type { ToolCall } from "../types/common.js";
 import type {
 	IToolCallRepair,
 	JsonRepairResult,
@@ -7,11 +7,11 @@ import type {
 	RepairRequest,
 	RepairResult,
 	ToolSchema,
-} from "../types/repair";
-import { JsonRepair } from "./JsonRepair";
-import { PathRepair } from "./PathRepair";
-import { TypeRepair } from "./TypeRepair";
-import { ValueRepair } from "./ValueRepair";
+} from "../types/repair.js";
+import { JsonRepair } from "./JsonRepair.js";
+import { PathRepair } from "./PathRepair.js";
+import { TypeRepair } from "./TypeRepair.js";
+import { ValueRepair } from "./ValueRepair.js";
 
 export class ToolCallRepair implements IToolCallRepair {
 	private jsonRepair: JsonRepair;

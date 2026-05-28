@@ -1,4 +1,4 @@
-import type { ErrorRecord } from "../types/iteration";
+import type { ErrorRecord } from "../types/iteration.js";
 
 export interface RetryConfig {
 	maxRetries: number;

@@ -1,5 +1,5 @@
-import type { FixRecord } from "../types/iteration";
-import { levenshteinSimilarity } from "../utils/similarity";
+import type { FixRecord } from "../types/iteration.js";
+import { levenshteinSimilarity } from "../utils/similarity.js";
 
 export class FixRecorder {
 	private history: Map<string, FixRecord[]> = new Map();

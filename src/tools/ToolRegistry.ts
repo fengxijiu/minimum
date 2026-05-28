@@ -1,4 +1,4 @@
-import type { ToolDefinition } from "../types/common";
+import type { ToolDefinition } from "../types/common.js";
 
 export interface Tool {
 	name: string;

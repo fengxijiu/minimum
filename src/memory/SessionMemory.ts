@@ -1,6 +1,6 @@
 import * as path from "path";
 import * as fs from "fs/promises";
-import type { ChatMessage } from "../types/common";
+import type { ChatMessage } from "../types/common.js";
 
 export interface SessionData {
 	id: string;

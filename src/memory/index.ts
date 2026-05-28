@@ -1,11 +1,11 @@
-export { MemoryStore } from "./MemoryStore";
-export type { MemoryEntry, MemoryStoreOptions } from "./MemoryStore";
+export { MemoryStore } from "./MemoryStore.js";
+export type { MemoryEntry, MemoryStoreOptions } from "./MemoryStore.js";
 
-export { SessionMemory } from "./SessionMemory";
-export type { SessionData } from "./SessionMemory";
+export { SessionMemory } from "./SessionMemory.js";
+export type { SessionData } from "./SessionMemory.js";
 
-export { ProjectMemory } from "./ProjectMemory";
-export type { ProjectMemoryEntry } from "./ProjectMemory";
+export { ProjectMemory } from "./ProjectMemory.js";
+export type { ProjectMemoryEntry } from "./ProjectMemory.js";
 
 export {
 	RuntimeMemory,

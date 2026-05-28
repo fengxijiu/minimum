@@ -1,4 +1,4 @@
-import type { ErrorRecord, ToolCall } from "../types/iteration";
+import type { ErrorRecord, ToolCall } from "../types/iteration.js";
 
 export class ErrorRecorder {
 	private history: Map<string, ErrorRecord[]> = new Map();

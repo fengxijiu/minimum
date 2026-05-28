@@ -7,10 +7,10 @@ import type {
 	IterationResult,
 	IterationTask,
 	TaskResult,
-} from "../types/iteration";
-import { ErrorRecorder } from "./ErrorRecorder";
-import { FixRecorder } from "./FixRecorder";
-import { RetryStrategy } from "./RetryStrategy";
+} from "../types/iteration.js";
+import { ErrorRecorder } from "./ErrorRecorder.js";
+import { FixRecorder } from "./FixRecorder.js";
+import { RetryStrategy } from "./RetryStrategy.js";
 
 export interface IterationManagerOptions {
 	maxRetries?: number;

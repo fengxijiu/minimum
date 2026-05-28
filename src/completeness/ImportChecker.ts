@@ -1,4 +1,4 @@
-import type { CodeContext, CompletenessIssue } from "../types/completeness";
+import type { CodeContext, CompletenessIssue } from "../types/completeness.js";
 
 export class ImportChecker {
 	async check(

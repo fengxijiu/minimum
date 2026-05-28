@@ -1,4 +1,4 @@
-import type { SourceLocation, ToolCall, ToolResult } from "./common";
+import type { SourceLocation, ToolCall, ToolResult } from "./common.js";
 
 export interface ValidationRequest {
 	toolName: string;

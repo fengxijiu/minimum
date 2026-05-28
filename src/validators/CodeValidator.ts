@@ -4,11 +4,11 @@ import type {
 	ValidationCheck,
 	ValidationRequest,
 	ValidationResult,
-} from "../types/validator";
-import { PatternChecker } from "./PatternChecker";
-import { SyntaxChecker } from "./SyntaxChecker";
-import { TypeChecker } from "./TypeChecker";
-import { TscChecker } from "./TscChecker";
+} from "../types/validator.js";
+import { PatternChecker } from "./PatternChecker.js";
+import { SyntaxChecker } from "./SyntaxChecker.js";
+import { TypeChecker } from "./TypeChecker.js";
+import { TscChecker } from "./TscChecker.js";
 
 /**
  * Configuration options for CodeValidator.

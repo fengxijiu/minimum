@@ -87,6 +87,8 @@ export function loopEventToTuiEvent(
 		case "completeness":
 		case "iteration":
 			return null;
+		default:
+			return null;
 	}
 }
 

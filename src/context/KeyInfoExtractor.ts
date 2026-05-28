@@ -1,11 +1,11 @@
-import type { ChatMessage } from "../types/common";
+import type { ChatMessage } from "../types/common.js";
 import type {
 	Decision,
 	ErrorInfo,
 	FileChange,
 	KeyInfo,
 	TaskState,
-} from "../types/context";
+} from "../types/context.js";
 
 export class KeyInfoExtractor {
 	async extract(

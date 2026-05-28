@@ -1,15 +1,15 @@
-import type { ChatMessage } from "../types/common";
+import type { ChatMessage } from "../types/common.js";
 import type {
 	ContextOptimizeRequest,
 	ContextOptimizeResult,
 	IContextManager,
 	KeyInfo,
 	TaskState,
-} from "../types/context";
-import { countMessagesTokens } from "../utils/token-counter";
-import { KeyInfoExtractor } from "./KeyInfoExtractor";
-import { MessageFolder } from "./MessageFolder";
-import { SummaryGenerator } from "./SummaryGenerator";
+} from "../types/context.js";
+import { countMessagesTokens } from "../utils/token-counter.js";
+import { KeyInfoExtractor } from "./KeyInfoExtractor.js";
+import { MessageFolder } from "./MessageFolder.js";
+import { SummaryGenerator } from "./SummaryGenerator.js";
 
 export interface ContextManagerOptions {
 	foldThreshold?: number;
