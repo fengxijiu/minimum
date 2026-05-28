@@ -153,6 +153,7 @@ export function App({
 
   const applyFix = () => {
     setPending(null);
+    setState(s => ({ ...s, redo: [] }));
     push(
       { id: mid('t'), type: 'tool', tool: { kind: 'edit', args: 'routes.py · up → uptime', meta: '+1 −1', status: 'ok' } },
       { id: mid('t'), type: 'tool', tool: { kind: 'run', args: 'pytest -q', meta: 'exit 0 · 2.1s', status: 'ok' } },

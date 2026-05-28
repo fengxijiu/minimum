@@ -107,6 +107,7 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
         patch: {
           messages: [],
           edits: [],
+          redo: [],
           plan: { title: '(no plan yet)', steps: [] },
           currentStepLabel: '',
         },
@@ -158,14 +159,22 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
       const last = state.edits[state.edits.length - 1]!;
       return {
         kind: 'patch',
-        patch: { edits: state.edits.slice(0, -1) },
+        patch: { edits: state.edits.slice(0, -1), redo: [...state.redo, last] },
         note: `Undid edit · ${last.label}.`,
         tone: 'ok',
       };
     }
 
-    case 'redo':
-      return { kind: 'note', note: 'Nothing to redo.', tone: 'warn' };
+    case 'redo': {
+      if (!state.redo.length) return { kind: 'note', note: 'Nothing to redo.', tone: 'warn' };
+      const last = state.redo[state.redo.length - 1]!;
+      return {
+        kind: 'patch',
+        patch: { edits: [...state.edits, last], redo: state.redo.slice(0, -1) },
+        note: `Redid edit · ${last.label}.`,
+        tone: 'ok',
+      };
+    }
 
     case 'status':
       return {

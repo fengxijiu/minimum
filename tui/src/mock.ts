@@ -19,6 +19,7 @@ export const initialState: AppState = {
     { sign: '+', label: 'server.py · register' },
     { sign: '~', label: 'tests · test_health' },
   ],
+  redo: [],
   plan: {
     title: '/health endpoint',
     steps: [

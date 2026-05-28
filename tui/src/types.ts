@@ -60,6 +60,8 @@ export type AppState = {
   ctx: { used: number; max: number };
   files: FileEntry[];
   edits: StagedEdit[];
+  /** LIFO redo stack — populated by /undo, drained by /redo, cleared on any new edit. */
+  redo: StagedEdit[];
   plan: { title: string; steps: PlanStep[] };
   currentStepLabel: string;
   messages: Message[];
