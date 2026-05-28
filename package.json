@@ -16,7 +16,7 @@
     }
   },
   "scripts": {
-    "build": "node node_modules/typescript/lib/tsc.js",
+    "build": "node node_modules/typescript/lib/tsc.js && node scripts/copy-assets.mjs",
     "dev": "tsx src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
