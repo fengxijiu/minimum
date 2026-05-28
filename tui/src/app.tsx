@@ -1,34 +1,28 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
-import { Box, useApp, useInput, useStdout } from 'ink';
+import { Box, useApp, useStdout } from 'ink';
 import { TitleBar }       from './components/TitleBar.js';
 import { PlanStrip }      from './components/PlanStrip.js';
 import { ContextRail }    from './components/ContextRail.js';
 import { ChatStream }     from './components/ChatStream.js';
-import { Prompt }         from './components/Prompt.js';
 import { StatusBar }      from './components/StatusBar.js';
-import { CommandPalette } from './components/CommandPalette.js';
-import { FilePicker }     from './components/FilePicker.js';
-import { HelpOverlay }    from './components/HelpOverlay.js';
 import { WelcomeScreen }  from './components/WelcomeScreen.js';
 import { ToolProgress }   from './components/ToolProgress.js';
 import { ToastBar }       from './components/ToastBar.js';
+import { InputArea }      from './components/InputArea.js';
 import { createInitialState } from './seed.js';
 import {
-  filterCommands, runCommand, sysMessage, type CommandOutcome, type CommandContext,
+  runCommand, type CommandOutcome, type CommandContext,
 } from './commands.js';
 import { mockRunner, uiEventToMessages, type Runner, type EngineInfo, type UiPlanStatus } from './engine.js';
-import { loadHistory, appendHistory } from './inputHistory.js';
 import { scanFiles, readBranch, touch } from './files.js';
 import { useAgentStore, useSlice, type Dispatch } from './state/store.js';
-import type { AppState, Message, FileEntry, SessionState, Chip, PlanStep, PendingState, ApprovalMode, EditMode, UsageInfo, Mode } from './types.js';
+import type { AppState, Message, FileEntry, SessionState, Chip, PlanStep, PendingState, ApprovalMode, EditMode, UsageInfo, Mode, StagedEdit } from './types.js';
 
 const PLAN_STATUS: Record<UiPlanStatus, PlanStep['status']> = {
   pending: 'next',
   in_progress: 'now',
   completed: 'done',
 };
-
-type Overlay = 'none' | 'cmd' | 'file';
 
 interface ActivePermission {
   id: string;
@@ -40,11 +34,6 @@ interface ActivePermission {
 
 let seq = 0;
 const tid = () => 't' + Date.now() + '_' + seq++;
-
-function activeAtToken(input: string): string | null {
-  const m = input.match(/(?:^|\s)@([^\s]*)$/);
-  return m ? (m[1] ?? '') : null;
-}
 
 function extractFileArg(args: string): string | null {
   try {
@@ -130,14 +119,12 @@ export function App({
   const { stdout } = useStdout();
   const termRows = stdout?.rows ?? 40;
   const [state, dispatch] = useAgentStore(() => createInitialState(process.cwd()));
-  const [sel, setSel] = useState(0);
   const [activePerm, setActivePerm] = useState<ActivePermission | null>(null);
-  const [history] = useState<string[]>(() => loadHistory().map(h => h.text));
-  const [histIdx, setHistIdx] = useState(-1);
-  const [savedDraft, setSavedDraft] = useState('');
-  const [stash, setStash] = useState('');
-  const promptHistoryRef = useRef<string[]>([]);
-  const historyIdxRef = useRef(-1);
+  // Mutable refs so callbacks that close over these stay stable
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const activePermRef = useRef(activePerm);
+  activePermRef.current = activePerm;
 
   // ── Streaming chunk buffer (50ms flush) ─────────────────────────────
   const chunkBufferRef = useRef('');
@@ -160,19 +147,10 @@ export function App({
     flushChunks();
   }, [flushChunks]);
 
-  // ── Input (local state, not in reducer) ─────────────────────────────
-  const [inputValue, setInputValue] = useState('');
-  const inputRef = useRef(inputValue);
-  const immediateInputChange = useCallback((v: string) => {
-    inputRef.current = v;
-    setInputValue(v);
-  }, []);
-
   // ── Init ────────────────────────────────────────────────────────────
   useEffect(() => {
     const root = process.cwd();
     const scanned = scanFiles(root);
-    immediateInputChange('');
     dispatch({ type: 'ctx.update', used: 0, max: 200 });
     if (scanned.length) dispatch({ type: 'files.set', files: scanned });
     if (engineInfo.mode === 'mock') {
@@ -187,18 +165,6 @@ export function App({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Overlay detection (reads buffer, not state, for zero-lag) ───────
-  const liveInput = inputRef.current;
-  const atToken = activeAtToken(liveInput);
-  const overlay: Overlay = liveInput.startsWith('/')
-    ? 'cmd'
-    : atToken !== null ? 'file' : 'none';
-
-  const cmdItems = useMemo(
-    () => (overlay === 'cmd' ? filterCommands(liveInput) : []),
-    [overlay, liveInput],
-  );
-
   const cmdCtx: CommandContext = useMemo(() => ({
     model: engineInfo.model,
     tools: engineInfo.tools,
@@ -207,17 +173,8 @@ export function App({
     baseUrl: engineInfo.baseUrl,
     engineMode: engineInfo.mode,
   }), [engineInfo]);
-  const fileItems = useMemo<FileEntry[]>(() => {
-    if (overlay !== 'file') return [];
-    const q = (atToken ?? '').toLowerCase();
-    return state.files.filter(f => f.name.toLowerCase().includes(q));
-  }, [overlay, atToken, state.files]);
-
-  const itemCount = overlay === 'cmd' ? cmdItems.length : overlay === 'file' ? fileItems.length : 0;
-  const clampedSel = itemCount ? Math.min(sel, itemCount - 1) : 0;
-
   // ── Command / permission handlers ───────────────────────────────────
-  const applyOutcome = (o: CommandOutcome) => {
+  const applyOutcome = useCallback((o: CommandOutcome) => {
     switch (o.kind) {
       case 'quit': exit(); return;
       case 'help': dispatch({ type: 'help.toggle' }); return;
@@ -249,14 +206,15 @@ export function App({
         if (o.note) dispatch({ type: 'system.push', text: o.note, tone: o.tone });
         return;
     }
-  };
+  }, [exit, dispatch, runner]);
 
   const allowPermission = useCallback(() => {
-    if (activePerm) {
-      runner.resolvePermission?.(activePerm.id, { approved: true, reason: 'user approved' });
+    const perm = activePermRef.current;
+    if (perm) {
+      runner.resolvePermission?.(perm.id, { approved: true, reason: 'user approved' });
       setActivePerm(null);
       dispatch({ type: 'pending.clear' });
-      dispatch({ type: 'system.push', text: `Allowed ${activePerm.tool}.`, tone: 'ok' });
+      dispatch({ type: 'system.push', text: `Allowed ${perm.tool}.`, tone: 'ok' });
       return;
     }
     dispatch({ type: 'pending.set', value: 'error' });
@@ -277,7 +235,7 @@ export function App({
     ]});
     dispatch({ type: 'assistant.final', text: "My handler returns 'up', but the test expects 'uptime'. I'll rename the key in routes.py." });
     dispatch({ type: 'chips.push', chips });
-  }, [activePerm, runner, dispatch]);
+  }, [runner, dispatch]);
 
   const applyFix = useCallback(() => {
     dispatch({ type: 'pending.clear' });
@@ -291,82 +249,32 @@ export function App({
   }, [dispatch]);
 
   const dismissPending = useCallback((note: string) => {
-    if (activePerm) {
-      runner.resolvePermission?.(activePerm.id, { approved: false, reason: 'user denied' });
+    const perm = activePermRef.current;
+    if (perm) {
+      runner.resolvePermission?.(perm.id, { approved: false, reason: 'user denied' });
       setActivePerm(null);
     }
     dispatch({ type: 'pending.clear' });
     dispatch({ type: 'system.push', text: note, tone: 'warn' });
-  }, [activePerm, runner, dispatch]);
+  }, [runner, dispatch]);
 
-  const changeInput = useCallback((v: string) => {
-    if (v === '?' && inputValue === '') { dispatch({ type: 'help.toggle' }); return; }
-    immediateInputChange(v);
-    setSel(0);
-    if (histIdx !== -1) setHistIdx(-1);
-  }, [inputValue, dispatch, histIdx, immediateInputChange]);
-
-  // ── History navigation ──────────────────────────────────────────────
-  const stepHistory = (dir: -1 | 1): boolean => {
-    if (!history.length) return false;
-    if (histIdx === -1) {
-      if (dir === 1) return false;
-      setSavedDraft(inputValue);
-      const next = history.length - 1;
-      setHistIdx(next);
-      immediateInputChange(history[next]!);
-      return true;
-    }
-    const next = histIdx + dir;
-    if (next < 0) { immediateInputChange(history[0]!); setHistIdx(0); return true; }
-    if (next >= history.length) {
-      setHistIdx(-1);
-      immediateInputChange(savedDraft);
-      return true;
-    }
-    immediateInputChange(history[next]!);
-    setHistIdx(next);
-    return true;
-  };
-
-  const completeCommand = () => {
-    const c = cmdItems[clampedSel];
-    if (c) immediateInputChange('/' + c.name + ' ');
-  };
-  const completeFile = () => {
-    const f = fileItems[clampedSel];
-    if (!f) return;
-    const next = inputValue.replace(/(?:^|\s)@[^\s]*$/, (m) =>
-      (m.startsWith(' ') ? ' ' : '') + '@' + f.name + ' ');
-    immediateInputChange(next);
-  };
-
-  // ── Submit handler ──────────────────────────────────────────────────
+  // ── Submit handler (stable — uses stateRef, no state deps) ──────────
   const handleSubmit = useCallback((text: string) => {
-    if (state.helpOpen) return;
+    const st = stateRef.current;
 
-    if (!text.trim() && state.pending === 'permission') { allowPermission(); return; }
-    if (!text.trim() && state.pending === 'error') { applyFix(); return; }
+    if (!text.trim() && st.pending === 'permission') { allowPermission(); return; }
+    if (!text.trim() && st.pending === 'error') { applyFix(); return; }
 
-    if (overlay === 'cmd') {
-      const c = cmdItems[clampedSel];
-      applyOutcome(runCommand(c ? '/' + c.name + ' ' + text.replace(/^\/\S*\s*/, '') : text, state, cmdCtx));
-      changeInput('');
+    if (text.startsWith('/')) {
+      applyOutcome(runCommand(text, st, cmdCtx));
       return;
     }
-    if (overlay === 'file') { completeFile(); return; }
 
     const trimmed = text.trim();
     if (!trimmed) return;
-    if (state.pending) dispatch({ type: 'pending.clear' });
+    if (st.pending) dispatch({ type: 'pending.clear' });
 
     dispatch({ type: 'user.submit', text: trimmed });
-    appendHistory(trimmed);
-    promptHistoryRef.current.push(trimmed);
-    historyIdxRef.current = -1;
-    setHistIdx(-1);
-    setSavedDraft('');
-    changeInput('');
 
     void (async () => {
       startChunkFlusher();
@@ -382,7 +290,7 @@ export function App({
               perm: {
                 tool: ev.tool,
                 cmd: `$ ${cmd}`,
-                cwd: state.path,
+                cwd: stateRef.current.path,
                 note: `${ev.description} · risk ${ev.risk} — ⏎ allow · esc deny`,
               },
             });
@@ -391,23 +299,22 @@ export function App({
           if (ev.kind === 'tool') {
             const fname = extractFileArg(ev.args);
             if (fname) {
-              dispatch({ type: 'files.set', files: touch(state.files, { name: fname, meta: ev.name }) });
+              dispatch({ type: 'files.set', files: touch(stateRef.current.files, { name: fname, meta: ev.name }) });
             }
           }
           if (ev.kind === 'usage') {
-            const used = Number((ev.totalTokens / 1000).toFixed(1));
-            dispatch({ type: 'ctx.update', used });
+            dispatch({ type: 'ctx.update', used: Number((ev.totalTokens / 1000).toFixed(1)) });
             continue;
           }
           if (ev.kind === 'plan') {
-            const steps: PlanStep[] = ev.steps.map(st => ({ label: st.label, status: PLAN_STATUS[st.status] }));
-            const inProgress = ev.steps.find(st => st.status === 'in_progress');
+            const steps: PlanStep[] = ev.steps.map(s => ({ label: s.label, status: PLAN_STATUS[s.status] }));
+            const inProgress = ev.steps.find(s => s.status === 'in_progress');
             const idx = inProgress
               ? ev.steps.indexOf(inProgress) + 1
-              : ev.steps.filter(st => st.status === 'completed').length + 1;
+              : ev.steps.filter(s => s.status === 'completed').length + 1;
             dispatch({
               type: 'plan.set',
-              title: state.plan.title === '(no plan yet)' ? 'agent plan' : state.plan.title,
+              title: stateRef.current.plan.title === '(no plan yet)' ? 'agent plan' : stateRef.current.plan.title,
               steps,
             });
             if (inProgress) {
@@ -415,12 +322,10 @@ export function App({
             }
             continue;
           }
-          // Buffer streaming chunks
           if (ev.kind === 'streaming') {
             chunkBufferRef.current += ev.text;
             continue;
           }
-
           const msgs = uiEventToMessages(ev);
           for (const msg of msgs) {
             if (msg.type === 'system') dispatch({ type: 'system.push', text: msg.text, tone: msg.tone });
@@ -436,106 +341,13 @@ export function App({
         dispatch({ type: 'turn.end', success: true });
       }
     })();
-  }, [state.helpOpen, state.pending, overlay, cmdItems, clampedSel, state, cmdCtx, runner, dispatch, startChunkFlusher, stopChunkFlusher, allowPermission, applyFix, changeInput]);
+  }, [runner, dispatch, allowPermission, applyFix, applyOutcome, cmdCtx, startChunkFlusher, stopChunkFlusher]);
 
   const handleToastDismiss = useCallback((id: string) => {
     dispatch({ type: 'toast.dismiss', id });
   }, [dispatch]);
 
-  // ── Keyboard handler ────────────────────────────────────────────────
-  useInput((input, key) => {
-    if (state.helpOpen) {
-      if (key.escape || key.return) dispatch({ type: 'help.toggle' });
-      return;
-    }
-
-    if (key.ctrl && input === 'd') { exit(); return; }
-
-    if (key.ctrl && input === 'r') {
-      dispatch({ type: 'verbose.toggle' });
-      dispatch({ type: 'toast.show', text: state.verbose ? 'Verbose off' : 'Verbose on', tone: 'info', ttlMs: 2000 });
-      return;
-    }
-
-    if (key.ctrl && input === 'u') {
-      setStash(inputValue);
-      immediateInputChange('');
-      return;
-    }
-
-    if (key.meta && input === 's') {
-      if (stash) {
-        const prev = inputValue;
-        immediateInputChange(stash);
-        setStash(prev);
-      } else if (inputValue) {
-        setStash(inputValue);
-        immediateInputChange('');
-      }
-      return;
-    }
-
-    if (key.shift && key.tab) {
-      const modes = ['review', 'auto', 'yolo'] as const;
-      const idx = modes.indexOf(state.editMode);
-      const next = modes[(idx + 1) % modes.length]!;
-      dispatch({ type: 'edit.mode.change', mode: next });
-      dispatch({ type: 'toast.show', text: `Edit mode: ${next}`, tone: 'info', ttlMs: 2000 });
-      return;
-    }
-
-    if (input === 'u' && !inputValue && overlay === 'none' && state.edits.length > 0) {
-      dispatch({ type: 'edit.undo' });
-      return;
-    }
-
-    if (key.ctrl && input === 'p') {
-      const hist = promptHistoryRef.current;
-      if (hist.length === 0) return;
-      const idx = Math.min(historyIdxRef.current + 1, hist.length - 1);
-      historyIdxRef.current = idx;
-      immediateInputChange(hist[idx]!);
-      return;
-    }
-    if (key.ctrl && input === 'n') {
-      const idx = Math.max(historyIdxRef.current - 1, -1);
-      historyIdxRef.current = idx;
-      immediateInputChange(idx >= 0 ? promptHistoryRef.current[idx]! : '');
-      return;
-    }
-
-    if (key.escape) {
-      if (state.pending) dismissPending(state.pending === 'permission' ? 'Permission denied.' : 'Left as-is.');
-      else if (inputValue.length) immediateInputChange('');
-      else exit();
-      return;
-    }
-    if (overlay !== 'none' && itemCount) {
-      if (key.downArrow) { setSel(s => (s + 1) % itemCount); return; }
-      if (key.upArrow)   { setSel(s => (s - 1 + itemCount) % itemCount); return; }
-    }
-    if (overlay === 'none' && !state.pending) {
-      if (key.upArrow)   { if (stepHistory(-1)) return; }
-      if (key.downArrow) { if (stepHistory(1)) return; }
-    }
-    if (key.tab) {
-      if (overlay === 'cmd' && cmdItems.length) completeCommand();
-      else if (overlay === 'file' && fileItems.length) completeFile();
-      else dispatch({ type: 'mode.change', mode: state.mode === 'agent' ? 'chat' : 'agent' });
-      return;
-    }
-  });
-
-  // ── Placeholder text ────────────────────────────────────────────────
-  const placeholder =
-    state.pending === 'permission' ? 'agent paused — ⏎ to allow, or type to redirect'
-    : state.pending === 'error' ? 'redirect, or ⏎ to accept the fix'
-    : overlay === 'cmd' ? 'filter commands…'
-    : overlay === 'file' ? 'filter files…'
-    : liveInput === '' && !state.messages.some(m => m.type !== 'system') ? 'how can I help?'
-    : 'ask, steer, /cmd, @file…  (? for help)';
-
-  // ── Extract slices for zone props (input is local, not from state) ─
+  // ── Extract slices for zone props ───────────────────────────────────
   const sPath = useSlice(state, s => s.path);
   const sBranch = useSlice(state, s => s.branch);
   const sMode = useSlice(state, s => s.mode);
@@ -556,6 +368,12 @@ export function App({
   const sUsage = useSlice(state, s => s.usage);
   const sMcpLoading = useSlice(state, s => s.mcpLoading);
   const sToasts = useSlice(state, s => s.toasts);
+  const sVerbose = useSlice(state, s => s.verbose);
+  const sHasEdits = useSlice(state, s => s.edits.length > 0);
+  const sHasMessages = useMemo(
+    () => sMessages.some(m => m.type !== 'system'),
+    [sMessages],
+  );
 
   const titleMode =
     sPending === 'permission' ? 'agent · paused'
@@ -586,21 +404,21 @@ export function App({
 
           <ToastBar toasts={sToasts} onDismiss={handleToastDismiss} />
 
-          {sHelpOpen ? <HelpOverlay /> : null}
-          {!sHelpOpen && overlay === 'cmd' ? <CommandPalette items={cmdItems} selected={clampedSel} /> : null}
-          {!sHelpOpen && overlay === 'file' ? <FilePicker items={fileItems} selected={clampedSel} /> : null}
-
-          <Prompt
-            value={inputValue}
-            onChange={(v) => {
-              inputRef.current = v;
-              if (v === '?' && inputValue === '') { dispatch({ type: 'help.toggle' }); return; }
-              immediateInputChange(v);
-              setSel(0);
-            }}
+          <InputArea
+            files={sFiles}
+            helpOpen={sHelpOpen}
+            pending={sPending}
+            hasMessages={sHasMessages}
+            mode={sMode}
+            editMode={sEditMode}
+            verbose={sVerbose}
+            hasEdits={sHasEdits}
             onSubmit={handleSubmit}
-            placeholder={placeholder}
-            focus={!sHelpOpen}
+            onPermAllow={allowPermission}
+            onPermDeny={dismissPending}
+            onApplyFix={applyFix}
+            dispatch={dispatch}
+            cmdCtx={cmdCtx}
           />
         </Box>
       </Box>
