@@ -1,5 +1,6 @@
 import type { StreamChunk } from "../../clients/MiMoClient.js";
 import { MiMoClient } from "../../clients/MiMoClient.js";
+import { InitCommand, type InitOptions } from "../../commands/InitCommand.js";
 import { MiMoLoop } from "../../loop/MiMoLoop.js";
 import { GrepTool, SearchTool } from "../../tools/search/GrepTool.js";
 import { ExecShellTool } from "../../tools/shell/ExecShellTool.js";
@@ -101,6 +102,29 @@ export class TuiController {
 		this.currentTurnId++;
 		this.loop = this.createLoop();
 		this.running = false;
+	}
+
+	async runInit(options: InitOptions): Promise<string> {
+		const result = await InitCommand.executeFromArgs(this.workingDirectory, options);
+		return result.output;
+	}
+
+	/**
+	 * Interactive init — runs the full readline wizard.
+	 * Caller must release stdin from raw mode before calling.
+	 */
+	async runInitInteractive(): Promise<string> {
+		const cmd = new InitCommand();
+		const result = await cmd.execute([], {
+			workingDirectory: this.workingDirectory,
+			messages: [],
+			config: {},
+		});
+		if (result.data?.config) {
+			// Reinitialize with new config
+			this.reset();
+		}
+		return result.output;
 	}
 
 	private createLoop(): MiMoLoop {

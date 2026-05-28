@@ -1,9 +1,9 @@
-import type { RepairContext } from "../types/repair";
+import type { RepairContext } from "../types/repair.js";
 import {
 	isPathInside,
 	normalizePath,
 	toAbsolutePath,
-} from "../utils/path-utils";
+} from "../utils/path-utils.js";
 
 export class PathRepair {
 	repair(pathStr: string, context: RepairContext): string {

@@ -1,16 +1,16 @@
 // Core types and interfaces
-export * from "./types";
-export * from "./utils";
-export * from "./config";
-export * from "./bridge";
+export * from "./types/index.js";
+export * from "./utils/index.js";
+export * from "./config/index.js";
+export * from "./bridge/index.js";
 
 // Core modules
-export * from "./validators";
-export * from "./repair";
-export * from "./completeness";
-export * from "./context";
-export * from "./iteration";
-export * from "./loop";
+export * from "./validators/index.js";
+export * from "./repair/index.js";
+export * from "./completeness/index.js";
+export * from "./context/index.js";
+export * from "./iteration/index.js";
+export * from "./loop/index.js";
 
 // Clients
 export { MiMoClient } from "./clients/MiMoClient.js";

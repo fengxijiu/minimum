@@ -1,4 +1,4 @@
-import type { ToolCall } from "./common";
+import type { ToolCall } from "./common.js";
 
 export interface ToolSchema {
 	name: string;

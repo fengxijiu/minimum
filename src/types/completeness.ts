@@ -1,4 +1,4 @@
-import type { SourceLocation } from "./common";
+import type { SourceLocation } from "./common.js";
 
 export interface CodeContext {
 	projectRoot: string;

@@ -1,9 +1,9 @@
-import type { JsonRepairResult } from "../types/repair";
+import type { JsonRepairResult } from "../types/repair.js";
 import {
 	balanceBrackets,
 	removeTrailingComma,
 	repairTruncatedJson,
-} from "../utils/json-repair";
+} from "../utils/json-repair.js";
 
 export class JsonRepair {
 	repair(input: string): JsonRepairResult {

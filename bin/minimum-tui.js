@@ -9,7 +9,7 @@
  */
 
 import readline from 'readline';
-import { createMiMoStack, loadMiMoConfig, MockClient, MockToolRegistry } from '../dist/index.js';
+import { createMiMoStack, loadMiMoConfig, MiMoClient, ToolRegistry, ReadFileTool, ListDirectoryTool, InitCommand } from '../dist/index.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -297,67 +297,38 @@ async function handleCommand(command, args) {
 
 // 初始化配置
 async function handleInit() {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout
-  });
-
-  const ask = (question) => new Promise((resolve) => {
-    rl.question(colorize('yellow', question), (answer) => resolve(answer.trim()));
-  });
-
-  console.log(colorize('cyan', '\n🚀 MiMo 初始化配置\n'));
-
   try {
-    console.log(colorize('bright', '📡 模型配置'));
-    const apiKey = await ask('API Key: ');
-    const model = await ask('模型 (默认: mimo-v2.5-pro): ') || 'mimo-v2.5-pro';
-    
-    console.log(colorize('bright', '\n🔧 工具配置'));
-    const enableShell = await ask('启用Shell工具? (y/N): ');
-    
-    console.log(colorize('bright', '\n💾 记忆配置'));
-    const enableMemory = await ask('启用记忆系统? (Y/n): ');
-
-    const config = {
-      model: { provider: 'mimo', apiKey, baseUrl: 'https://api.mimo.com/v1', model, maxTokens: 4096, temperature: 0.7 },
-      tools: { enabled: ['filesystem', 'git', 'search'], permissions: { shell: enableShell.toLowerCase() === 'y' ? 'allow' : 'ask', filesystem: 'allow' } },
-      memory: { enabled: enableMemory.toLowerCase() !== 'n', path: '~/.minimum/memory' },
-      optimization: { validation: true, repair: true, completeness: true }
-    };
-
-    const configPath = path.join(process.cwd(), 'minimum.config.json');
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-
-    const dirs = ['.minimum', '.minimum/memory', '.minimum/sessions', '.minimum/skills'];
-    for (const dir of dirs) {
-      const dirPath = path.join(process.cwd(), dir);
-      if (!fs.existsSync(dirPath)) {
-        fs.mkdirSync(dirPath, { recursive: true });
-      }
+    const cmd = new InitCommand();
+    const result = await cmd.execute([], {
+      workingDirectory: process.cwd(),
+      messages: [],
+      config: {}
+    });
+    if (result.output) {
+      console.log(result.output);
     }
-
-    console.log(colorize('green', '\n✅ 配置完成!'));
-    console.log(colorize('gray', `配置文件: ${configPath}`));
   } catch (error) {
     console.log(colorize('red', `\n❌ 初始化失败: ${error.message}`));
-  } finally {
-    rl.close();
   }
 }
 
 // 处理任务
 async function processTask(task) {
+  if (!process.env.MIMO_API_KEY) {
+    console.log(colorize('yellow', '⚠️  MIMO_API_KEY 未设置。请设置环境变量后重试:'));
+    console.log(colorize('gray', '  export MIMO_API_KEY="your-api-key"'));
+    return;
+  }
+
   isProcessing = true;
   printStatus();
   printMessage('user', task);
-  
-  await new Promise(resolve => setTimeout(resolve, 500));
-  
-  const client = new MockClient();
-  client.setDefaultResponse(`我来处理这个任务: "${task}"\n\n这是一个示例响应。要使用完整的MiMo功能，请配置真实的模型客户端。`);
-  
-  const tools = new MockToolRegistry();
+
+  const client = new MiMoClient();
+
+  const tools = new ToolRegistry();
+  tools.register(new ReadFileTool());
+  tools.register(new ListDirectoryTool());
   const userConfig = await loadMiMoConfig(process.cwd());
   const { loop } = createMiMoStack(client, tools, process.cwd(), userConfig);
   

@@ -1,4 +1,4 @@
-import type { ChatMessage, ToolCall } from "./common";
+import type { ChatMessage, ToolCall } from "./common.js";
 export type { ToolCall };
 
 interface TaskState {

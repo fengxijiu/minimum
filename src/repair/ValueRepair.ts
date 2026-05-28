@@ -1,4 +1,4 @@
-import type { RepairContext, ToolSchema } from "../types/repair";
+import type { RepairContext, ToolSchema } from "../types/repair.js";
 
 export class ValueRepair {
 	async repair(

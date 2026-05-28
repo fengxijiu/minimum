@@ -1,8 +1,19 @@
 import { describe, it, expect } from 'vitest';
 import { MiMoLoop } from '../../src/loop/MiMoLoop.js';
-import { MockToolRegistry } from '../../src/mocks/MockToolRegistry.js';
+import { ToolRegistry } from '../../src/tools/ToolRegistry.js';
 import { TodoWriteTool } from '../../src/tools/todo/TodoWriteTool.js';
 import { EngineBridge, mapLoopEvent } from '../../src/bridge/EngineBridge.js';
+
+function makeTool(name: string, fn: (args: any) => Promise<string>, description = 'test tool') {
+  return {
+    name,
+    description,
+    getDefinition() {
+      return { name, description, parameters: { type: 'object', properties: {} } };
+    },
+    execute: fn,
+  };
+}
 
 // A streaming client that plays back scripted turns. Each turn is an array of
 // chunks; one turn is consumed per streamChat() call.
@@ -23,9 +34,9 @@ const toolCallChunk = (name: string, args: object) => ({
 
 describe('P0-3 plan mode', () => {
   it('blocks a mutating tool and never executes it', async () => {
-    const tools = new MockToolRegistry();
+    const tools = new ToolRegistry();
     let executed = false;
-    tools.register({ name: 'write_file', fn: async () => { executed = true; return 'ok'; } });
+    tools.register(makeTool('write_file', async () => { executed = true; return 'ok'; }));
 
     const loop = new MiMoLoop({
       client: new FakeClient([[toolCallChunk('write_file', { path: 'a.ts', content: 'x' })], [{ type: 'content', content: 'plan ready' }]]),
@@ -50,8 +61,8 @@ describe('P0-2 hooks', () => {
     const hookManager = {
       async execute(event: string) { seen.push(event); return [{ success: true, stdout: '', stderr: '' }]; },
     };
-    const tools = new MockToolRegistry();
-    tools.register({ name: 'do_thing', fn: async () => 'result' });
+    const tools = new ToolRegistry();
+    tools.register(makeTool('do_thing', async () => 'result'));
 
     const loop = new MiMoLoop({
       client: new FakeClient([[toolCallChunk('do_thing', {})], [{ type: 'content', content: 'done' }]]),
@@ -77,8 +88,8 @@ describe('P0-2 hooks', () => {
         return [];
       },
     };
-    const tools = new MockToolRegistry();
-    tools.register({ name: 'do_thing', fn: async () => { executed = true; return 'x'; } });
+    const tools = new ToolRegistry();
+    tools.register(makeTool('do_thing', async () => { executed = true; return 'x'; }));
 
     const loop = new MiMoLoop({
       client: new FakeClient([[toolCallChunk('do_thing', {})], [{ type: 'content', content: 'done' }]]),
@@ -131,7 +142,7 @@ describe('P0-1 EngineBridge', () => {
   });
 
   it('streams normalized events from a loop', async () => {
-    const tools = new MockToolRegistry();
+    const tools = new ToolRegistry();
     const loop = new MiMoLoop({
       client: new FakeClient([[{ type: 'content', content: 'hello' }]]),
       tools,

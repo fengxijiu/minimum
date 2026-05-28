@@ -1,7 +1,7 @@
-export * from "./JsonRepair";
-export * from "./TypeRepair";
-export * from "./ValueRepair";
-export * from "./PathRepair";
-export * from "./ToolCallRepair";
+export * from "./JsonRepair.js";
+export * from "./TypeRepair.js";
+export * from "./ValueRepair.js";
+export * from "./PathRepair.js";
+export * from "./ToolCallRepair.js";
 export { StormBreaker } from "./StormBreaker.js";
 export type { StormConfig, IsMutating, IsStormExempt } from "./StormBreaker.js";

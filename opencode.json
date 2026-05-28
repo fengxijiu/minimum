@@ -18,7 +18,8 @@
           "modalities": {
             "input": ["text"],
             "output": ["text"]
-          }
+          },
+          "description": "专业版 - Agentic 长上下文一致性更强"
         },
         "mimo-v2.5": {
           "name": "mimo-v2.5",
@@ -29,9 +30,49 @@
           "modalities": {
             "input": ["text", "image"],
             "output": ["text"]
-          }
+          },
+          "description": "标准版 - 支持图片理解，多模态能力"
         }
       }
+    }
+  },
+  "minimum": {
+    "apiType": "token-plan",
+    "defaultModel": "mimo-v2.5-pro",
+    "tools": {
+      "enabled": ["filesystem", "git", "search"],
+      "permissions": {
+        "shell": "ask",
+        "filesystem": "allow"
+      }
+    },
+    "memory": {
+      "enabled": true,
+      "path": "~/.minimum/memory"
+    },
+    "skills": {
+      "enabled": true,
+      "path": "./skills"
+    },
+    "optimization": {
+      "validation": true,
+      "repair": true,
+      "completeness": true,
+      "context": {
+        "foldThreshold": 0.70,
+        "aggressiveThreshold": 0.75
+      },
+      "iteration": {
+        "maxRetries": 3,
+        "learnFromErrors": true
+      }
+    },
+    "hooks": {
+      "enabled": true
+    },
+    "approval": {
+      "mode": "suggest",
+      "autoApproveLowRisk": true
     }
   }
 }

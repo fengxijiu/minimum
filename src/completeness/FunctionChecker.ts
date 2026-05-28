@@ -1,4 +1,4 @@
-import type { CompletenessIssue } from "../types/completeness";
+import type { CompletenessIssue } from "../types/completeness.js";
 
 export class FunctionChecker {
 	async check(code: string): Promise<CompletenessIssue[]> {

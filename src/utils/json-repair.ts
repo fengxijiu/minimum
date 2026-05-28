@@ -1,4 +1,4 @@
-import type { JsonRepairResult } from "../types/repair";
+import type { JsonRepairResult } from "../types/repair.js";
 
 export type { JsonRepairResult };
 

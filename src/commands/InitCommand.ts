@@ -134,12 +134,63 @@ interface MinimumConfig {
   };
 }
 
+export interface InitOptions {
+  apiKey: string;
+  apiType?: ApiType;
+  model?: ModelType;
+  region?: Region;
+  baseUrl?: string;
+  enableShell?: boolean;
+  enableFilesystem?: boolean;
+  enableGit?: boolean;
+  enableSearch?: boolean;
+  enableMemory?: boolean;
+  enableSkills?: boolean;
+}
+
 export class InitCommand implements Command {
   name = 'init';
   description = 'Initialize MiMo configuration';
   usage = '/init [--quick] [--reset]';
 
   private rl: readline.Interface | null = null;
+
+  /**
+   * Non-interactive init — accepts options directly, no readline needed.
+   * Safe to call from Ink TUI (raw mode stdin).
+   */
+  static async executeFromArgs(workingDirectory: string, options: InitOptions): Promise<CommandResult> {
+    const cmd = new InitCommand();
+
+    const apiType = options.apiType ?? (options.apiKey.startsWith('tp-') ? 'token-plan' : 'api');
+    const apiConfig = API_CONFIGS[apiType];
+
+    let baseUrl = options.baseUrl;
+    if (!baseUrl && apiType === 'token-plan' && options.region && apiConfig.regions) {
+      baseUrl = apiConfig.regions[options.region];
+    }
+    baseUrl = baseUrl ?? apiConfig.baseUrl;
+
+    const model: ModelType = options.model ?? 'mimo-v2.5-pro';
+    const config = cmd.buildConfig(options.apiKey, apiType, model, baseUrl, options);
+
+    const configPath = path.join(workingDirectory, 'opencode.json');
+    const globalConfigPath = path.join(process.env.HOME || '~', '.config', 'opencode', 'opencode.json');
+
+    await cmd.saveConfig(configPath, config);
+    await cmd.saveGlobalConfig(globalConfigPath, config);
+    await cmd.createDirectories(workingDirectory);
+
+    // Also export env vars so MiMoClient picks them up immediately
+    process.env.MIMO_API_KEY = options.apiKey;
+    process.env.MIMO_BASE_URL = baseUrl;
+
+    return {
+      success: true,
+      output: cmd.formatSuccessMessage(config, configPath, globalConfigPath),
+      data: { config },
+    };
+  }
 
   async execute(args: string[], context: CommandContext): Promise<CommandResult> {
     const isQuick = args.includes('--quick');
@@ -374,6 +425,50 @@ export class InitCommand implements Command {
           autoApproveLowRisk: true
         }
       }
+    };
+  }
+
+  private buildConfig(apiKey: string, apiType: ApiType, model: ModelType, baseUrl: string, opts: InitOptions): MinimumConfig {
+    const models: Record<string, ModelConfig> = {};
+    models[model] = MODEL_CONFIGS[model];
+
+    const enabledTools: string[] = [];
+    if (opts.enableFilesystem !== false) enabledTools.push('filesystem');
+    if (opts.enableShell) enabledTools.push('shell');
+    if (opts.enableGit !== false) enabledTools.push('git');
+    if (opts.enableSearch !== false) enabledTools.push('search');
+
+    return {
+      provider: {
+        mimo: {
+          npm: '@ai-sdk/openai-compatible',
+          name: 'MiMo',
+          options: { baseURL: baseUrl, apiKey },
+          models,
+        },
+      },
+      minimum: {
+        apiType,
+        defaultModel: model,
+        tools: {
+          enabled: enabledTools,
+          permissions: {
+            shell: opts.enableShell ? 'allow' : 'ask',
+            filesystem: 'allow',
+          },
+        },
+        memory: { enabled: opts.enableMemory !== false, path: '~/.minimum/memory' },
+        skills: { enabled: opts.enableSkills !== false, path: './skills' },
+        optimization: {
+          validation: true,
+          repair: true,
+          completeness: true,
+          context: { foldThreshold: 0.70, aggressiveThreshold: 0.75 },
+          iteration: { maxRetries: 3, learnFromErrors: true },
+        },
+        hooks: { enabled: true },
+        approval: { mode: 'suggest', autoApproveLowRisk: true },
+      },
     };
   }
 

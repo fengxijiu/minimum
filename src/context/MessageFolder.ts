@@ -1,6 +1,6 @@
-import type { ChatMessage } from "../types/common";
-import type { KeyInfo } from "../types/context";
-import { estimateTokens, truncateToTokens } from "../utils/token-counter";
+import type { ChatMessage } from "../types/common.js";
+import type { KeyInfo } from "../types/context.js";
+import { estimateTokens, truncateToTokens } from "../utils/token-counter.js";
 
 export interface FoldOptions {
 	tailFraction: number;

@@ -2,7 +2,7 @@ import type {
 	IChecker,
 	ValidationCheck,
 	ValidationRequest,
-} from "../types/validator";
+} from "../types/validator.js";
 
 /**
  * TypeChecker performs static analysis for common TypeScript/JavaScript type issues.

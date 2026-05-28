@@ -24,7 +24,7 @@ export { SkillCommand } from "./SkillCommand.js";
 export { MemoryCommand } from "./MemoryCommand.js";
 export { ConfigCommand } from "./ConfigCommand.js";
 export { StatusCommand } from "./StatusCommand.js";
-export { InitCommand } from "./InitCommand.js";
+export { InitCommand, type InitOptions } from "./InitCommand.js";
 
 export function createDefaultRegistry(): CommandRegistry {
 	const registry = new CommandRegistry();

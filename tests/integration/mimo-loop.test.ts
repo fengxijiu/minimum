@@ -1,28 +1,39 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { MiMoLoop } from '../../src/loop/MiMoLoop.js';
 import { MockClient } from '../../src/mocks/MockClient.js';
-import { MockToolRegistry } from '../../src/mocks/MockToolRegistry.js';
-import { MockCompletenessChecker } from '../../src/mocks/MockCompletenessChecker.js';
+import { ToolRegistry } from '../../src/tools/ToolRegistry.js';
+import { CompletenessChecker } from '../../src/completeness/CompletenessChecker.js';
 import { CodeValidator } from '../../src/validators/CodeValidator.js';
 import { ToolCallRepair } from '../../src/repair/ToolCallRepair.js';
 import { ContextManager } from '../../src/context/ContextManager.js';
 import { IterationManager } from '../../src/iteration/IterationManager.js';
 
+function makeTool(name: string, fn: (args: any) => Promise<string>, description = 'test tool') {
+  return {
+    name,
+    description,
+    getDefinition() {
+      return { name, description, parameters: { type: 'object', properties: {} } };
+    },
+    execute: fn,
+  };
+}
+
 describe('MiMoLoop Integration', () => {
   let loop: MiMoLoop;
   let client: MockClient;
-  let tools: MockToolRegistry;
+  let tools: ToolRegistry;
 
   beforeEach(() => {
     client = new MockClient();
-    tools = new MockToolRegistry();
+    tools = new ToolRegistry();
 
     loop = new MiMoLoop({
       client,
       tools,
       validator: new CodeValidator(),
       toolRepair: new ToolCallRepair(),
-      completenessChecker: new MockCompletenessChecker(),
+      completenessChecker: new CompletenessChecker(),
       contextManager: new ContextManager(),
       iterationManager: new IterationManager(),
       maxTokens: 4000,
@@ -32,7 +43,7 @@ describe('MiMoLoop Integration', () => {
   });
 
   it('should execute simple task', async () => {
-    client.setDefaultResponse('Task completed successfully');
+    client.setDefaultResponse('done');
 
     const events: any[] = [];
     for await (const event of loop.run('Say hello')) {
@@ -48,12 +59,7 @@ describe('MiMoLoop Integration', () => {
     client.setDefaultResponse('');
     client.setResponse('Read file', 'File content here');
 
-    tools.register({
-      name: 'read_file',
-      description: 'Read a file',
-      parameters: { type: 'object', properties: { path: { type: 'string' } } },
-      fn: async () => 'File content'
-    });
+    tools.register(makeTool('read_file', async () => 'File content', 'Read a file'));
 
     const events: any[] = [];
     for await (const event of loop.run('Read the file')) {
@@ -74,16 +80,15 @@ describe('MiMoLoop Integration', () => {
 
     const usageEvent = events.find(e => e.type === 'usage');
     expect(usageEvent).toBeDefined();
-    expect(usageEvent.promptTokens).toBeDefined();
-    expect(usageEvent.totalTokens).toBeDefined();
+    expect(usageEvent.usage).toBeDefined();
+    expect(usageEvent.usage.totalTokens).toBeDefined();
   });
 
   it('should handle errors gracefully', async () => {
     client.setDefaultResponse('');
 
     // 模拟错误
-    const originalChat = client.chat.bind(client);
-    client.chat = async (options) => {
+    client.streamChat = async function *(options: any) {
       throw new Error('API Error');
     };
 

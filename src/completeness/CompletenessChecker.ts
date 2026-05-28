@@ -5,11 +5,11 @@ import type {
 	CompletenessResult,
 	ICompletenessChecker,
 	RequiredAction,
-} from "../types/completeness";
-import { ErrorHandlingChecker } from "./ErrorHandlingChecker";
-import { FunctionChecker } from "./FunctionChecker";
-import { ImportChecker } from "./ImportChecker";
-import { TaskCompletionChecker } from "./TaskCompletionChecker";
+} from "../types/completeness.js";
+import { ErrorHandlingChecker } from "./ErrorHandlingChecker.js";
+import { FunctionChecker } from "./FunctionChecker.js";
+import { ImportChecker } from "./ImportChecker.js";
+import { TaskCompletionChecker } from "./TaskCompletionChecker.js";
 
 export class CompletenessChecker implements ICompletenessChecker {
 	private functionChecker: FunctionChecker;
