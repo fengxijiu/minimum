@@ -84,3 +84,16 @@ export const GLOBAL_FORBIDDEN_WRITES: string[] = [
 	"node_modules/**",
 	".minimum/_archive/**",
 ];
+
+/**
+ * Globs forbidden to all WORKER personas (but allowed to master_planner).
+ *
+ * The .minimum canonical files are the master's sole writable surface — no
+ * worker may touch them, regardless of what its Task Contract says. Workers
+ * still emit memory candidates, but TaskRunner (not the worker's tools) is
+ * the one that writes to `.minimum/_staging/`.
+ */
+export const WORKER_FORBIDDEN_WRITES: string[] = [
+	...GLOBAL_FORBIDDEN_WRITES,
+	".minimum/**",
+];

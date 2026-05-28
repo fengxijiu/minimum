@@ -88,6 +88,18 @@ describe("PersonaRegistry", () => {
 			expect(GLOBAL_FORBIDDEN_WRITES).toContain(".env");
 			expect(GLOBAL_FORBIDDEN_WRITES).toContain(".git/**");
 		});
+
+		it("every worker forbids .minimum/** (canonical reserved for master)", () => {
+			for (const p of listPersonas()) {
+				if (p.kind === "master") continue;
+				expect(p.pathPolicy.forbiddenGlobs).toContain(".minimum/**");
+			}
+		});
+
+		it("master_planner does NOT forbid .minimum/**", () => {
+			const master = listPersonas().find((p) => p.kind === "master")!;
+			expect(master.pathPolicy.forbiddenGlobs).not.toContain(".minimum/**");
+		});
 	});
 
 	describe("system prompt loading", () => {

@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
 	GLOBAL_FORBIDDEN_WRITES,
+	WORKER_FORBIDDEN_WRITES,
 	type Persona,
 	type PersonaId,
 } from "./Persona.js";
@@ -78,7 +79,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		pathPolicy: {
 			canWrite: false,
 			alwaysAllowedGlobs: [],
-			forbiddenGlobs: GLOBAL_FORBIDDEN_WRITES,
+			forbiddenGlobs: WORKER_FORBIDDEN_WRITES,
 		},
 		maxSteps: 8,
 		maxTokens: 32_000,
@@ -103,7 +104,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		pathPolicy: {
 			canWrite: false,
 			alwaysAllowedGlobs: [],
-			forbiddenGlobs: GLOBAL_FORBIDDEN_WRITES,
+			forbiddenGlobs: WORKER_FORBIDDEN_WRITES,
 		},
 		maxSteps: 15,
 		maxTokens: 32_000,
@@ -123,7 +124,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 			// Only allowed to write under per-epic context-packs dir; the actual
 			// taskId-scoped path is locked in by the Task Contract.
 			alwaysAllowedGlobs: ["tasks/**/context-packs/**"],
-			forbiddenGlobs: GLOBAL_FORBIDDEN_WRITES,
+			forbiddenGlobs: WORKER_FORBIDDEN_WRITES,
 		},
 		maxSteps: 10,
 		maxTokens: 32_000,
@@ -154,7 +155,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 			// Without contract globs, PathPolicyEnforcer denies all writes
 			// except the staging memory file.
 			alwaysAllowedGlobs: [],
-			forbiddenGlobs: GLOBAL_FORBIDDEN_WRITES,
+			forbiddenGlobs: WORKER_FORBIDDEN_WRITES,
 		},
 		maxSteps: 40,
 		maxTokens: 64_000,
@@ -188,7 +189,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 				"**/test_*.py",
 				"**/*_test.go",
 			],
-			forbiddenGlobs: GLOBAL_FORBIDDEN_WRITES,
+			forbiddenGlobs: WORKER_FORBIDDEN_WRITES,
 		},
 		maxSteps: 20,
 		maxTokens: 48_000,
@@ -206,7 +207,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		pathPolicy: {
 			canWrite: false,
 			alwaysAllowedGlobs: [],
-			forbiddenGlobs: GLOBAL_FORBIDDEN_WRITES,
+			forbiddenGlobs: WORKER_FORBIDDEN_WRITES,
 		},
 		maxSteps: 6,
 		maxTokens: 32_000,
@@ -231,7 +232,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		pathPolicy: {
 			canWrite: false,
 			alwaysAllowedGlobs: ["tasks/**/artifacts/**"],
-			forbiddenGlobs: GLOBAL_FORBIDDEN_WRITES,
+			forbiddenGlobs: WORKER_FORBIDDEN_WRITES,
 		},
 		maxSteps: 15,
 		maxTokens: 32_000,
@@ -249,7 +250,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		pathPolicy: {
 			canWrite: false,
 			alwaysAllowedGlobs: [],
-			forbiddenGlobs: GLOBAL_FORBIDDEN_WRITES,
+			forbiddenGlobs: WORKER_FORBIDDEN_WRITES,
 		},
 		maxSteps: 10,
 		maxTokens: 48_000,
@@ -279,7 +280,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 				"docs/**",
 				"CHANGELOG.md",
 			],
-			forbiddenGlobs: GLOBAL_FORBIDDEN_WRITES,
+			forbiddenGlobs: WORKER_FORBIDDEN_WRITES,
 		},
 		maxSteps: 12,
 		maxTokens: 32_000,
