@@ -25,6 +25,8 @@ export interface EngineInfo {
 export type UiPlanStatus = 'pending' | 'in_progress' | 'completed';
 export interface UiPlanStep { label: string; status: UiPlanStatus; }
 
+export type UiRisk = 'low' | 'medium' | 'high';
+
 export type UiEvent =
   | { kind: 'assistant'; text: string }
   | { kind: 'reasoning'; text: string }
@@ -34,10 +36,15 @@ export type UiEvent =
   | { kind: 'error'; text: string }
   | { kind: 'usage'; totalTokens: number; toolCalls: number; steps: number; totalCostUsd: number }
   | { kind: 'plan'; steps: UiPlanStep[] }
+  | { kind: 'permission_request'; id: string; tool: string; args: Record<string, unknown>; risk: UiRisk; description: string }
   | { kind: 'done'; success: boolean };
+
+export type ApprovalDecision = { approved: boolean; reason?: string; remembered?: boolean };
 
 export interface Runner {
   send(input: string): AsyncIterable<UiEvent>;
+  resolvePermission?(id: string, decision: ApprovalDecision): void;
+  setApprovalMode?(mode: 'read-only' | 'auto-edit' | 'full-auto' | 'suggest' | 'never'): void;
 }
 
 const KIND: Record<string, ToolKind> = {
@@ -72,6 +79,7 @@ export function uiEventToMessages(ev: UiEvent): Message[] {
       return [{ id: id('x'), type: 'error', error: { title: 'error', lines: [ev.text] } }];
     case 'usage':
     case 'plan':
+    case 'permission_request':
     case 'done':
       return [];
   }
@@ -140,7 +148,14 @@ export async function createEngineRunner(
       tools.register(new eng.ExecShellTool());
     }
 
-    const { loop } = eng.createMiMoStack(client, tools, workingDirectory, userConfig);
+    const approvalManager = new eng.ApprovalManager({ mode: userConfig.approvalMode ?? 'auto-edit' });
+    const { loop } = eng.createMiMoStack(client, tools, workingDirectory, userConfig, { approvalManager });
+    const bridge = new eng.EngineBridge(loop, { approvalManager });
+    const runner: Runner = {
+      send: (input: string) => bridge.send(input),
+      resolvePermission: (id, decision) => bridge.resolvePermission(id, decision),
+      setApprovalMode: (mode) => approvalManager.setMode(mode),
+    };
     const toolNames: string[] = (tools.getDefinitions?.() ?? []).map((d: { name: string }) => d.name);
     const info: EngineInfo = {
       mode: 'engine',
@@ -150,7 +165,7 @@ export async function createEngineRunner(
       configPath,
       memoryPath: path.join(workingDirectory, '.minimum', 'memory.md'),
     };
-    return { runner: new eng.EngineBridge(loop) as Runner, info };
+    return { runner, info };
   } catch (err) {
     return { runner: mockRunner, info: fallbackInfo('init-error', String((err as Error)?.message ?? err)) };
   }

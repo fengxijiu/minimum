@@ -29,6 +29,13 @@ const DANGEROUS_SHELL_RE = [
 	/wget.*\|\s*sh/,
 ];
 
+/**
+ * Hook to surface a confirmation prompt to a user. When set, the manager
+ * delegates "needs confirmation" decisions to it instead of auto-denying.
+ * EngineBridge wires this to the TUI's permission overlay.
+ */
+export type ApprovalPrompter = (request: ApprovalRequest) => Promise<ApprovalResponse>;
+
 export class ApprovalManager {
 	private config: ApprovalConfig;
 	/** Per-exact-call memory (tool + serialised args) */
@@ -36,6 +43,7 @@ export class ApprovalManager {
 	/** Per-tool-name habit cache ("always allow" or "always block") */
 	private habitCache: Map<string, "always" | "block"> = new Map();
 	private nextId = 1;
+	private prompter?: ApprovalPrompter;
 
 	constructor(config?: Partial<ApprovalConfig>) {
 		this.config = {
@@ -85,7 +93,7 @@ export class ApprovalManager {
 				if (request.risk === "low" || EDIT_TOOLS.has(request.tool)) {
 					return { approved: true, reason: "auto-edit: auto-approved" };
 				}
-				return { approved: false, reason: "auto-edit: shell requires confirmation" };
+				return this.ask(request, "auto-edit: shell requires confirmation");
 
 			case "full-auto":
 				return { approved: true, reason: "full-auto: unrestricted" };
@@ -98,8 +106,21 @@ export class ApprovalManager {
 				if (this.config.autoApproveLowRisk && request.risk === "low") {
 					return { approved: true, reason: "suggest: low risk auto-approved" };
 				}
-				return { approved: false, reason: "suggest: requires user confirmation" };
+				return this.ask(request, "suggest: requires user confirmation");
 		}
+	}
+
+	/** Delegate to prompter if set, else fall back to deny with the given reason. */
+	private async ask(request: ApprovalRequest, denyReason: string): Promise<ApprovalResponse> {
+		if (!this.prompter) return { approved: false, reason: denyReason };
+		const resp = await this.prompter(request);
+		// Remember the decision for the rest of the session.
+		this.recordApproval(request, resp.approved, resp.remembered ?? false);
+		return resp;
+	}
+
+	setPrompter(fn: ApprovalPrompter | undefined): void {
+		this.prompter = fn;
 	}
 
 	/**

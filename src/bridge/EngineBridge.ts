@@ -1,4 +1,6 @@
 import type { LoopEvent } from "../loop/MiMoLoop.js";
+import type { ApprovalManager } from "../approval/ApprovalManager.js";
+import type { ApprovalMode, ApprovalRequest, ApprovalResponse } from "../approval/types.js";
 
 /**
  * UiEvent — 前端无关的规范化事件流。
@@ -22,6 +24,14 @@ export type UiEvent =
 	| { kind: "error"; text: string }
 	| { kind: "usage"; totalTokens: number; toolCalls: number; steps: number; totalCostUsd: number }
 	| { kind: "plan"; steps: UiPlanStep[] }
+	| {
+		kind: "permission_request";
+		id: string;
+		tool: string;
+		args: Record<string, unknown>;
+		risk: "low" | "medium" | "high";
+		description: string;
+	}
 	| { kind: "done"; success: boolean };
 
 /** Parse TodoWriteTool's formatted result back into structured plan steps. */
@@ -111,16 +121,78 @@ export function mapLoopEvent(e: LoopEvent): UiEvent | null {
 
 /**
  * EngineBridge — 把一个 MiMoLoop（或兼容对象）包成规范化事件流。
+ *
+ * 可选 `approvalManager`：注入后 Bridge 会把交互式权限请求转成
+ * `permission_request` UiEvent 推给前端，并等待 `resolvePermission` 回填。
  */
 export class EngineBridge {
-	constructor(private loop: EngineLoop) {}
+	private pending = new Map<string, (r: ApprovalResponse) => void>();
+	private queue: UiEvent[] = [];
+	private notifier?: () => void;
+
+	constructor(
+		private loop: EngineLoop,
+		opts?: { approvalManager?: ApprovalManager },
+	) {
+		opts?.approvalManager?.setPrompter(async (req) => this.askUser(req));
+	}
+
+	/** Forward an approval decision from the frontend back into the engine. */
+	resolvePermission(id: string, response: ApprovalResponse): void {
+		const resolve = this.pending.get(id);
+		if (resolve) {
+			this.pending.delete(id);
+			resolve(response);
+		}
+	}
+
+	private askUser(req: ApprovalRequest): Promise<ApprovalResponse> {
+		return new Promise<ApprovalResponse>((resolve) => {
+			this.pending.set(req.id, resolve);
+			this.queue.push({
+				kind: "permission_request",
+				id: req.id,
+				tool: req.tool,
+				args: req.args,
+				risk: req.risk,
+				description: req.description,
+			});
+			this.notifier?.();
+		});
+	}
 
 	async *send(userInput: string): AsyncGenerator<UiEvent> {
-		for await (const e of this.loop.run(userInput)) {
+		const loopIter = this.loop.run(userInput)[Symbol.asyncIterator]();
+		let pendingLoop: Promise<IteratorResult<LoopEvent>> | null = null;
+		let loopDone = false;
+
+		while (true) {
+			while (this.queue.length) yield this.queue.shift()!;
+			if (loopDone) break;
+
+			if (!pendingLoop) pendingLoop = loopIter.next();
+			const queueWait = new Promise<"queue">((r) => {
+				this.notifier = () => {
+					this.notifier = undefined;
+					r("queue");
+				};
+			});
+			const winner = await Promise.race([
+				pendingLoop.then(() => "loop" as const),
+				queueWait,
+			]);
+			this.notifier = undefined;
+			if (winner === "queue") continue;
+
+			const result = await pendingLoop;
+			pendingLoop = null;
+			if (result.done) {
+				loopDone = true;
+				continue;
+			}
+			const e = result.value;
 			const ui = mapLoopEvent(e);
 			if (ui) yield ui;
-			// Side-channel: when todo_write succeeds, emit a plan event so the TUI
-			// can mirror the agent's task list without us coupling to the tool class.
 			if (
 				e.type === "tool_result" &&
 				e.success &&
@@ -134,3 +206,5 @@ export class EngineBridge {
 		}
 	}
 }
+
+export type { ApprovalMode };

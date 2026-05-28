@@ -27,6 +27,14 @@ const PLAN_STATUS: Record<UiPlanStatus, PlanStep['status']> = {
 type Overlay = 'none' | 'cmd' | 'file';
 type Pending = null | 'permission' | 'error';
 
+interface ActivePermission {
+  id: string;
+  tool: string;
+  args: Record<string, unknown>;
+  risk: 'low' | 'medium' | 'high';
+  description: string;
+}
+
 let seq = 0;
 const mid = (p: string) => p + Date.now() + '_' + seq++;
 
@@ -49,6 +57,7 @@ export function App({
   const [sel, setSel] = useState(0);
   const [helpOpen, setHelpOpen] = useState(false);
   const [pending, setPending] = useState<Pending>(null);
+  const [activePerm, setActivePerm] = useState<ActivePermission | null>(null);
   const [history] = useState<string[]>(() => loadHistory().map(h => h.text));
   // -1 means "live input"; 0..N indexes into history newest-last
   const [histIdx, setHistIdx] = useState(-1);
@@ -120,6 +129,9 @@ export function App({
         push({ id: mid('p'), type: 'permission', perm: o.perm });
         return;
       case 'patch':
+        if (o.patch.approvalMode) {
+          runner.setApprovalMode?.(o.patch.approvalMode);
+        }
         setState(s => ({
           ...s,
           ...o.patch,
@@ -133,6 +145,13 @@ export function App({
 
   // permission → run fails → error block + agent's proposed fix (matches design)
   const allowPermission = () => {
+    if (activePerm) {
+      runner.resolvePermission?.(activePerm.id, { approved: true, reason: 'user approved' });
+      setActivePerm(null);
+      setPending(null);
+      push(sysMessage(`Allowed ${activePerm.tool}.`, 'ok'));
+      return;
+    }
     setPending('error');
     const chips: Chip[] = [
       { key: '⏎', label: 'fix & re-run', primary: true },
@@ -167,6 +186,10 @@ export function App({
   };
 
   const dismissPending = (note: string) => {
+    if (activePerm) {
+      runner.resolvePermission?.(activePerm.id, { approved: false, reason: 'user denied' });
+      setActivePerm(null);
+    }
     setPending(null);
     push(sysMessage(note, 'warn'));
   };
@@ -243,6 +266,23 @@ export function App({
     void (async () => {
       try {
         for await (const ev of runner.send(trimmed)) {
+          if (ev.kind === 'permission_request') {
+            const args = ev.args;
+            const cmd = String((args as any).command ?? (args as any).path ?? ev.tool);
+            setActivePerm({ id: ev.id, tool: ev.tool, args, risk: ev.risk, description: ev.description });
+            setPending('permission');
+            push({
+              id: mid('p'),
+              type: 'permission',
+              perm: {
+                tool: ev.tool,
+                cmd: `$ ${cmd}`,
+                cwd: state.path,
+                note: `${ev.description} · risk ${ev.risk} — ⏎ allow · esc deny`,
+              },
+            });
+            continue;
+          }
           if (ev.kind === 'usage') {
             const used = Number((ev.totalTokens / 1000).toFixed(1));
             setState(s => ({ ...s, ctx: { ...s.ctx, used } }));
