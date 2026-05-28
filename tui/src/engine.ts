@@ -22,6 +22,9 @@ export interface EngineInfo {
  * can be `new EngineBridge(createMiMoStack(...).loop)` from the built engine,
  * while the TUI stays decoupled and runnable standalone with the mock.
  */
+export type UiPlanStatus = 'pending' | 'in_progress' | 'completed';
+export interface UiPlanStep { label: string; status: UiPlanStatus; }
+
 export type UiEvent =
   | { kind: 'assistant'; text: string }
   | { kind: 'reasoning'; text: string }
@@ -29,6 +32,8 @@ export type UiEvent =
   | { kind: 'tool_result'; name: string; ok: boolean; content: string }
   | { kind: 'notice'; text: string; tone: 'info' | 'warn' | 'ok' }
   | { kind: 'error'; text: string }
+  | { kind: 'usage'; totalTokens: number; toolCalls: number; steps: number; totalCostUsd: number }
+  | { kind: 'plan'; steps: UiPlanStep[] }
   | { kind: 'done'; success: boolean };
 
 export interface Runner {
@@ -65,6 +70,8 @@ export function uiEventToMessages(ev: UiEvent): Message[] {
       return [{ id: id('n'), type: 'system', text: ev.text, tone: ev.tone }];
     case 'error':
       return [{ id: id('x'), type: 'error', error: { title: 'error', lines: [ev.text] } }];
+    case 'usage':
+    case 'plan':
     case 'done':
       return [];
   }

@@ -136,7 +136,8 @@ describe('P0-1 EngineBridge', () => {
   it('maps loop events to UI events', () => {
     expect(mapLoopEvent({ type: 'content', content: 'hi' } as any)).toEqual({ kind: 'assistant', text: 'hi' });
     expect(mapLoopEvent({ type: 'error', error: 'boom', recoverable: false } as any)).toEqual({ kind: 'error', text: 'boom' });
-    expect(mapLoopEvent({ type: 'usage', usage: {} } as any)).toBeNull();
+    expect(mapLoopEvent({ type: 'usage', usage: { totalTokens: 12, toolCalls: 1, steps: 1, totalCostUsd: 0 } } as any))
+      .toEqual({ kind: 'usage', totalTokens: 12, toolCalls: 1, steps: 1, totalCostUsd: 0 });
     expect(mapLoopEvent({ type: 'plan_blocked', toolCall: { function: { name: 'write_file' } } } as any))
       .toMatchObject({ kind: 'notice', tone: 'warn' });
   });

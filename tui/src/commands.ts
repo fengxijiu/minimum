@@ -121,16 +121,13 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
       return { kind: 'patch', patch: { mode: target }, note: `Mode → ${target}.`, tone: 'ok' };
     }
 
-    case 'compact': {
-      const freed = Math.max(0, state.ctx.used - state.ctx.used * 0.4);
-      const used = Number((state.ctx.used - freed).toFixed(1));
+    case 'compact':
       return {
-        kind: 'patch',
-        patch: { ctx: { ...state.ctx, used } },
-        note: `Context compacted · freed ~${freed.toFixed(1)}k tokens (now ${used}k/${state.ctx.max}k).`,
-        tone: 'ok',
+        kind: 'note',
+        note: ctx.engineMode === 'engine'
+          ? 'Compaction is automatic — the engine folds context when usage crosses the threshold.'
+          : `Context ${state.ctx.used}k / ${state.ctx.max}k · compaction runs automatically in the engine.`,
       };
-    }
 
     case 'context':
       return {

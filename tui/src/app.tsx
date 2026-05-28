@@ -14,8 +14,14 @@ import { initialState }   from './mock.js';
 import {
   filterCommands, runCommand, sysMessage, type CommandOutcome, type CommandContext,
 } from './commands.js';
-import { mockRunner, uiEventToMessages, type Runner, type EngineInfo } from './engine.js';
-import type { AppState, Message, FileEntry, SessionState, Chip } from './types.js';
+import { mockRunner, uiEventToMessages, type Runner, type EngineInfo, type UiPlanStatus } from './engine.js';
+import type { AppState, Message, FileEntry, SessionState, Chip, PlanStep } from './types.js';
+
+const PLAN_STATUS: Record<UiPlanStatus, PlanStep['status']> = {
+  pending: 'next',
+  in_progress: 'now',
+  completed: 'done',
+};
 
 type Overlay = 'none' | 'cmd' | 'file';
 type Pending = null | 'permission' | 'error';
@@ -203,6 +209,24 @@ export function App({
     void (async () => {
       try {
         for await (const ev of runner.send(trimmed)) {
+          if (ev.kind === 'usage') {
+            const used = Number((ev.totalTokens / 1000).toFixed(1));
+            setState(s => ({ ...s, ctx: { ...s.ctx, used } }));
+            continue;
+          }
+          if (ev.kind === 'plan') {
+            const steps: PlanStep[] = ev.steps.map(st => ({ label: st.label, status: PLAN_STATUS[st.status] }));
+            const inProgress = ev.steps.find(st => st.status === 'in_progress');
+            const idx = inProgress
+              ? ev.steps.indexOf(inProgress) + 1
+              : ev.steps.filter(st => st.status === 'completed').length + 1;
+            setState(s => ({
+              ...s,
+              plan: { title: s.plan.title === '(no plan yet)' ? 'agent plan' : s.plan.title, steps },
+              currentStepLabel: inProgress ? `STEP ${idx} · ${inProgress.label.toUpperCase()}` : s.currentStepLabel,
+            }));
+            continue;
+          }
           const msgs = uiEventToMessages(ev);
           if (msgs.length) push(...msgs);
         }
