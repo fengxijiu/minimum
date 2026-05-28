@@ -3,7 +3,7 @@ import { Box, Text } from 'ink';
 import { theme } from '../theme.js';
 import type { FileEntry } from '../types.js';
 
-export function FilePicker({ items, selected }: {
+export const FilePicker = React.memo(function FilePicker({ items, selected }: {
   items: FileEntry[];
   selected: number;
 }) {
@@ -44,4 +44,4 @@ export function FilePicker({ items, selected }: {
       })}
     </Box>
   );
-}
+});

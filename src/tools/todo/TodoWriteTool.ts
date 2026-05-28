@@ -63,7 +63,9 @@ export class TodoWriteTool {
 
 		if (this.todos.length === 0) return "Todo list cleared.";
 
-		const inProgress = this.todos.filter((t) => t.status === "in_progress").length;
+		const inProgress = this.todos.filter(
+			(t) => t.status === "in_progress",
+		).length;
 		if (inProgress > 1) {
 			return "Error: only one task may be in_progress at a time.";
 		}

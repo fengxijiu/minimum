@@ -105,13 +105,13 @@ export const DEFAULT_MIMO_CONFIG: Required<MiMoConfig> = {
 	planMode: false,
 	approvalMode: "suggest",
 	context: {
-		foldThreshold: 0.70,
+		foldThreshold: 0.7,
 		aggressiveThreshold: 0.75,
 		tailFraction: 0.25,
 	},
 	capacity: {
 		enabled: true,
-		lowRiskMax: 0.50,
+		lowRiskMax: 0.5,
 		mediumRiskMax: 0.62,
 		severeMinSlack: -0.25,
 		refreshCooldownTurns: 6,
@@ -141,7 +141,8 @@ export function mergeConfig(user: MiMoConfig = {}): Required<MiMoConfig> {
 		maxSteps: user.maxSteps ?? DEFAULT_MIMO_CONFIG.maxSteps,
 		// 0 means no limit; undefined from user also means no limit
 		budgetUsd: user.budgetUsd ?? DEFAULT_MIMO_CONFIG.budgetUsd,
-		enableReadGuard: user.enableReadGuard ?? DEFAULT_MIMO_CONFIG.enableReadGuard,
+		enableReadGuard:
+			user.enableReadGuard ?? DEFAULT_MIMO_CONFIG.enableReadGuard,
 		planMode: user.planMode ?? DEFAULT_MIMO_CONFIG.planMode,
 		approvalMode: user.approvalMode ?? DEFAULT_MIMO_CONFIG.approvalMode,
 		context: { ...DEFAULT_MIMO_CONFIG.context, ...user.context },

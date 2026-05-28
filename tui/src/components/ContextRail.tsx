@@ -16,7 +16,7 @@ function truncate(s: string, n: number) {
   return s.length > n ? s.slice(0, n - 1) + '…' : s;
 }
 
-export function ContextRail({ files, edits, mode }: {
+export const ContextRail = React.memo(function ContextRail({ files, edits, mode }: {
   files: FileEntry[];
   edits: StagedEdit[];
   mode: Mode;
@@ -86,4 +86,4 @@ export function ContextRail({ files, edits, mode }: {
       </Text>
     </Box>
   );
-}
+});

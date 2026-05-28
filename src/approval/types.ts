@@ -9,7 +9,12 @@ export type RiskLevel = "low" | "medium" | "high";
  *  suggest    — (legacy) interactive; low-risk auto-approved, rest blocked
  *  never      — (legacy) block everything
  */
-export type ApprovalMode = "read-only" | "auto-edit" | "full-auto" | "suggest" | "never";
+export type ApprovalMode =
+	| "read-only"
+	| "auto-edit"
+	| "full-auto"
+	| "suggest"
+	| "never";
 
 export interface ApprovalRequest {
 	id: string;

@@ -10,7 +10,7 @@ const CAT_LABEL: Record<CommandCategory, string> = {
   system: 'SYSTEM',
 };
 
-export function CommandPalette({ items, selected }: {
+export const CommandPalette = React.memo(function CommandPalette({ items, selected }: {
   items: TuiCommand[];
   selected: number;
 }) {
@@ -54,4 +54,4 @@ export function CommandPalette({ items, selected }: {
       })}
     </Box>
   );
-}
+});

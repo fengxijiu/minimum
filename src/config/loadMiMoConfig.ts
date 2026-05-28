@@ -1,7 +1,7 @@
-import * as fs from "node:fs/promises";
 import { readFileSync } from "node:fs";
-import * as path from "node:path";
+import * as fs from "node:fs/promises";
 import * as os from "node:os";
+import * as path from "node:path";
 import type { MiMoConfig } from "./MiMoConfig.js";
 
 /** 动态解析 home：测试可通过修改 process.env.HOME 隔离全局配置。 */
@@ -27,8 +27,8 @@ export const PROJECT_CONFIG_PATH = ".minimum/config.json";
 const PROJECT_CONFIG_PATHS = [
 	PROJECT_CONFIG_PATH, // 新标准
 	".mimo/config.json", // 旧版兼容
-	".mimo.json",        // 旧版兼容
-	"opencode.json",     // 旧版 init 兼容
+	".mimo.json", // 旧版兼容
+	"opencode.json", // 旧版 init 兼容
 ];
 
 /**
@@ -40,8 +40,10 @@ function fromOpenCode(raw: any): MiMoConfig {
 
 	// 从 provider.mimo.options 抽取凭证（init 老格式）
 	const opts = raw?.provider?.mimo?.options;
-	if (opts?.apiKey && !/\$\{/.test(String(opts.apiKey))) cfg.apiKey = String(opts.apiKey);
-	if (opts?.baseURL && !/\$\{/.test(String(opts.baseURL))) cfg.baseUrl = String(opts.baseURL);
+	if (opts?.apiKey && !/\$\{/.test(String(opts.apiKey)))
+		cfg.apiKey = String(opts.apiKey);
+	if (opts?.baseURL && !/\$\{/.test(String(opts.baseURL)))
+		cfg.baseUrl = String(opts.baseURL);
 
 	const min = raw?.minimum;
 	if (!min) return cfg;
@@ -50,12 +52,18 @@ function fromOpenCode(raw: any): MiMoConfig {
 	if (min.approval?.mode) cfg.approvalMode = min.approval.mode;
 
 	const opt = min.optimization ?? {};
-	if (opt.validation !== undefined) cfg.validation = { enabled: !!opt.validation };
-	if (opt.completeness !== undefined) cfg.completeness = { enabled: !!opt.completeness };
+	if (opt.validation !== undefined)
+		cfg.validation = { enabled: !!opt.validation };
+	if (opt.completeness !== undefined)
+		cfg.completeness = { enabled: !!opt.completeness };
 	if (opt.context) {
 		cfg.context = {
-			...(opt.context.foldThreshold !== undefined && { foldThreshold: opt.context.foldThreshold }),
-			...(opt.context.aggressiveThreshold !== undefined && { aggressiveThreshold: opt.context.aggressiveThreshold }),
+			...(opt.context.foldThreshold !== undefined && {
+				foldThreshold: opt.context.foldThreshold,
+			}),
+			...(opt.context.aggressiveThreshold !== undefined && {
+				aggressiveThreshold: opt.context.aggressiveThreshold,
+			}),
 		};
 	}
 	return cfg;
@@ -86,7 +94,10 @@ function tryReadSync(absPath: string): MiMoConfig | null {
 }
 
 /** 项目配置覆盖全局：project { apiKey: "" } 不会盖掉 global apiKey */
-function mergeProjectOverGlobal(project: MiMoConfig, global: MiMoConfig): MiMoConfig {
+function mergeProjectOverGlobal(
+	project: MiMoConfig,
+	global: MiMoConfig,
+): MiMoConfig {
 	const out: MiMoConfig = { ...global };
 	for (const k of Object.keys(project) as Array<keyof MiMoConfig>) {
 		const v = project[k];
@@ -95,8 +106,10 @@ function mergeProjectOverGlobal(project: MiMoConfig, global: MiMoConfig): MiMoCo
 	}
 	// 子对象浅合并
 	if (project.context) out.context = { ...global.context, ...project.context };
-	if (project.capacity) out.capacity = { ...global.capacity, ...project.capacity };
-	if (project.validation) out.validation = { ...global.validation, ...project.validation };
+	if (project.capacity)
+		out.capacity = { ...global.capacity, ...project.capacity };
+	if (project.validation)
+		out.validation = { ...global.validation, ...project.validation };
 	return out;
 }
 
@@ -104,7 +117,9 @@ function mergeProjectOverGlobal(project: MiMoConfig, global: MiMoConfig): MiMoCo
  * 加载 MiMo 配置：项目级优先，回退到全局 `~/.minimum/config.json`。
  * 项目内显式设置的字段会覆盖全局同名字段，未设置的字段继承全局。
  */
-export async function loadMiMoConfig(projectRoot?: string): Promise<MiMoConfig> {
+export async function loadMiMoConfig(
+	projectRoot?: string,
+): Promise<MiMoConfig> {
 	const root = projectRoot ?? process.cwd();
 	const global = (await tryRead(getGlobalConfigPath())) ?? {};
 

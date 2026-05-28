@@ -10,7 +10,7 @@ const TONE_COLOR: Record<Toast['tone'], string> = {
   err: theme.danger,
 };
 
-export function ToastBar({ toasts, onDismiss }: {
+export const ToastBar = React.memo(function ToastBar({ toasts, onDismiss }: {
   toasts: Toast[];
   onDismiss: (id: string) => void;
 }) {
@@ -41,4 +41,4 @@ export function ToastBar({ toasts, onDismiss }: {
       ))}
     </Box>
   );
-}
+});

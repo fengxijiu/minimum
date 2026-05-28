@@ -1,4 +1,4 @@
-import { spawn } from "child_process";
+import { spawn } from "node:child_process";
 import { truncateToolResult } from "../truncateResult.js";
 
 export class ExecShellTool {
@@ -13,7 +13,10 @@ export class ExecShellTool {
 				type: "object",
 				properties: {
 					command: { type: "string", description: "Shell command to execute" },
-					timeout: { type: "number", description: "Timeout in ms (default 30000)" },
+					timeout: {
+						type: "number",
+						description: "Timeout in ms (default 30000)",
+					},
 					cwd: { type: "string", description: "Working directory" },
 				},
 				required: ["command"],
@@ -43,11 +46,20 @@ export class ExecShellTool {
 			// Kill when parent signals abort
 			const onAbort = () => {
 				proc.kill("SIGTERM");
-				setTimeout(() => { try { proc.kill("SIGKILL"); } catch { /* noop */ } }, 500);
+				setTimeout(() => {
+					try {
+						proc.kill("SIGKILL");
+					} catch {
+						/* noop */
+					}
+				}, 500);
 			};
 			if (signal) {
-				if (signal.aborted) { proc.kill("SIGTERM"); }
-				else { signal.addEventListener("abort", onAbort, { once: true }); }
+				if (signal.aborted) {
+					proc.kill("SIGTERM");
+				} else {
+					signal.addEventListener("abort", onAbort, { once: true });
+				}
 			}
 
 			// Collect output up to BUFFER_LIMIT
@@ -63,7 +75,13 @@ export class ExecShellTool {
 			// Wall-clock timeout
 			const timer = setTimeout(() => {
 				proc.kill("SIGTERM");
-				setTimeout(() => { try { proc.kill("SIGKILL"); } catch { /* noop */ } }, 500);
+				setTimeout(() => {
+					try {
+						proc.kill("SIGKILL");
+					} catch {
+						/* noop */
+					}
+				}, 500);
 			}, timeoutMs);
 
 			proc.on("close", (code) => {

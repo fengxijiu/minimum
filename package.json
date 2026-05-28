@@ -7,8 +7,7 @@
   "types": "dist/index.d.ts",
   "bin": {
     "minimum": "bin/minimum-ink.js",
-    "minimum-ink": "bin/minimum-ink.js",
-    "minimum-legacy": "bin/minimum-tui.js"
+    "minimum-ink": "bin/minimum-ink.js"
   },
   "exports": {
     ".": {

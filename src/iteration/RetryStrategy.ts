@@ -42,7 +42,7 @@ export class RetryStrategy {
 
 	getDelay(attempt: number): number {
 		const delay =
-			this.config.backoffMs * Math.pow(this.config.backoffMultiplier, attempt);
+			this.config.backoffMs * this.config.backoffMultiplier ** attempt;
 		return Math.min(delay, this.config.maxBackoffMs);
 	}
 

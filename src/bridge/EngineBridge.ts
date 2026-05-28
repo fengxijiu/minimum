@@ -1,6 +1,10 @@
-import type { LoopEvent } from "../loop/MiMoLoop.js";
 import type { ApprovalManager } from "../approval/ApprovalManager.js";
-import type { ApprovalMode, ApprovalRequest, ApprovalResponse } from "../approval/types.js";
+import type {
+	ApprovalMode,
+	ApprovalRequest,
+	ApprovalResponse,
+} from "../approval/types.js";
+import type { LoopEvent } from "../loop/MiMoLoop.js";
 
 /**
  * UiEvent — 前端无关的规范化事件流。
@@ -22,16 +26,22 @@ export type UiEvent =
 	| { kind: "tool_result"; name: string; ok: boolean; content: string }
 	| { kind: "notice"; text: string; tone: "info" | "warn" | "ok" }
 	| { kind: "error"; text: string }
-	| { kind: "usage"; totalTokens: number; toolCalls: number; steps: number; totalCostUsd: number }
+	| {
+			kind: "usage";
+			totalTokens: number;
+			toolCalls: number;
+			steps: number;
+			totalCostUsd: number;
+	  }
 	| { kind: "plan"; steps: UiPlanStep[] }
 	| {
-		kind: "permission_request";
-		id: string;
-		tool: string;
-		args: Record<string, unknown>;
-		risk: "low" | "medium" | "high";
-		description: string;
-	}
+			kind: "permission_request";
+			id: string;
+			tool: string;
+			args: Record<string, unknown>;
+			risk: "low" | "medium" | "high";
+			description: string;
+	  }
 	| { kind: "done"; success: boolean };
 
 /** Parse TodoWriteTool's formatted result back into structured plan steps. */
@@ -81,7 +91,11 @@ export function mapLoopEvent(e: LoopEvent): UiEvent | null {
 		case "completeness":
 			return e.result?.complete
 				? null
-				: { kind: "notice", text: "incomplete — agent will continue", tone: "warn" };
+				: {
+						kind: "notice",
+						text: "incomplete — agent will continue",
+						tone: "warn",
+					};
 		case "context_optimized":
 			return e.result?.folded
 				? { kind: "notice", text: "context folded", tone: "info" }
@@ -89,7 +103,11 @@ export function mapLoopEvent(e: LoopEvent): UiEvent | null {
 		case "capacity":
 			return e.snapshot.action === "no_intervention"
 				? null
-				: { kind: "notice", text: `capacity: ${e.snapshot.action}`, tone: "warn" };
+				: {
+						kind: "notice",
+						text: `capacity: ${e.snapshot.action}`,
+						tone: "warn",
+					};
 		case "hook":
 			return { kind: "notice", text: `hook · ${e.event}`, tone: "info" };
 		case "plan_blocked":
@@ -99,7 +117,11 @@ export function mapLoopEvent(e: LoopEvent): UiEvent | null {
 				tone: "warn",
 			};
 		case "iteration":
-			return { kind: "notice", text: `retry ${e.attempt}/${e.maxAttempts}`, tone: "info" };
+			return {
+				kind: "notice",
+				text: `retry ${e.attempt}/${e.maxAttempts}`,
+				tone: "info",
+			};
 		case "steer_accepted":
 			return { kind: "notice", text: `steer: ${e.content}`, tone: "info" };
 		case "usage":

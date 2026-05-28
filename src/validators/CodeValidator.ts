@@ -7,8 +7,8 @@ import type {
 } from "../types/validator.js";
 import { PatternChecker } from "./PatternChecker.js";
 import { SyntaxChecker } from "./SyntaxChecker.js";
-import { TypeChecker } from "./TypeChecker.js";
 import { TscChecker } from "./TscChecker.js";
+import { TypeChecker } from "./TypeChecker.js";
 
 /**
  * Configuration options for CodeValidator.

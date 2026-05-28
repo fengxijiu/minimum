@@ -1,4 +1,4 @@
-import * as path from "path";
+import * as path from "node:path";
 
 /**
  * 规范化路径
@@ -24,7 +24,7 @@ export function isPathInside(pathStr: string, directory: string): boolean {
 	const normalizedPath = normalizePath(pathStr);
 	const normalizedDir = normalizePath(directory);
 	return (
-		normalizedPath.startsWith(normalizedDir + "/") ||
+		normalizedPath.startsWith(`${normalizedDir}/`) ||
 		normalizedPath === normalizedDir
 	);
 }

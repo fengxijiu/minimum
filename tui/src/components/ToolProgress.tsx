@@ -16,7 +16,7 @@ function formatElapsed(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-export function ToolProgress({ tool }: { tool: ToolProgressType | null }) {
+export const ToolProgress = React.memo(function ToolProgress({ tool }: { tool: ToolProgressType | null }) {
   if (!tool) return <Box />;
   const [elapsed, setElapsed] = useState(Date.now() - tool.startedAt);
 
@@ -42,4 +42,4 @@ export function ToolProgress({ tool }: { tool: ToolProgressType | null }) {
       {tool.meta ? <Text color={theme.muted}>  {tool.meta}</Text> : null}
     </Box>
   );
-}
+});

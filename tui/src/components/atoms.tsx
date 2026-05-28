@@ -10,7 +10,7 @@ const TOOL_ICON: Record<string, string> = {
   find: '⌕',
 };
 
-export function ToolLine({ tool }: { tool: ToolCall }) {
+export const ToolLine = React.memo(function ToolLine({ tool }: { tool: ToolCall }) {
   const color =
     tool.status === 'err' ? theme.danger :
     tool.kind === 'edit'  ? theme.accent :
@@ -23,9 +23,9 @@ export function ToolLine({ tool }: { tool: ToolCall }) {
       {tool.meta ? <Text color={theme.muted}>  {tool.meta}</Text> : null}
     </Box>
   );
-}
+});
 
-export function DiffBlock({ diff }: { diff: Diff }) {
+export const DiffBlock = React.memo(function DiffBlock({ diff }: { diff: Diff }) {
   return (
     <Box paddingLeft={3}>
       <Box
@@ -48,9 +48,9 @@ export function DiffBlock({ diff }: { diff: Diff }) {
       </Box>
     </Box>
   );
-}
+});
 
-export function ChipsRow({ chips }: { chips: Chip[] }) {
+export const ChipsRow = React.memo(function ChipsRow({ chips }: { chips: Chip[] }) {
   return (
     <Box paddingLeft={3} flexDirection="row">
       {chips.map((c, i) => (
@@ -68,9 +68,9 @@ export function ChipsRow({ chips }: { chips: Chip[] }) {
       ))}
     </Box>
   );
-}
+});
 
-export function PermissionCard({ perm }: { perm: Permission }) {
+export const PermissionCard = React.memo(function PermissionCard({ perm }: { perm: Permission }) {
   return (
     <Box paddingLeft={3}>
       <Box
@@ -91,9 +91,9 @@ export function PermissionCard({ perm }: { perm: Permission }) {
       </Box>
     </Box>
   );
-}
+});
 
-export function ErrorBlock({ error }: { error: ErrorReport }) {
+export const ErrorBlock = React.memo(function ErrorBlock({ error }: { error: ErrorReport }) {
   return (
     <Box paddingLeft={3}>
       <Box
@@ -110,9 +110,9 @@ export function ErrorBlock({ error }: { error: ErrorReport }) {
       </Box>
     </Box>
   );
-}
+});
 
-export function TokenMeter({ used, max }: { used: number; max: number }) {
+export const TokenMeter = React.memo(function TokenMeter({ used, max }: { used: number; max: number }) {
   const width = 10;
   const filled = Math.min(width, Math.round((used / max) * width));
   const bar = '▰'.repeat(filled) + '▱'.repeat(width - filled);
@@ -124,4 +124,4 @@ export function TokenMeter({ used, max }: { used: number; max: number }) {
       <Text color={theme.muted}>/{max}k</Text>
     </Text>
   );
-}
+});

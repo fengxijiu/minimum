@@ -92,9 +92,7 @@ class TsLanguageServiceHost {
 		return this.compilerOptions;
 	}
 
-	getDefaultLibFileName(
-		options: import("typescript").CompilerOptions,
-	): string {
+	getDefaultLibFileName(options: import("typescript").CompilerOptions): string {
 		return this.ts.getDefaultLibFilePath(options);
 	}
 
@@ -150,7 +148,11 @@ async function getOrCreateService(
 	if (existing) return existing;
 
 	// Locate tsconfig.json
-	const configPath = ts.findConfigFile(workDir, ts.sys.fileExists, "tsconfig.json");
+	const configPath = ts.findConfigFile(
+		workDir,
+		ts.sys.fileExists,
+		"tsconfig.json",
+	);
 
 	let compilerOptions: import("typescript").CompilerOptions = {};
 	let rootNames: string[] = [];
@@ -168,13 +170,23 @@ async function getOrCreateService(
 		}
 	}
 
-	const host = new TsLanguageServiceHost(rootNames, compilerOptions, workDir, ts);
+	const host = new TsLanguageServiceHost(
+		rootNames,
+		compilerOptions,
+		workDir,
+		ts,
+	);
 	const service = ts.createLanguageService(
 		host as import("typescript").LanguageServiceHost,
 		ts.createDocumentRegistry(),
 	);
 
-	const entry: ServiceEntry = { service, host, options: compilerOptions, rootNames };
+	const entry: ServiceEntry = {
+		service,
+		host,
+		options: compilerOptions,
+		rootNames,
+	};
 	registry.set(workDir, entry);
 	return entry;
 }
@@ -210,7 +222,10 @@ export async function getTsDiagnostics(
 	try {
 		ts = (await import("typescript")).default as typeof import("typescript");
 		// Some builds expose the API directly (not under .default)
-		if (typeof (ts as unknown as { createLanguageService?: unknown }).createLanguageService !== "function") {
+		if (
+			typeof (ts as unknown as { createLanguageService?: unknown })
+				.createLanguageService !== "function"
+		) {
 			ts = (await import("typescript")) as unknown as typeof import("typescript");
 		}
 	} catch {

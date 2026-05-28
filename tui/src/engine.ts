@@ -35,7 +35,11 @@ export type UiEvent =
   | { kind: 'usage'; totalTokens: number; toolCalls: number; steps: number; totalCostUsd: number }
   | { kind: 'plan'; steps: UiPlanStep[] }
   | { kind: 'permission_request'; id: string; tool: string; args: Record<string, unknown>; risk: UiRisk; description: string }
-  | { kind: 'done'; success: boolean };
+  | { kind: 'done'; success: boolean }
+  | { kind: 'streaming'; text: string }
+  | { kind: 'streaming_reasoning'; text: string }
+  | { kind: 'streaming_start' }
+  | { kind: 'streaming_end' };
 
 export type ApprovalDecision = { approved: boolean; reason?: string; remembered?: boolean };
 
@@ -142,6 +146,7 @@ export async function createEngineRunner(
       eng.GrepTool, eng.GlobTool,
       eng.GitTool,
       eng.WebFetchTool,
+      eng.TodoWriteTool,
     ]) {
       tools.register(new Ctor());
     }
@@ -170,25 +175,4 @@ export async function createEngineRunner(
   } catch (err) {
     return { runner: mockRunner, info: fallbackInfo('init-error', String((err as Error)?.message ?? err)) };
   }
-
-  const eng = await import('../../dist/index.js') as any;
-
-  const userConfig = await eng.loadMiMoConfig(workingDirectory);
-  const client = new eng.MiMoClient({ apiKey, baseUrl: process.env.MIMO_BASE_URL });
-
-  const tools = new eng.ToolRegistry();
-  for (const Ctor of [
-    eng.ReadFileTool, eng.ListDirectoryTool,
-    eng.WriteFileTool, eng.EditFileTool, eng.ApplyPatchTool,
-    eng.GrepTool, eng.GlobTool,
-    eng.GitTool,
-  ]) {
-    tools.register(new Ctor());
-  }
-  if (process.env.MIMO_ENABLE_SHELL === '1') {
-    tools.register(new eng.ExecShellTool());
-  }
-
-  const { loop } = eng.createMiMoStack(client, tools, workingDirectory, userConfig);
-  return new eng.EngineBridge(loop) as Runner;
 }

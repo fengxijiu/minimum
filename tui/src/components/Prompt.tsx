@@ -3,7 +3,7 @@ import { Box, Text } from 'ink';
 import TextInput from 'ink-text-input';
 import { theme } from '../theme.js';
 
-export function Prompt({ value, onChange, onSubmit, placeholder, focus }: {
+export const Prompt = React.memo(function Prompt({ value, onChange, onSubmit, placeholder, focus }: {
   value: string;
   onChange: (v: string) => void;
   onSubmit?: (v: string) => void;
@@ -23,4 +23,4 @@ export function Prompt({ value, onChange, onSubmit, placeholder, focus }: {
       />
     </Box>
   );
-}
+});

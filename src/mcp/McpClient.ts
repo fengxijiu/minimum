@@ -1,4 +1,4 @@
-import { type ChildProcess, spawn } from "child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import type {
 	McpPrompt,
 	McpRequest,
@@ -116,7 +116,7 @@ export class McpClient {
 		return new Promise((resolve, reject) => {
 			this.pendingRequests.set(id, { resolve, reject });
 
-			const data = JSON.stringify(request) + "\n";
+			const data = `${JSON.stringify(request)}\n`;
 			this.process?.stdin?.write(data);
 
 			// 超时处理

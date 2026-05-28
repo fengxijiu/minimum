@@ -1,11 +1,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { getTsDiagnostics } from "../lsp/index.js";
 import type {
 	IChecker,
 	ValidationCheck,
 	ValidationRequest,
 } from "../types/validator.js";
-import { getTsDiagnostics } from "../lsp/index.js";
 
 const TS_EXTS = new Set(["ts", "tsx"]);
 const WRITE_TOOLS = new Set(["write_file", "edit_file"]);

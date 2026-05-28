@@ -1,5 +1,5 @@
-import * as path from "path";
-import * as fs from "fs/promises";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 
 export class GlobTool {
 	name = "glob";
@@ -76,8 +76,9 @@ export class GlobTool {
 	}
 
 	private globToRegex(pattern: string): RegExp {
+		// First escape all regex special characters, then apply glob transformations
 		const regexStr = pattern
-			.replace(/\./g, "\\.")
+			.replace(/[.+^${}()|[\]\\]/g, "\\$&")
 			.replace(/\*\*/g, "{{GLOBSTAR}}")
 			.replace(/\*/g, "[^/]*")
 			.replace(/\{\{GLOBSTAR\}\}/g, ".*")

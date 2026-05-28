@@ -51,7 +51,7 @@ export class MessageFolder {
 		content += `## Objective\n${keyInfo.taskObjective}\n\n`;
 
 		if (keyInfo.decisions.length > 0) {
-			content += `## Decisions\n`;
+			content += "## Decisions\n";
 			for (const decision of keyInfo.decisions.slice(-5)) {
 				content += `- ${decision.content}\n`;
 			}
@@ -59,7 +59,7 @@ export class MessageFolder {
 		}
 
 		if (keyInfo.fileChanges.length > 0) {
-			content += `## File Changes\n`;
+			content += "## File Changes\n";
 			for (const change of keyInfo.fileChanges.slice(-5)) {
 				content += `- ${change.type}: ${change.file}\n`;
 			}
@@ -68,7 +68,7 @@ export class MessageFolder {
 
 		const unresolvedErrors = keyInfo.errors.filter((e) => !e.resolved);
 		if (unresolvedErrors.length > 0) {
-			content += `## Unresolved Errors\n`;
+			content += "## Unresolved Errors\n";
 			for (const error of unresolvedErrors.slice(-3)) {
 				content += `- ${error.message}\n`;
 			}
@@ -76,7 +76,7 @@ export class MessageFolder {
 		}
 
 		if (keyInfo.constraints.length > 0) {
-			content += `## Constraints\n`;
+			content += "## Constraints\n";
 			for (const constraint of keyInfo.constraints.slice(-5)) {
 				content += `- ${constraint}\n`;
 			}

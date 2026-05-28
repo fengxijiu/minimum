@@ -18,7 +18,7 @@ const CAT_LABEL: Record<CommandCategory, string> = {
   session: 'SESSION', context: 'CONTEXT', view: 'VIEW', system: 'SYSTEM',
 };
 
-export function HelpOverlay() {
+export const HelpOverlay = React.memo(function HelpOverlay() {
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={theme.accent} paddingX={1}>
       <Box justifyContent="space-between" marginBottom={1}>
@@ -52,4 +52,4 @@ export function HelpOverlay() {
       ))}
     </Box>
   );
-}
+});

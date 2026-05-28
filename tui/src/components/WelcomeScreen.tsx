@@ -15,7 +15,7 @@ const SUGGESTED = [
   'summarize recent commits',
 ];
 
-export function WelcomeScreen({ path = '~', engine }: { path?: string; engine?: EngineInfo }) {
+export const WelcomeScreen = React.memo(function WelcomeScreen({ path = '~', engine }: { path?: string; engine?: EngineInfo }) {
   const tagline = engine
     ? engine.mode === 'engine'
       ? `engine · ${engine.model ?? 'mimo'}${engine.tools ? ` · ${engine.tools.length} tools` : ''}`
@@ -56,4 +56,4 @@ export function WelcomeScreen({ path = '~', engine }: { path?: string; engine?: 
       </Box>
     </Box>
   );
-}
+});

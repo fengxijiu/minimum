@@ -4,7 +4,50 @@ import { theme } from '../theme.js';
 import type { Message } from '../types.js';
 import { ToolLine, DiffBlock, ChipsRow, PermissionCard, ErrorBlock } from './atoms.js';
 
-export function ChatStream({ stepLabel, messages, streaming }: {
+/** Memoized single message renderer — avoids re-rendering unchanged messages. */
+const MessageRow = React.memo(function MessageRow({ msg }: { msg: Message }) {
+  switch (msg.type) {
+    case 'user':
+      return (
+        <Box marginTop={1}>
+          <Text color={theme.accent} bold>›  </Text>
+          <Text color={theme.ink}>{msg.text}</Text>
+        </Box>
+      );
+    case 'assistant':
+      return (
+        <Box marginTop={1}>
+          <Text color={theme.ink} bold>◆  </Text>
+          <Text color={theme.ink}>{msg.text}</Text>
+        </Box>
+      );
+    case 'system': {
+      const c = msg.tone === 'warn' ? theme.warn
+              : msg.tone === 'ok' ? theme.plus
+              : theme.muted;
+      return (
+        <Box marginTop={1} paddingLeft={3}>
+          <Text color={c}>· </Text>
+          <Text color={theme.inkSoft}>{msg.text}</Text>
+        </Box>
+      );
+    }
+    case 'tool':
+      return <ToolLine tool={msg.tool} />;
+    case 'diff':
+      return <DiffBlock diff={msg.diff} />;
+    case 'chips':
+      return <ChipsRow chips={msg.chips} />;
+    case 'permission':
+      return <PermissionCard perm={msg.perm} />;
+    case 'error':
+      return <ErrorBlock error={msg.error} />;
+    default:
+      return null;
+  }
+});
+
+export const ChatStream = React.memo(function ChatStream({ stepLabel, messages, streaming }: {
   stepLabel?: string;
   messages: Message[];
   streaming?: string | null;
@@ -35,45 +78,7 @@ export function ChatStream({ stepLabel, messages, streaming }: {
         </Box>
       )}
 
-      {visible.map(m => {
-        switch (m.type) {
-          case 'user':
-            return (
-              <Box key={m.id} marginTop={1}>
-                <Text color={theme.accent} bold>›  </Text>
-                <Text color={theme.ink}>{m.text}</Text>
-              </Box>
-            );
-          case 'assistant':
-            return (
-              <Box key={m.id} marginTop={1}>
-                <Text color={theme.ink} bold>◆  </Text>
-                <Text color={theme.ink}>{m.text}</Text>
-              </Box>
-            );
-          case 'system': {
-            const c = m.tone === 'warn' ? theme.warn
-                    : m.tone === 'ok' ? theme.plus
-                    : theme.muted;
-            return (
-              <Box key={m.id} marginTop={1} paddingLeft={3}>
-                <Text color={c}>· </Text>
-                <Text color={theme.inkSoft}>{m.text}</Text>
-              </Box>
-            );
-          }
-          case 'tool':
-            return <ToolLine key={m.id} tool={m.tool} />;
-          case 'diff':
-            return <DiffBlock key={m.id} diff={m.diff} />;
-          case 'chips':
-            return <ChipsRow key={m.id} chips={m.chips} />;
-          case 'permission':
-            return <PermissionCard key={m.id} perm={m.perm} />;
-          case 'error':
-            return <ErrorBlock key={m.id} error={m.error} />;
-        }
-      })}
+      {visible.map(m => <MessageRow key={m.id} msg={m} />)}
 
       {streaming ? (
         <Box marginTop={1}>
@@ -84,4 +89,4 @@ export function ChatStream({ stepLabel, messages, streaming }: {
       ) : null}
     </Box>
   );
-}
+});

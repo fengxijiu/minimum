@@ -1,6 +1,7 @@
-import { exec } from "child_process";
-import { promisify } from "util";
+import { execFile, exec } from "node:child_process";
+import { promisify } from "node:util";
 
+const execFileAsync = promisify(execFile);
 const execAsync = promisify(exec);
 
 export class GrepTool {
@@ -48,25 +49,25 @@ export class GrepTool {
 	): Promise<string> {
 		const cwd = context?.workingDirectory || process.cwd();
 
-		let command = "grep -r";
-
-		if (args.ignoreCase) command += "i";
-		command += "n";
+		const grepArgs: string[] = ["-rn"];
+		if (args.ignoreCase) grepArgs[0] += "i";
 
 		if (args.include) {
-			command += ` --include="${args.include}"`;
+			grepArgs.push(`--include=${args.include}`);
 		}
 
-		command += ` "${args.pattern}"`;
-		command += ` ${args.path || "."}`;
-
-		if (args.maxResults) {
-			command += ` | head -${args.maxResults}`;
-		}
+		grepArgs.push("--", args.pattern, args.path || ".");
 
 		try {
-			const { stdout } = await execAsync(command, { cwd, timeout: 10000 });
-			return stdout || "No matches found";
+			const { stdout } = await execFileAsync("grep", grepArgs, {
+				cwd,
+				timeout: 10000,
+			});
+			const lines = stdout.split("\n");
+			const max = args.maxResults || 50;
+			return lines.length > max
+				? lines.slice(0, max).join("\n") + `\n... (${lines.length - max} more results)`
+				: stdout || "No matches found";
 		} catch (error: any) {
 			if (error.code === 1) {
 				return "No matches found";
@@ -112,13 +113,17 @@ export class SearchTool {
 
 		if (args.type === "files" || args.type === "both") {
 			try {
-				const { stdout } = await execAsync(
-					`find . -name "*${args.query}*" -type f | head -20`,
-					{ cwd },
-				);
-				if (stdout) {
+				const { stdout } = await execFileAsync("find", [
+					".",
+					"-name",
+					`*${args.query}*`,
+					"-type",
+					"f",
+				], { cwd, timeout: 10000 });
+				const lines = stdout.split("\n").filter(Boolean).slice(0, 20);
+				if (lines.length) {
 					results.push("Files:");
-					results.push(stdout);
+					results.push(lines.join("\n"));
 				}
 			} catch {
 				// Ignore errors
@@ -127,13 +132,19 @@ export class SearchTool {
 
 		if (args.type === "content" || args.type === "both") {
 			try {
-				const { stdout } = await execAsync(
-					`grep -r "${args.query}" --include="*.ts" --include="*.js" --include="*.py" . | head -20`,
-					{ cwd },
-				);
-				if (stdout) {
+				const { stdout } = await execFileAsync("grep", [
+					"-rn",
+					"--include=*.ts",
+					"--include=*.js",
+					"--include=*.py",
+					"--",
+					args.query,
+					".",
+				], { cwd, timeout: 10000 });
+				const lines = stdout.split("\n").filter(Boolean).slice(0, 20);
+				if (lines.length) {
 					results.push("\nContent:");
-					results.push(stdout);
+					results.push(lines.join("\n"));
 				}
 			} catch {
 				// Ignore errors

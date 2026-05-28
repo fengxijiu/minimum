@@ -2,7 +2,7 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import { theme } from '../theme.js';
 
-export function TitleBar({ path, branch, mode }: {
+export const TitleBar = React.memo(function TitleBar({ path, branch, mode }: {
   path: string;
   branch: string;
   mode: string;
@@ -18,4 +18,4 @@ export function TitleBar({ path, branch, mode }: {
       <Text color={theme.muted}>{path} · {branch} · {mode}</Text>
     </Box>
   );
-}
+});

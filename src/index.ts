@@ -41,19 +41,21 @@ export { getTsDiagnostics } from "./lsp/index.js";
 export { ExecShellTool } from "./tools/shell/index.js";
 
 // Git tools
-export {
-	GitTool,
-	GitStatusTool,
-	GitDiffTool,
-	GitLogTool,
-} from "./tools/git/index.js";
+export { GitTool } from "./tools/git/index.js";
 
 // Search tools
 export { GrepTool, SearchTool } from "./tools/search/index.js";
 
 // Web tools
 export { WebFetchTool } from "./tools/web/index.js";
-export { truncateToolResult, DEFAULT_MAX_RESULT_BYTES } from "./tools/truncateResult.js";
+export {
+	truncateToolResult,
+	DEFAULT_MAX_RESULT_BYTES,
+} from "./tools/truncateResult.js";
+
+// Todo tools
+export { TodoWriteTool } from "./tools/todo/index.js";
+export type { TodoItem, TodoStatus } from "./tools/todo/index.js";
 
 // Memory system
 export { MemoryStore } from "./memory/MemoryStore.js";
@@ -116,7 +118,11 @@ export type { Checkpoint, SessionState } from "./session/index.js";
 
 // Transcript system
 export { TranscriptManager } from "./transcript/index.js";
-export type { Transcript, TranscriptEntry, ReplayOptions } from "./transcript/index.js";
+export type {
+	Transcript,
+	TranscriptEntry,
+	ReplayOptions,
+} from "./transcript/index.js";
 
 // Telemetry system
 export { TelemetryManager } from "./telemetry/index.js";
@@ -157,7 +163,11 @@ export type {
 
 // Sub-agent system
 export { SubAgent, SubAgentManager } from "./subagent/index.js";
-export type { SubAgentConfig, SubAgentState, SubAgentMessage } from "./subagent/index.js";
+export type {
+	SubAgentConfig,
+	SubAgentState,
+	SubAgentMessage,
+} from "./subagent/index.js";
 
 // Capacity controller
 export { CapacityController } from "./capacity/index.js";

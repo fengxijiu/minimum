@@ -55,38 +55,48 @@ export class ToolRegistry {
 
 		let args: Record<string, unknown>;
 		try {
-			args = JSON.parse(toolCall.function.arguments || '{}');
+			args = JSON.parse(toolCall.function.arguments || "{}");
 		} catch {
 			return {
 				content: [
 					`工具 "${toolCall.function.name}" 调用失败`,
-					`错误: 参数 JSON 解析失败`,
+					"错误: 参数 JSON 解析失败",
 					`原始参数: ${toolCall.function.arguments?.slice(0, 200)}`,
-					`提示: 检查参数格式是否为合法 JSON`,
-				].join('\n'),
+					"提示: 检查参数格式是否为合法 JSON",
+				].join("\n"),
 				isError: true,
 			};
 		}
 
 		try {
 			const raw = await tool.execute(args, context);
-			return { content: truncateToolResult(raw, undefined, toolCall.function.name) };
+			return {
+				content: truncateToolResult(raw, undefined, toolCall.function.name),
+			};
 		} catch (error: any) {
-			const code: string = error.code ?? '';
+			const code: string = error.code ?? "";
 			const hint =
-				code === 'ENOENT' ? '文件或目录不存在，请检查路径' :
-				code === 'EACCES' || code === 'EPERM' ? '权限被拒绝，检查文件权限' :
-				code === 'EISDIR' ? '路径指向目录而非文件' :
-				code === 'ENOTDIR' ? '路径中某部分不是目录' :
-				code === 'EEXIST' ? '文件已存在' :
-				/timeout/i.test(error.message) ? '命令超时，考虑增大 timeout 参数或拆分任务' :
-				'';
+				code === "ENOENT"
+					? "文件或目录不存在，请检查路径"
+					: code === "EACCES" || code === "EPERM"
+						? "权限被拒绝，检查文件权限"
+						: code === "EISDIR"
+							? "路径指向目录而非文件"
+							: code === "ENOTDIR"
+								? "路径中某部分不是目录"
+								: code === "EEXIST"
+									? "文件已存在"
+									: /timeout/i.test(error.message)
+										? "命令超时，考虑增大 timeout 参数或拆分任务"
+										: "";
 			return {
 				content: [
 					`工具 "${toolCall.function.name}" 执行失败`,
 					`错误: ${error.message}`,
 					hint && `提示: ${hint}`,
-				].filter(Boolean).join('\n'),
+				]
+					.filter(Boolean)
+					.join("\n"),
 				isError: true,
 			};
 		}

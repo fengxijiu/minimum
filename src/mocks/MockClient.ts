@@ -1,9 +1,9 @@
 import type {
-	StreamChunk,
 	ChatOptions,
 	ChatResponse,
 	MiMoClientOptions,
-} from '../clients/MiMoClient.js';
+	StreamChunk,
+} from "../clients/MiMoClient.js";
 
 export type { StreamChunk };
 
@@ -28,8 +28,11 @@ export type { StreamChunk };
 export class MockClient {
 	private responses: Map<string, string> = new Map();
 	private callHistory: ChatOptions[] = [];
-	private defaultResponse = 'Mock response';
-	private toolCalls: Map<string, Array<{ id: string; name: string; arguments: Record<string, unknown> }>> = new Map();
+	private defaultResponse = "Mock response";
+	private toolCalls: Map<
+		string,
+		Array<{ id: string; name: string; arguments: Record<string, unknown> }>
+	> = new Map();
 	private scriptedTurns: StreamChunk[][] = [];
 
 	// ------------------------------------------------------------------
@@ -51,7 +54,11 @@ export class MockClient {
 	 */
 	setToolCalls(
 		prompt: string,
-		calls: Array<{ id: string; name: string; arguments: Record<string, unknown> }>,
+		calls: Array<{
+			id: string;
+			name: string;
+			arguments: Record<string, unknown>;
+		}>,
 	): void {
 		this.toolCalls.set(prompt, calls);
 	}
@@ -91,7 +98,8 @@ export class MockClient {
 		this.callHistory.push(options);
 
 		const lastMessage = options.messages[options.messages.length - 1];
-		const lastContent = typeof lastMessage?.content === 'string' ? lastMessage.content : '';
+		const lastContent =
+			typeof lastMessage?.content === "string" ? lastMessage.content : "";
 		const response =
 			(lastContent ? this.responses.get(lastContent) : undefined) ||
 			this.defaultResponse;
@@ -99,7 +107,7 @@ export class MockClient {
 		return {
 			id: `mock-${Date.now()}`,
 			content: response,
-			finishReason: 'stop',
+			finishReason: "stop",
 			usage: {
 				promptTokens: 100,
 				completionTokens: 50,
@@ -117,13 +125,17 @@ export class MockClient {
 			for (const chunk of turn) {
 				yield chunk;
 			}
-			yield { type: 'usage', usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 } };
-			yield { type: 'done' };
+			yield {
+				type: "usage",
+				usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+			};
+			yield { type: "done" };
 			return;
 		}
 
 		const lastMessage = options.messages[options.messages.length - 1];
-		const lastContent = typeof lastMessage?.content === 'string' ? lastMessage.content : '';
+		const lastContent =
+			typeof lastMessage?.content === "string" ? lastMessage.content : "";
 
 		// Yield tool calls if registered for this prompt.
 		const matchedCalls = lastContent
@@ -132,10 +144,10 @@ export class MockClient {
 		if (matchedCalls && matchedCalls.length > 0) {
 			for (const tc of matchedCalls) {
 				yield {
-					type: 'tool_call',
+					type: "tool_call",
 					toolCall: {
 						id: tc.id,
-						type: 'function',
+						type: "function",
 						function: {
 							name: tc.name,
 							arguments: JSON.stringify(tc.arguments),
@@ -143,8 +155,11 @@ export class MockClient {
 					},
 				};
 			}
-			yield { type: 'usage', usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 } };
-			yield { type: 'done' };
+			yield {
+				type: "usage",
+				usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+			};
+			yield { type: "done" };
 			return;
 		}
 
@@ -154,18 +169,21 @@ export class MockClient {
 			this.defaultResponse;
 
 		if (response) {
-			yield { type: 'content', content: response };
+			yield { type: "content", content: response };
 		}
 
-		yield { type: 'usage', usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 } };
-		yield { type: 'done' };
+		yield {
+			type: "usage",
+			usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+		};
+		yield { type: "done" };
 	}
 
 	getConfig(): MiMoClientOptions {
 		return {
-			apiKey: '***',
-			baseUrl: 'https://mock.test/v1',
-			model: 'mock-model',
+			apiKey: "***",
+			baseUrl: "https://mock.test/v1",
+			model: "mock-model",
 			maxTokens: 131072,
 			temperature: 1.0,
 			topP: 0.95,
@@ -177,7 +195,10 @@ export class MockClient {
 	// ------------------------------------------------------------------
 
 	/** Find the first map entry whose key is a substring of `text`. */
-	private findMatchingValue<V>(map: Map<string, V>, text: string): V | undefined {
+	private findMatchingValue<V>(
+		map: Map<string, V>,
+		text: string,
+	): V | undefined {
 		for (const [key, value] of map) {
 			if (text.includes(key)) return value;
 		}

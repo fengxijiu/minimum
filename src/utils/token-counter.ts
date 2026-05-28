@@ -57,5 +57,5 @@ export function truncateToTokens(text: string, maxTokens: number): string {
 	const ratio = maxTokens / estimatedTokens;
 	const targetLength = Math.floor(text.length * ratio * 0.9); // 留10%余量
 
-	return text.slice(0, targetLength) + "...";
+	return `${text.slice(0, targetLength)}...`;
 }

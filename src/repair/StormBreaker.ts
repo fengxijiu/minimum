@@ -47,7 +47,7 @@ export class StormBreaker {
 
 		if (mutating) {
 			for (let i = this.recent.length - 1; i >= 0; i--) {
-				if (this.recent[i]!.readOnly) {
+				if (this.recent[i]?.readOnly) {
 					this.recent.splice(i, 1);
 				}
 			}
@@ -72,6 +72,23 @@ export class StormBreaker {
 		}
 
 		return { suppress: false };
+	}
+
+	/**
+	 * Inspect a batch of tool calls, returning per-call suppression status.
+	 * Calls are inspected in order; each accepted call updates the window.
+	 */
+	inspectBatch(
+		calls: ToolCall[],
+	): { suppressed: boolean[]; reasons: (string | undefined)[] } {
+		const suppressed: boolean[] = [];
+		const reasons: (string | undefined)[] = [];
+		for (const call of calls) {
+			const result = this.inspect(call);
+			suppressed.push(result.suppress);
+			reasons.push(result.reason);
+		}
+		return { suppressed, reasons };
 	}
 
 	reset(): void {

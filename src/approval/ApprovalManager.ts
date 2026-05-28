@@ -8,14 +8,19 @@ import type {
 
 // Tools that are always safe to run in any mode.
 const LOW_RISK_TOOLS = new Set([
-	"read_file", "list_directory", "glob", "grep", "search",
-	"git_status", "git_diff", "git_log", "todo_write",
+	"read_file",
+	"list_directory",
+	"glob",
+	"grep",
+	"search",
+	"git_status",
+	"git_diff",
+	"git_log",
+	"todo_write",
 ]);
 
 // File-mutating tools — allowed in auto-edit mode without confirmation.
-const EDIT_TOOLS = new Set([
-	"write_file", "edit_file", "apply_patch",
-]);
+const EDIT_TOOLS = new Set(["write_file", "edit_file", "apply_patch"]);
 
 // Dangerous shell patterns — always "high" risk.
 const DANGEROUS_SHELL_RE = [
@@ -34,7 +39,9 @@ const DANGEROUS_SHELL_RE = [
  * delegates "needs confirmation" decisions to it instead of auto-denying.
  * EngineBridge wires this to the TUI's permission overlay.
  */
-export type ApprovalPrompter = (request: ApprovalRequest) => Promise<ApprovalResponse>;
+export type ApprovalPrompter = (
+	request: ApprovalRequest,
+) => Promise<ApprovalResponse>;
 
 export class ApprovalManager {
 	private config: ApprovalConfig;
@@ -72,21 +79,39 @@ export class ApprovalManager {
 	async checkApproval(request: ApprovalRequest): Promise<ApprovalResponse> {
 		// 1. Habit cache by tool name takes top priority.
 		const habit = this.habitCache.get(request.tool);
-		if (habit === "always") return { approved: true, reason: "Habit: always allow", remembered: true };
-		if (habit === "block")  return { approved: false, reason: "Habit: always block", remembered: true };
+		if (habit === "always")
+			return {
+				approved: true,
+				reason: "Habit: always allow",
+				remembered: true,
+			};
+		if (habit === "block")
+			return {
+				approved: false,
+				reason: "Habit: always block",
+				remembered: true,
+			};
 
 		// 2. Per-call history (exact args match).
 		const callKey = `${request.tool}:${JSON.stringify(request.args)}`;
 		if (this.callHistory.has(callKey)) {
-			return { approved: this.callHistory.get(callKey)!, reason: "Previously decided", remembered: true };
+			return {
+				approved: this.callHistory.get(callKey)!,
+				reason: "Previously decided",
+				remembered: true,
+			};
 		}
 
 		// 3. Mode-driven decision.
 		switch (this.config.mode) {
 			case "read-only":
 				// Only low-risk reads pass.
-				if (request.risk === "low") return { approved: true, reason: "read-only: safe read" };
-				return { approved: false, reason: "read-only mode: writes and shell are blocked" };
+				if (request.risk === "low")
+					return { approved: true, reason: "read-only: safe read" };
+				return {
+					approved: false,
+					reason: "read-only mode: writes and shell are blocked",
+				};
 
 			case "auto-edit":
 				// File edits auto-approved; shell/high-risk needs confirmation.
@@ -100,8 +125,6 @@ export class ApprovalManager {
 
 			case "never":
 				return { approved: false, reason: "never mode: all tools blocked" };
-
-			case "suggest":
 			default:
 				if (this.config.autoApproveLowRisk && request.risk === "low") {
 					return { approved: true, reason: "suggest: low risk auto-approved" };
@@ -111,7 +134,10 @@ export class ApprovalManager {
 	}
 
 	/** Delegate to prompter if set, else fall back to deny with the given reason. */
-	private async ask(request: ApprovalRequest, denyReason: string): Promise<ApprovalResponse> {
+	private async ask(
+		request: ApprovalRequest,
+		denyReason: string,
+	): Promise<ApprovalResponse> {
 		if (!this.prompter) return { approved: false, reason: denyReason };
 		const resp = await this.prompter(request);
 		// Remember the decision for the rest of the session.
@@ -127,7 +153,11 @@ export class ApprovalManager {
 	 * Record a per-call approval decision (keyed by tool+args).
 	 * Call with `remember=true` to also populate the habit cache by tool name.
 	 */
-	recordApproval(request: ApprovalRequest, approved: boolean, remember = false): void {
+	recordApproval(
+		request: ApprovalRequest,
+		approved: boolean,
+		remember = false,
+	): void {
 		const callKey = `${request.tool}:${JSON.stringify(request.args)}`;
 		this.callHistory.set(callKey, approved);
 		if (remember) {

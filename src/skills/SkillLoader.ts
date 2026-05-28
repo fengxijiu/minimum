@@ -1,5 +1,5 @@
-import * as path from "path";
-import * as fs from "fs/promises";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import { Skill } from "./Skill.js";
 import type { SkillContext, SkillMetadata, SkillResult } from "./Skill.js";
 import type { SkillRegistry } from "./SkillRegistry.js";

@@ -39,7 +39,8 @@ export class TaskCompletionChecker {
 				issues.push({
 					type: "incomplete-part",
 					severity: "error",
-					message: "Stub implementation detected (not-implemented / placeholder throw)",
+					message:
+						"Stub implementation detected (not-implemented / placeholder throw)",
 					suggestedFix: "Replace the stub with a real implementation",
 				});
 				penalty += 20;
@@ -52,7 +53,8 @@ export class TaskCompletionChecker {
 			issues.push({
 				type: "incomplete-part",
 				severity: "error",
-				message: "Code body is mostly comments with little actual implementation",
+				message:
+					"Code body is mostly comments with little actual implementation",
 				suggestedFix: "Add real implementation beyond the comments",
 			});
 			penalty += 30;
@@ -65,7 +67,8 @@ export class TaskCompletionChecker {
 				type: "incomplete-part",
 				severity: "warning",
 				message: `${tsIgnoreCount} @ts-ignore suppressions — may indicate unresolved type issues`,
-				suggestedFix: "Fix the underlying type errors instead of suppressing them",
+				suggestedFix:
+					"Fix the underlying type errors instead of suppressing them",
 			});
 			penalty += tsIgnoreCount * 3;
 		}

@@ -114,7 +114,7 @@ export function checkPythonSyntax(code: string): SyntaxCheckResult {
 		// 检查是否以冒号结尾（需要增加缩进）
 		if (i > 0) {
 			const prevLine = lines[i - 1];
-			if (prevLine && prevLine.trim().endsWith(":")) {
+			if (prevLine?.trim().endsWith(":")) {
 				if (indent <= expectedIndent) {
 					errors.push({
 						message: "Expected indented block after colon",

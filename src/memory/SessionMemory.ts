@@ -1,5 +1,5 @@
-import * as path from "path";
-import * as fs from "fs/promises";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import type { ChatMessage } from "../types/common.js";
 
 export interface SessionData {
@@ -61,7 +61,7 @@ export class SessionMemory {
 			await this.createSession();
 		}
 
-		this.currentSession!.messages.push(message);
+		this.currentSession?.messages.push(message);
 		await this.saveSession(this.currentSession!);
 	}
 

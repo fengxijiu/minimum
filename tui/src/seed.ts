@@ -3,7 +3,7 @@ import type { AppState } from './types.js';
 
 function detectBranch(cwd: string): string {
   try {
-    return execSync('git rev-parse --abbrev-ref HEAD', { cwd, encoding: 'utf-8' }).trim();
+    return execSync('git rev-parse --abbrev-ref HEAD', { cwd, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
   } catch {
     return 'main';
   }
@@ -20,6 +20,7 @@ export function createInitialState(cwd: string): AppState {
     ctx: { used: 0, max: 200 },
     files: [],
     edits: [],
+    redo: [],
     plan: { title: '', steps: [] },
     currentStepLabel: '',
     messages: [],

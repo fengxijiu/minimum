@@ -1,7 +1,12 @@
-import { exec } from "child_process";
-import { promisify } from "util";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+
+/** Strip ANSI escape codes from a string. */
+function stripAnsi(s: string): string {
+	return s.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
+}
 
 export class GitTool {
 	name = "git";
@@ -34,146 +39,37 @@ export class GitTool {
 		context?: { workingDirectory?: string },
 	): Promise<string> {
 		const cwd = context?.workingDirectory || process.cwd();
-		const command = `git ${args.subcommand} ${args.args || ""}`.trim();
+		const subcommand = args.subcommand || "status";
+		const extraArgs = args.args ? args.args.split(/\s+/).filter(Boolean) : [];
 
 		try {
-			const { stdout, stderr } = await execAsync(command, {
+			const { stdout, stderr } = await execFileAsync("git", [subcommand, ...extraArgs], {
 				cwd,
 				timeout: 30000,
 			});
 
-			let result = "";
-			if (stdout) result += stdout;
-			if (stderr) result += `\n${stderr}`;
+			const out = stripAnsi(stdout || "").trimEnd();
+			const err = stripAnsi(stderr || "").trimEnd();
 
-			return result || "Git command executed successfully";
+			if (out && err) return `${out}\n${err}`;
+			if (out) return out;
+			if (err) return err;
+			return "Git command executed successfully";
 		} catch (error: any) {
-			return `Git command failed: ${error.message}\n${error.stderr || ""}`;
-		}
-	}
-}
+			// execFile throws on non-zero exit — extract the real git output
+			const stderr = stripAnsi(error.stderr || "").trimEnd();
+			const stdout = stripAnsi(error.stdout || "").trimEnd();
 
-export class GitStatusTool {
-	name = "git_status";
-	description = "Get git status";
+			// Prefer stderr (where git writes fatal/error messages)
+			const gitOutput = stderr || stdout;
 
-	getDefinition() {
-		return {
-			name: this.name,
-			description: this.description,
-			parameters: {
-				type: "object",
-				properties: {
-					porcelain: {
-						type: "boolean",
-						description: "Use porcelain format",
-						default: false,
-					},
-				},
-			},
-		};
-	}
+			if (gitOutput) {
+				return gitOutput;
+			}
 
-	async execute(
-		args: Record<string, any>,
-		context?: { workingDirectory?: string },
-	): Promise<string> {
-		const cwd = context?.workingDirectory || process.cwd();
-		const command = args.porcelain ? "git status --porcelain" : "git status";
-
-		try {
-			const { stdout } = await execAsync(command, { cwd });
-			return stdout || "No changes";
-		} catch (error: any) {
-			return `Error: ${error.message}`;
-		}
-	}
-}
-
-export class GitDiffTool {
-	name = "git_diff";
-	description = "Show git diff";
-
-	getDefinition() {
-		return {
-			name: this.name,
-			description: this.description,
-			parameters: {
-				type: "object",
-				properties: {
-					staged: {
-						type: "boolean",
-						description: "Show staged changes",
-						default: false,
-					},
-					file: {
-						type: "string",
-						description: "Specific file to diff",
-					},
-				},
-			},
-		};
-	}
-
-	async execute(
-		args: Record<string, any>,
-		context?: { workingDirectory?: string },
-	): Promise<string> {
-		const cwd = context?.workingDirectory || process.cwd();
-		let command = "git diff";
-
-		if (args.staged) command += " --staged";
-		if (args.file) command += ` ${args.file}`;
-
-		try {
-			const { stdout } = await execAsync(command, { cwd });
-			return stdout || "No differences";
-		} catch (error: any) {
-			return `Error: ${error.message}`;
-		}
-	}
-}
-
-export class GitLogTool {
-	name = "git_log";
-	description = "Show git log";
-
-	getDefinition() {
-		return {
-			name: this.name,
-			description: this.description,
-			parameters: {
-				type: "object",
-				properties: {
-					limit: {
-						type: "number",
-						description: "Number of commits to show",
-						default: 10,
-					},
-					oneline: {
-						type: "boolean",
-						description: "Use oneline format",
-						default: true,
-					},
-				},
-			},
-		};
-	}
-
-	async execute(
-		args: Record<string, any>,
-		context?: { workingDirectory?: string },
-	): Promise<string> {
-		const cwd = context?.workingDirectory || process.cwd();
-		const limit = args.limit || 10;
-		const format = args.oneline ? "--oneline" : "";
-		const command = `git log ${format} -${limit}`;
-
-		try {
-			const { stdout } = await execAsync(command, { cwd });
-			return stdout || "No commits";
-		} catch (error: any) {
-			return `Error: ${error.message}`;
+			// Fallback: clean up the Node.js exec error message
+			const msg = error.message || String(error);
+			return `git ${subcommand} failed: ${msg}`;
 		}
 	}
 }

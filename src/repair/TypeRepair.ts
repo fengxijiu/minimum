@@ -15,7 +15,7 @@ export class TypeRepair {
 				case "number":
 					if (typeof value === "string") {
 						const parsed = Number(value);
-						if (!isNaN(parsed)) {
+						if (!Number.isNaN(parsed)) {
 							repaired[key] = parsed;
 						}
 					}

@@ -32,7 +32,7 @@ function Key({ k, label }: { k: string; label: string }) {
   );
 }
 
-export function StatusBar({ state, approvalMode, editMode, ctxUsed, ctxMax, hint, usage, mcpLoading }: {
+export const StatusBar = React.memo(function StatusBar({ state, approvalMode, editMode, ctxUsed, ctxMax, hint, usage, mcpLoading }: {
   state: SessionState;
   approvalMode?: ApprovalMode;
   editMode?: EditMode;
@@ -91,4 +91,4 @@ export function StatusBar({ state, approvalMode, editMode, ctxUsed, ctxMax, hint
       <Text color={theme.muted}>{hint ?? ''}</Text>
     </Box>
   );
-}
+});

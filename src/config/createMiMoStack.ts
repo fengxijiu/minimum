@@ -1,13 +1,13 @@
-import { CodeValidator } from "../validators/CodeValidator.js";
-import { ContextManager } from "../context/ContextManager.js";
-import { CompletenessChecker } from "../completeness/CompletenessChecker.js";
-import { ToolCallRepair } from "../repair/ToolCallRepair.js";
-import { MiMoLoop } from "../loop/MiMoLoop.js";
-import { TodoWriteTool } from "../tools/todo/TodoWriteTool.js";
-import { ApplyPatchTool } from "../tools/filesystem/ApplyPatchTool.js";
 import { ApprovalManager } from "../approval/ApprovalManager.js";
+import { CompletenessChecker } from "../completeness/CompletenessChecker.js";
+import { ContextManager } from "../context/ContextManager.js";
+import { MiMoLoop } from "../loop/MiMoLoop.js";
 import type { IHookManager } from "../loop/MiMoLoop.js";
-import { mergeConfig, type MiMoConfig } from "./MiMoConfig.js";
+import { ToolCallRepair } from "../repair/ToolCallRepair.js";
+import { ApplyPatchTool } from "../tools/filesystem/ApplyPatchTool.js";
+import { TodoWriteTool } from "../tools/todo/TodoWriteTool.js";
+import { CodeValidator } from "../validators/CodeValidator.js";
+import { type MiMoConfig, mergeConfig } from "./MiMoConfig.js";
 
 export interface MiMoStack {
 	loop: MiMoLoop;
@@ -55,7 +55,7 @@ export function createMiMoStack(
 
 	// Register built-in tools when the registry supports it.
 	const builtins = [new TodoWriteTool(), new ApplyPatchTool()] as const;
-	if (typeof tools.register === 'function') {
+	if (typeof tools.register === "function") {
 		for (const tool of builtins) {
 			if (tools.has?.(tool.name)) continue;
 			const def = tool.getDefinition();

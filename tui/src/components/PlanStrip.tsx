@@ -3,7 +3,7 @@ import { Box, Text } from 'ink';
 import { theme } from '../theme.js';
 import type { PlanStep } from '../types.js';
 
-export function PlanStrip({ title, steps }: {
+export const PlanStrip = React.memo(function PlanStrip({ title, steps }: {
   title: string;
   steps: PlanStep[];
 }) {
@@ -48,4 +48,4 @@ export function PlanStrip({ title, steps }: {
       </Box>
     </Box>
   );
-}
+});

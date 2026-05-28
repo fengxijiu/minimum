@@ -83,17 +83,14 @@ export class ApplyPatchTool {
 
 			if (occurrences === 0) {
 				const preview =
-					search.length > 80 ? search.substring(0, 80) + "..." : search;
+					search.length > 80 ? `${search.substring(0, 80)}...` : search;
 				return `Error: hunk ${i + 1} search text not found in ${args.path}: "${preview}"`;
 			}
 
 			if (occurrences > 1) {
 				const preview =
-					search.length > 80 ? search.substring(0, 80) + "..." : search;
-				return (
-					`Error: hunk ${i + 1} search text is ambiguous — found ${occurrences} occurrences in ${args.path}: "${preview}". ` +
-					`Add more surrounding context to make the search text unique.`
-				);
+					search.length > 80 ? `${search.substring(0, 80)}...` : search;
+				return `Error: hunk ${i + 1} search text is ambiguous — found ${occurrences} occurrences in ${args.path}: "${preview}". Add more surrounding context to make the search text unique.`;
 			}
 
 			// Apply the single match
@@ -105,7 +102,9 @@ export class ApplyPatchTool {
 			// Tally line delta for the summary
 			const removedLines = search.split("\n").length;
 			const addedLines = replace.split("\n").length;
-			linesChanged += Math.abs(addedLines - removedLines) + Math.min(removedLines, addedLines);
+			linesChanged +=
+				Math.abs(addedLines - removedLines) +
+				Math.min(removedLines, addedLines);
 		}
 
 		try {

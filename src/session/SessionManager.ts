@@ -1,5 +1,5 @@
-import * as path from "path";
-import * as fs from "fs/promises";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import type { ChatMessage } from "../types/common.js";
 import { CheckpointManager } from "./CheckpointManager.js";
 import type { SessionState } from "./types.js";
@@ -62,7 +62,7 @@ export class SessionManager {
 			await this.createSession();
 		}
 
-		this.currentSession!.messages.push(message);
+		this.currentSession?.messages.push(message);
 		this.currentSession!.updatedAt = Date.now();
 	}
 
