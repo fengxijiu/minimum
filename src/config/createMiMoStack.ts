@@ -2,8 +2,8 @@ import { CodeValidator } from "../validators/CodeValidator.js";
 import { ContextManager } from "../context/ContextManager.js";
 import { CompletenessChecker } from "../completeness/CompletenessChecker.js";
 import { ToolCallRepair } from "../repair/ToolCallRepair.js";
-import { IterationManager } from "../iteration/IterationManager.js";
 import { MiMoLoop } from "../loop/MiMoLoop.js";
+import { TodoWriteTool } from "../tools/todo/TodoWriteTool.js";
 import { mergeConfig, type MiMoConfig } from "./MiMoConfig.js";
 
 export interface MiMoStack {
@@ -49,6 +49,12 @@ export function createMiMoStack(
 		tailFraction: cfg.context.tailFraction,
 	});
 
+	// Register TodoWriteTool if the registry supports it (e.g. MockToolRegistry / real ToolRegistry).
+	if (typeof tools.register === 'function') {
+		const todo = new TodoWriteTool();
+		tools.register({ name: todo.name, description: todo.description, parameters: todo.getDefinition().parameters, fn: (args: any) => todo.execute(args) });
+	}
+
 	const loop = new MiMoLoop({
 		client,
 		tools,
@@ -58,7 +64,6 @@ export function createMiMoStack(
 			? new CompletenessChecker()
 			: undefined,
 		toolRepair: new ToolCallRepair(),
-		iterationManager: new IterationManager(),
 		capacity: cfg.capacity,
 		storm: cfg.storm,
 		enableReadGuard: cfg.enableReadGuard,

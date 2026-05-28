@@ -1,4 +1,5 @@
 import * as fs from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import type { MiMoConfig } from "./MiMoConfig.js";
 
@@ -34,7 +35,6 @@ export async function loadMiMoConfig(projectRoot?: string): Promise<MiMoConfig> 
  */
 export function loadMiMoConfigSync(projectRoot?: string): MiMoConfig {
 	const root = projectRoot ?? process.cwd();
-	const { readFileSync } = require("node:fs");
 
 	for (const rel of CONFIG_PATHS) {
 		const abs = path.resolve(root, rel);

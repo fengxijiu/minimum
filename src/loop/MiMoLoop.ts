@@ -525,11 +525,9 @@ export class MiMoLoop {
       }
       this.capacity.recordRefresh(step);
     } else if (snapshot.action === 'verify_and_replan') {
-      this.messages.push({
-        role: 'user',
-        content:
-          '[Capacity guard] Context is nearly full. Before continuing, verify what is already done, finish any partially-implemented work, and avoid starting new subtasks.'
-      });
+      this.steerQueue.push(
+        '[Capacity guard] Context is nearly full. Before continuing, verify what is already done, finish any partially-implemented work, and avoid starting new subtasks.'
+      );
       this.capacity.recordRefresh(step);
     }
   }

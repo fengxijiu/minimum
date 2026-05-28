@@ -169,9 +169,13 @@ export function App({ runner = mockRunner }: { runner?: Runner } = {}) {
 
     // Stream the engine's normalized events into the chat.
     void (async () => {
-      for await (const ev of runner.send(trimmed)) {
-        const msgs = uiEventToMessages(ev);
-        if (msgs.length) push(...msgs);
+      try {
+        for await (const ev of runner.send(trimmed)) {
+          const msgs = uiEventToMessages(ev);
+          if (msgs.length) push(...msgs);
+        }
+      } catch (err: any) {
+        push({ id: mid('x'), type: 'error', error: { title: 'runner error', lines: [String(err?.message ?? err)] } });
       }
     })();
   };
