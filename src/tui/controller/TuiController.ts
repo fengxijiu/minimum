@@ -21,9 +21,9 @@ class LocalEchoClient {
 	}): AsyncGenerator<StreamChunk> {
 		const last = options.messages.at(-1)?.content ?? "";
 		const text =
-			`Minimum is running in local mock mode.\n\n` +
+			`MIMO_API_KEY is not set.\n\n` +
 			`Received task: ${last}\n\n` +
-			`Set MIMO_API_KEY to enable real MiMo streaming.`;
+			`Set MIMO_API_KEY to enable MiMo streaming.`;
 		yield { type: "content", content: text };
 		yield {
 			type: "usage",

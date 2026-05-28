@@ -4,9 +4,10 @@ import { theme } from '../theme.js';
 import type { Message } from '../types.js';
 import { ToolLine, DiffBlock, ChipsRow, PermissionCard, ErrorBlock } from './atoms.js';
 
-export function ChatStream({ stepLabel, messages }: {
+export function ChatStream({ stepLabel, messages, streaming }: {
   stepLabel?: string;
   messages: Message[];
+  streaming?: string | null;
 }) {
   const { stdout } = useStdout();
   // Reserve rows for: titleBar(1) + planStrip(4) + prompt(3) + statusBar(1) + stepLabel(2) + borders(2)
@@ -73,6 +74,14 @@ export function ChatStream({ stepLabel, messages }: {
             return <ErrorBlock key={m.id} error={m.error} />;
         }
       })}
+
+      {streaming ? (
+        <Box marginTop={1}>
+          <Text color={theme.ink} bold>◆  </Text>
+          <Text color={theme.inkSoft}>{streaming}</Text>
+          <Text color={theme.muted}>▍</Text>
+        </Box>
+      ) : null}
     </Box>
   );
 }

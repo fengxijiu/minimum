@@ -103,10 +103,10 @@ async function main() {
 1. 创建 minimum.config.json 文件
 2. 或通过代码方式配置:
 
-import { MiMoLoop, MockClient, MockToolRegistry } from 'minimum';
+import { MiMoLoop, MiMoClient, ToolRegistry } from 'minimum';
 
-const client = new MockClient();  // 替换为真实的MiMo客户端
-const tools = new MockToolRegistry();  // 注册需要的工具
+const client = new MiMoClient({ apiKey: process.env.MIMO_API_KEY });
+const tools = new ToolRegistry();
 
 const loop = new MiMoLoop({
   client,
@@ -148,7 +148,7 @@ for await (const event of loop.run('${task}')) {
   console.log(`
 💡 Quick Start:
 
-import { MiMoLoop, MockClient, MockToolRegistry } from 'minimum';
+import { MiMoLoop, MiMoClient, ToolRegistry } from 'minimum';
 
 const config = ${JSON.stringify({
   validator: 'new CodeValidator()',

@@ -10,12 +10,7 @@ export function PlanStrip({ title, steps }: {
   const done = steps.filter(s => s.status === 'done').length;
 
   if (steps.length === 0) {
-    return (
-      <Box paddingX={1}>
-        <Text color={theme.muted}>PLAN  </Text>
-        <Text color={theme.inkSoft}>{title}</Text>
-      </Box>
-    );
+    return <Box />;
   }
 
   return (

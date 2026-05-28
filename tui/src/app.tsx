@@ -10,7 +10,9 @@ import { CommandPalette } from './components/CommandPalette.js';
 import { FilePicker }     from './components/FilePicker.js';
 import { HelpOverlay }    from './components/HelpOverlay.js';
 import { WelcomeScreen }  from './components/WelcomeScreen.js';
-import { initialState }   from './mock.js';
+import { ToolProgress }   from './components/ToolProgress.js';
+import { ToastBar }       from './components/ToastBar.js';
+import { createInitialState } from './seed.js';
 import {
   filterCommands, runCommand, sysMessage, type CommandOutcome, type CommandContext,
 } from './commands.js';
@@ -26,7 +28,6 @@ const PLAN_STATUS: Record<UiPlanStatus, PlanStep['status']> = {
 };
 
 type Overlay = 'none' | 'cmd' | 'file';
-type Pending = null | 'permission' | 'error';
 
 interface ActivePermission {
   id: string;
@@ -37,7 +38,7 @@ interface ActivePermission {
 }
 
 let seq = 0;
-const mid = (p: string) => p + Date.now() + '_' + seq++;
+const tid = () => 't' + Date.now() + '_' + seq++;
 
 function activeAtToken(input: string): string | null {
   const m = input.match(/(?:^|\s)@([^\s]*)$/);
@@ -101,14 +102,14 @@ export function App({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const atToken = activeAtToken(input);
-  const overlay: Overlay = input.startsWith('/')
+  const atToken = activeAtToken(state.input);
+  const overlay: Overlay = state.input.startsWith('/')
     ? 'cmd'
     : atToken !== null ? 'file' : 'none';
 
   const cmdItems = useMemo(
-    () => (overlay === 'cmd' ? filterCommands(input) : []),
-    [overlay, input],
+    () => (overlay === 'cmd' ? filterCommands(state.input) : []),
+    [overlay, state.input],
   );
 
   const cmdCtx: CommandContext = useMemo(() => ({
@@ -129,26 +130,29 @@ export function App({
   const clampedSel = itemCount ? Math.min(sel, itemCount - 1) : 0;
 
   const statusState: SessionState =
-    pending === 'permission' ? 'paused'
-    : pending === 'error' ? 'error'
+    state.pending === 'permission' ? 'paused'
+    : state.pending === 'error' ? 'error'
     : state.mode === 'agent' ? 'agent' : 'mimo';
 
   const titleMode =
-    pending === 'permission' ? 'agent · paused'
-    : pending === 'error' ? 'agent · interrupted'
+    state.pending === 'permission' ? 'agent · paused'
+    : state.pending === 'error' ? 'agent · interrupted'
     : state.mode;
-
-  const push = (...msgs: Message[]) =>
-    setState(s => ({ ...s, messages: [...s.messages, ...msgs] }));
 
   const applyOutcome = (o: CommandOutcome) => {
     switch (o.kind) {
       case 'quit': exit(); return;
-      case 'help': setHelpOpen(true); return;
-      case 'note': push(sysMessage(o.note, o.tone)); return;
+      case 'help': dispatch({ type: 'help.toggle' }); return;
+      case 'note': dispatch({ type: 'system.push', text: o.note, tone: o.tone }); return;
       case 'permission':
-        setPending('permission');
-        push({ id: mid('p'), type: 'permission', perm: o.perm });
+        dispatch({ type: 'permission.show', perm: o.perm });
+        return;
+      case 'event':
+        if (o.event.type === 'init.run') {
+          runInit(o.event.cwd, dispatch, o.event.args);
+          return;
+        }
+        dispatch(o.event);
         return;
       case 'patch':
         if (o.patch.approvalMode) {
@@ -165,7 +169,6 @@ export function App({
     }
   };
 
-  // permission → run fails → error block + agent's proposed fix (matches design)
   const allowPermission = () => {
     if (activePerm) {
       runner.resolvePermission?.(activePerm.id, { approved: true, reason: 'user approved' });
@@ -181,20 +184,17 @@ export function App({
       { key: 'u', label: 'undo last edit' },
       { key: 'l', label: 'show full log' },
     ];
-    push(
-      { id: mid('t'), type: 'tool', tool: { kind: 'run', args: 'pytest -q', meta: 'exit 1 · 2.3s', status: 'err' } },
-      { id: mid('e'), type: 'error', error: {
-        title: 'STDERR · 1 FAILURE',
-        lines: [
-          'FAILED tests/test_routes.py::test_health',
-          "  AssertionError: 'uptime' not in response",
-          "  expected key 'uptime', got ['up','sha']",
-          '====== 1 failed, 24 passed in 2.31s ======',
-        ],
-      } },
-      { id: mid('a'), type: 'assistant', text: "My handler returns 'up', but the test expects 'uptime'. I'll rename the key in routes.py." },
-      { id: mid('c'), type: 'chips', chips },
-    );
+    const id1 = tid();
+    dispatch({ type: 'tool.start', id: id1, name: 'exec_shell', args: 'pytest -q' });
+    dispatch({ type: 'tool.end', id: id1, ok: false, meta: 'exit 1 · 2.3s' });
+    dispatch({ type: 'error.push', title: 'STDERR · 1 FAILURE', lines: [
+      'FAILED tests/test_routes.py::test_health',
+      "  AssertionError: 'uptime' not in response",
+      "  expected key 'uptime', got ['up','sha']",
+      '====== 1 failed, 24 passed in 2.31s ======',
+    ]});
+    dispatch({ type: 'assistant.final', text: "My handler returns 'up', but the test expects 'uptime'. I'll rename the key in routes.py." });
+    dispatch({ type: 'chips.push', chips });
   };
 
   const applyFix = () => {
@@ -248,22 +248,21 @@ export function App({
 
   const completeCommand = () => {
     const c = cmdItems[clampedSel];
-    if (c) changeInput('/' + c.name + ' ');
+    if (c) dispatch({ type: 'input.change', value: '/' + c.name + ' ' });
   };
   const completeFile = () => {
     const f = fileItems[clampedSel];
     if (!f) return;
-    const next = input.replace(/(?:^|\s)@[^\s]*$/, (m) =>
+    const next = state.input.replace(/(?:^|\s)@[^\s]*$/, (m) =>
       (m.startsWith(' ') ? ' ' : '') + '@' + f.name + ' ');
-    changeInput(next);
+    dispatch({ type: 'input.change', value: next });
   };
 
   const handleSubmit = (text: string) => {
-    if (helpOpen) return;
+    if (state.helpOpen) return;
 
-    // Resolve a pending agent prompt with Enter (primary action).
-    if (!text.trim() && pending === 'permission') { allowPermission(); return; }
-    if (!text.trim() && pending === 'error') { applyFix(); return; }
+    if (!text.trim() && state.pending === 'permission') { allowPermission(); return; }
+    if (!text.trim() && state.pending === 'error') { applyFix(); return; }
 
     if (overlay === 'cmd') {
       const c = cmdItems[clampedSel];
@@ -275,7 +274,7 @@ export function App({
 
     const trimmed = text.trim();
     if (!trimmed) return;
-    if (pending) setPending(null); // a typed message redirects the agent
+    if (state.pending) dispatch({ type: 'pending.clear' });
 
     push({ id: mid('u'), type: 'user', text: trimmed });
     appendHistory(trimmed);
@@ -284,7 +283,6 @@ export function App({
     setSavedDraft('');
     changeInput('');
 
-    // Stream the engine's normalized events into the chat.
     void (async () => {
       try {
         for await (const ev of runner.send(trimmed)) {
@@ -333,19 +331,88 @@ export function App({
           if (msgs.length) push(...msgs);
         }
       } catch (err: any) {
-        push({ id: mid('x'), type: 'error', error: { title: 'runner error', lines: [String(err?.message ?? err)] } });
+        dispatch({ type: 'error.push', title: 'runner error', lines: [String(err?.message ?? err)] });
+      } finally {
+        dispatch({ type: 'turn.end', success: true });
       }
     })();
   };
 
-  useInput((_in, key) => {
-    if (helpOpen) {
-      if (key.escape || key.return) setHelpOpen(false);
+  const handleToastDismiss = useCallback((id: string) => {
+    dispatch({ type: 'toast.dismiss', id });
+  }, [dispatch]);
+
+  useInput((input, key) => {
+    if (state.helpOpen) {
+      if (key.escape || key.return) dispatch({ type: 'help.toggle' });
       return;
     }
+
+    // Ctrl+D = quit
+    if (key.ctrl && input === 'd') { exit(); return; }
+
+    // Ctrl+R = verbose toggle
+    if (key.ctrl && input === 'r') {
+      dispatch({ type: 'verbose.toggle' });
+      dispatch({ type: 'toast.show', text: state.verbose ? 'Verbose off' : 'Verbose on', tone: 'info', ttlMs: 2000 });
+      return;
+    }
+
+    // Ctrl+U = clear input
+    if (key.ctrl && input === 'u') {
+      setStash(state.input);
+      dispatch({ type: 'input.change', value: '' });
+      return;
+    }
+
+    // Alt+S = stash/recall
+    if (key.meta && input === 's') {
+      if (stash) {
+        const prev = state.input;
+        dispatch({ type: 'input.change', value: stash });
+        setStash(prev);
+      } else if (state.input) {
+        setStash(state.input);
+        dispatch({ type: 'input.change', value: '' });
+      }
+      return;
+    }
+
+    // Shift+Tab = cycle edit mode (review → auto → yolo)
+    if (key.shift && key.tab) {
+      const modes = ['review', 'auto', 'yolo'] as const;
+      const idx = modes.indexOf(state.editMode);
+      const next = modes[(idx + 1) % modes.length]!;
+      dispatch({ type: 'edit.mode.change', mode: next });
+      dispatch({ type: 'toast.show', text: `Edit mode: ${next}`, tone: 'info', ttlMs: 2000 });
+      return;
+    }
+
+    // u = undo last edit (when input is empty and not in overlay)
+    if (input === 'u' && !state.input && overlay === 'none' && state.edits.length > 0) {
+      dispatch({ type: 'edit.undo' });
+      return;
+    }
+
+    // Ctrl+P / Ctrl+N = prompt history
+    if (key.ctrl && input === 'p') {
+      const hist = promptHistoryRef.current;
+      if (hist.length === 0) return;
+      const idx = Math.min(historyIdxRef.current + 1, hist.length - 1);
+      historyIdxRef.current = idx;
+      dispatch({ type: 'input.change', value: hist[idx]! });
+      return;
+    }
+    if (key.ctrl && input === 'n') {
+      const idx = Math.max(historyIdxRef.current - 1, -1);
+      historyIdxRef.current = idx;
+      dispatch({ type: 'input.change', value: idx >= 0 ? promptHistoryRef.current[idx]! : '' });
+      return;
+    }
+
     if (key.escape) {
-      if (pending) dismissPending(pending === 'permission' ? 'Permission denied.' : 'Left as-is.');
-      else if (input.length) changeInput('');
+      if (state.pending) dismissPending(state.pending === 'permission' ? 'Permission denied.' : 'Left as-is.');
+      else if (state.input.length) dispatch({ type: 'input.change', value: '' });
       else exit();
       return;
     }
@@ -360,21 +427,21 @@ export function App({
     if (key.tab) {
       if (overlay === 'cmd' && cmdItems.length) completeCommand();
       else if (overlay === 'file' && fileItems.length) completeFile();
-      else setState(s => ({ ...s, mode: s.mode === 'agent' ? 'chat' : 'agent' }));
+      else dispatch({ type: 'mode.change', mode: state.mode === 'agent' ? 'chat' : 'agent' });
       return;
     }
   });
 
   const placeholder =
-    pending === 'permission' ? 'agent paused — ⏎ to allow, or type to redirect'
-    : pending === 'error' ? 'redirect, or ⏎ to accept the fix'
+    state.pending === 'permission' ? 'agent paused — ⏎ to allow, or type to redirect'
+    : state.pending === 'error' ? 'redirect, or ⏎ to accept the fix'
     : overlay === 'cmd' ? 'filter commands…'
     : overlay === 'file' ? 'filter files…'
     : !state.messages.some(m => m.type !== 'system') ? 'how can I help?'
     : 'ask, steer, /cmd, @file…  (? for help)';
 
   const hasConversation = state.messages.some(m => m.type !== 'system');
-  const showWelcome = !hasConversation && !helpOpen && overlay === 'none';
+  const showWelcome = !hasConversation && !state.helpOpen && overlay === 'none';
 
   return (
     <Box flexDirection="column" height={termRows}>
@@ -387,26 +454,187 @@ export function App({
             ? <WelcomeScreen path={state.path} engine={engineInfo} />
             : <ChatStream stepLabel={state.currentStepLabel} messages={state.messages} />}
 
-          {helpOpen ? <HelpOverlay /> : null}
-          {!helpOpen && overlay === 'cmd' ? <CommandPalette items={cmdItems} selected={clampedSel} /> : null}
-          {!helpOpen && overlay === 'file' ? <FilePicker items={fileItems} selected={clampedSel} /> : null}
+          {state.activeTool ? <ToolProgress tool={state.activeTool} /> : null}
+          <ToastBar toasts={state.toasts} onDismiss={handleToastDismiss} />
+
+          {state.helpOpen ? <HelpOverlay /> : null}
+          {!state.helpOpen && overlay === 'cmd' ? <CommandPalette items={cmdItems} selected={clampedSel} /> : null}
+          {!state.helpOpen && overlay === 'file' ? <FilePicker items={fileItems} selected={clampedSel} /> : null}
 
           <Prompt
-            value={input}
-            onChange={changeInput}
+            value={state.input}
+            onChange={(v) => {
+              if (v === '?' && state.input === '') { dispatch({ type: 'help.toggle' }); return; }
+              dispatch({ type: 'input.change', value: v });
+              setSel(0);
+            }}
             onSubmit={handleSubmit}
             placeholder={placeholder}
-            focus={!helpOpen}
+            focus={!state.helpOpen}
           />
         </Box>
       </Box>
       <StatusBar
         state={statusState}
         approvalMode={state.approvalMode}
+        editMode={state.editMode}
         ctxUsed={state.ctx.used}
         ctxMax={state.ctx.max}
         hint={`${state.edits.length} staged · ${state.branch}`}
+        usage={state.usage}
+        mcpLoading={state.mcpLoading}
       />
     </Box>
   );
+}
+
+/**
+ * /init handler — non-interactive setup.
+ * Detects project type, writes .mimo/config.json with defaults.
+ * Uses InitCommand.executeFromArgs() to avoid readline conflicts with ink's raw stdin.
+ */
+async function runInit(cwd: string, dispatch: Dispatch, args?: string[]) {
+  const fs = await import('node:fs/promises');
+  const path = await import('node:path');
+  const isReset = args?.includes('--reset') ?? false;
+
+  // Check if opencode.json already exists (InitCommand's target).
+  const opencodePath = path.join(cwd, 'opencode.json');
+  if (!isReset) {
+    try {
+      await fs.access(opencodePath);
+      dispatch({ type: 'toast.show', text: 'opencode.json already exists. Use /init --reset to reinitialize.', tone: 'warn', ttlMs: 5000 });
+      return;
+    } catch { /* good — doesn't exist yet */ }
+  }
+
+  // Check for MIMO_API_KEY.
+  const apiKey = process.env.MIMO_API_KEY;
+  if (!apiKey) {
+    dispatch({ type: 'system.push', text: 'MIMO_API_KEY not set. Set it and retry:', tone: 'warn' });
+    dispatch({ type: 'system.push', text: '  export MIMO_API_KEY="sk-xxxxx"  (or tp-xxxxx for Token Plan)', tone: 'info' });
+    dispatch({ type: 'system.push', text: 'Get your key at: https://platform.xiaomimimo.com/#/console/api-keys', tone: 'info' });
+    dispatch({ type: 'toast.show', text: '/init needs MIMO_API_KEY', tone: 'warn', ttlMs: 5000 });
+    return;
+  }
+
+  // Detect project type.
+  const markers: Array<{ file: string; type: string }> = [
+    { file: 'package.json', type: 'node' },
+    { file: 'tsconfig.json', type: 'typescript' },
+    { file: 'pyproject.toml', type: 'python' },
+    { file: 'Cargo.toml', type: 'rust' },
+    { file: 'go.mod', type: 'go' },
+    { file: 'pom.xml', type: 'java' },
+    { file: 'build.gradle', type: 'java' },
+    { file: 'Gemfile', type: 'ruby' },
+    { file: 'composer.json', type: 'php' },
+  ];
+
+  const detected: string[] = [];
+  for (const m of markers) {
+    try {
+      await fs.access(path.join(cwd, m.file));
+      detected.push(m.type);
+    } catch { /* not found */ }
+  }
+  const projectType = detected.length > 0 ? detected[0] : 'unknown';
+
+  // Determine API type from key prefix.
+  const isTokenPlan = apiKey.startsWith('tp-');
+  const baseUrl = isTokenPlan
+    ? 'https://token-plan-cn.xiaomimimo.com/v1'
+    : 'https://api.xiaomimimo.com/v1';
+
+  try {
+    // Use the non-interactive static method — no readline, no stdin conflict.
+    const eng = await import('../../dist/index.js') as any;
+    const result = await eng.InitCommand.executeFromArgs(cwd, {
+      apiKey,
+      apiType: isTokenPlan ? 'token-plan' : 'api',
+      model: 'mimo-v2.5-pro',
+      baseUrl,
+    });
+
+    if (result.success) {
+      dispatch({ type: 'toast.show', text: '/init complete — configuration created', tone: 'ok', ttlMs: 5000 });
+      // Show summary lines.
+      const lines = [
+        `Project type: ${projectType}`,
+        `API type: ${isTokenPlan ? 'Token Plan' : 'Pay-as-you-go'}`,
+        `Base URL: ${baseUrl}`,
+        `Model: mimo-v2.5-pro · 1M ctx · 131k out`,
+        `Config: opencode.json + ~/.config/opencode/opencode.json`,
+      ];
+      for (const line of lines) {
+        dispatch({ type: 'system.push', text: line, tone: 'info' });
+      }
+    } else {
+      dispatch({ type: 'error.push', title: '/init failed', lines: [result.output] });
+    }
+  } catch (err: any) {
+    // Fallback: write .mimo/config.json directly if InitCommand isn't available.
+    const mimoDir = path.join(cwd, '.mimo');
+    const configPath = path.join(mimoDir, 'config.json');
+    const config = {
+      maxTokens: 131072,
+      maxSteps: 50,
+      approvalMode: 'suggest',
+      enableReadGuard: true,
+      context: { foldThreshold: 0.70, aggressiveThreshold: 0.75, tailFraction: 0.25 },
+      capacity: { enabled: true, lowRiskMax: 0.50, mediumRiskMax: 0.62 },
+      storm: { windowSize: 6, threshold: 3 },
+      validation: { enabled: true, syntax: true, tsc: true, pattern: true },
+      completeness: { enabled: true },
+    };
+    await fs.mkdir(mimoDir, { recursive: true });
+    await fs.writeFile(configPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
+
+    dispatch({ type: 'toast.show', text: '/init fallback — .mimo/config.json created', tone: 'ok', ttlMs: 5000 });
+    dispatch({ type: 'system.push', text: `Project type: ${projectType}`, tone: 'info' });
+    dispatch({ type: 'system.push', text: 'Config: .mimo/config.json (InitCommand unavailable, used defaults)', tone: 'info' });
+  }
+}
+
+/** Translate one UiEvent into one or more AgentEvents. */
+function applyUiEvent(ev: import('./engine.js').UiEvent, dispatch: Dispatch) {
+  switch (ev.kind) {
+    case 'assistant':
+      dispatch({ type: 'assistant.final', text: ev.text });
+      break;
+    case 'reasoning':
+      dispatch({ type: 'system.push', text: ev.text, tone: 'info' });
+      break;
+    case 'tool':
+      dispatch({ type: 'tool.start', id: 't' + Date.now(), name: ev.name, args: ev.args });
+      break;
+    case 'tool_result':
+      if (ev.ok) {
+        if (ev.content) {
+          dispatch({ type: 'system.push', text: ev.content.slice(0, 200), tone: 'ok' });
+        }
+      } else {
+        dispatch({ type: 'error.push', title: ev.name + ' failed', lines: ev.content.split('\n').slice(0, 6) });
+      }
+      break;
+    case 'notice':
+      dispatch({ type: 'system.push', text: ev.text, tone: ev.tone });
+      break;
+    case 'error':
+      dispatch({ type: 'error.push', title: 'error', lines: [ev.text] });
+      break;
+    case 'streaming':
+      dispatch({ type: 'assistant.chunk', text: ev.text });
+      break;
+    case 'streaming_reasoning':
+      dispatch({ type: 'system.push', text: ev.text, tone: 'info' });
+      break;
+    case 'streaming_start':
+      dispatch({ type: 'turn.start' });
+      break;
+    case 'streaming_end':
+      break;
+    case 'done':
+      break;
+  }
 }

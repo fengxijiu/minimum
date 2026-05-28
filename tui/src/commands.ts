@@ -25,6 +25,7 @@ export const COMMANDS: TuiCommand[] = [
   { name: 'new',    desc: 'Start a fresh session',          category: 'session', aliases: ['reset'] },
   { name: 'save',   desc: 'Save the current session',       category: 'session', usage: '/save [name]' },
   { name: 'load',   desc: 'Load a saved session',           category: 'session', usage: '/load <name>' },
+  { name: 'sessions', desc: 'List saved sessions',          category: 'session', aliases: ['ls'] },
   { name: 'quit',   desc: 'Exit minimum',                   category: 'session', aliases: ['exit', 'q'] },
   // context
   { name: 'compact', desc: 'Compact context, free tokens',  category: 'context' },
@@ -37,14 +38,18 @@ export const COMMANDS: TuiCommand[] = [
   { name: 'plan',   desc: 'Jump to the plan strip',         category: 'view' },
   { name: 'mode',   desc: 'Switch agent / chat mode',       category: 'view', usage: '/mode <agent|chat>' },
   { name: 'clear',  desc: 'Clear the chat stream',          category: 'view', aliases: ['cls'] },
+  { name: 'verbose', desc: 'Toggle verbose mode',           category: 'view', aliases: ['v'] },
   // system
   { name: 'approval', desc: 'Set approval mode: read-only | auto-edit | full-auto', category: 'system', usage: '/approval <mode>', aliases: ['appr'] },
+  { name: 'editmode', desc: 'Set edit mode: review | auto | yolo', category: 'system', usage: '/editmode <mode>' },
   { name: 'run',    desc: 'Run a shell command (asks first)', category: 'system', usage: '/run <cmd>' },
+  { name: 'mcp',    desc: 'Show MCP server status',         category: 'system' },
   { name: 'status', desc: 'Show session status',            category: 'system' },
   { name: 'tools',  desc: 'List available tools',           category: 'system' },
   { name: 'model',  desc: 'Show the active model',          category: 'system' },
   { name: 'skill',  desc: 'Manage skills',                  category: 'system', usage: '/skill [list|run]' },
   { name: 'config', desc: 'View configuration',             category: 'system', aliases: ['cfg'] },
+  { name: 'init',   desc: 'Initialize .mimo/config.json for this project', category: 'system' },
   { name: 'help',   desc: 'Show keys & commands',           category: 'system', aliases: ['?'] },
 ];
 
@@ -73,7 +78,8 @@ export type CommandOutcome =
   | { kind: 'help' }
   | { kind: 'quit' }
   | { kind: 'permission'; perm: Permission }
-  | { kind: 'note'; note: string; tone?: 'info' | 'warn' | 'ok' };
+  | { kind: 'note'; note: string; tone?: 'info' | 'warn' | 'ok' }
+  | { kind: 'event'; event: import('./state/events.js').AgentEvent };
 
 let msgSeq = 0;
 export function sysMessage(text: string, tone: 'info' | 'warn' | 'ok' = 'info'): Message {
@@ -245,7 +251,33 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
     }
 
     case 'skill':
-      return { kind: 'note', note: 'Skills: type `/skill list` (none registered in mock).' };
+      return { kind: 'note', note: 'Skills: type `/skill list` (none registered).' };
+
+    case 'sessions':
+      return { kind: 'note', note: 'Saved sessions: (none). Use /save <name> and /load <name>.' };
+
+    case 'verbose':
+      return { kind: 'event', event: { type: 'verbose.toggle' } };
+
+    case 'editmode': {
+      const MODES = ['review', 'auto', 'yolo'] as const;
+      const target = args[0] as typeof MODES[number] | undefined;
+      if (target && MODES.includes(target)) {
+        return { kind: 'event', event: { type: 'edit.mode.change', mode: target } };
+      }
+      return { kind: 'note', note: `Edit mode: ${state.editMode}. Usage: /editmode <review|auto|yolo>` };
+    }
+
+    case 'mcp':
+      return {
+        kind: 'note',
+        note: state.mcpLoading
+          ? `MCP: loading ${state.mcpLoading.ready}/${state.mcpLoading.total} servers`
+          : 'MCP: no servers configured. Add MCP servers in .mimo/config.json',
+      };
+
+    case 'init':
+      return { kind: 'event', event: { type: 'init.run', cwd: state.path, args } };
 
     case 'save':
       return { kind: 'note', note: `Session saved${args[0] ? ` as "${args[0]}"` : ''}.`, tone: 'ok' };
@@ -256,7 +288,7 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
         : { kind: 'note', note: 'Usage: /load <name>', tone: 'warn' };
 
     default:
-      return { kind: 'note', note: `/${cmd.name} is not wired in the mock yet.`, tone: 'warn' };
+      return { kind: 'note', note: `/${cmd.name} is not wired yet.`, tone: 'warn' };
   }
 }
 

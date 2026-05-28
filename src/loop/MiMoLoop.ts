@@ -14,7 +14,7 @@ import { countMessagesTokens } from '../utils/token-counter.js';
 
 // ============ Minimal collaborator interfaces ============
 
-/** Anything that can stream model chunks — satisfied by MiMoClient and MockClient. */
+/** Anything that can stream model chunks — satisfied by MiMoClient. */
 export interface IStreamingClient {
   streamChat(options: {
     messages: ChatMessage[];
@@ -24,7 +24,7 @@ export interface IStreamingClient {
   }): AsyncIterable<StreamChunk>;
 }
 
-/** Anything that exposes tool definitions and executes calls — satisfied by ToolRegistry and MockToolRegistry. */
+/** Anything that exposes tool definitions and executes calls — satisfied by ToolRegistry. */
 export interface IToolHost {
   getDefinitions(): ToolDefinition[];
   execute(
@@ -62,6 +62,8 @@ export interface MiMoLoopConfig {
   storm?: { windowSize?: number; threshold?: number };
   enableReadGuard?: boolean;
   planMode?: boolean;
+  /** Streaming callback — fired per chunk during callModel() for real-time TUI updates. */
+  onChunk?: (chunk: { type: 'content' | 'reasoning' | 'tool_call'; text?: string; name?: string }) => void;
   maxTokens?: number;
   maxSteps?: number;
   budgetUsd?: number;
@@ -440,32 +442,8 @@ export class MiMoLoop {
           continue;
         }
 
-        // 8. 没有工具调用，检查完整性
-        if (this.config.completenessChecker && response.content) {
-          const completenessResult = await this.config.completenessChecker.check({
-            task: userInput,
-            generatedCode: response.content,
-            context: {
-              projectRoot: this.config.workingDirectory,
-              readFiles: [],
-              modifiedFiles: [],
-              language: 'typescript'
-            }
-          });
-
-          yield { type: 'completeness', result: completenessResult };
-
-          if (!completenessResult.complete) {
-            // 提示模型继续完善
-            this.messages.push({
-              role: 'user',
-              content: `Please continue and address these issues:\n${completenessResult.suggestions.join('\n')}`
-            });
-            continue;
-          }
-        }
-
-        // 9. 任务完成
+        // 8. 没有工具调用 — 模型已完成回复，直接结束（参考 Reasonix 模式）
+        // completenessChecker 移至循环外作为事后报告，不再注入重试消息
         yield {
           type: 'done',
           success: true,
@@ -524,13 +502,16 @@ export class MiMoLoop {
       switch (chunk.type) {
         case 'content':
           content += chunk.content;
+          this.config.onChunk?.({ type: 'content', text: chunk.content });
           break;
         case 'reasoning':
           reasoningContent += chunk.content;
+          this.config.onChunk?.({ type: 'reasoning', text: chunk.content });
           break;
         case 'tool_call':
           if (chunk.toolCall) {
             toolCalls.push(chunk.toolCall);
+            this.config.onChunk?.({ type: 'tool_call', name: chunk.toolCall.function.name });
           }
           break;
         case 'usage':

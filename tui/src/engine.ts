@@ -18,9 +18,7 @@ export interface EngineInfo {
 
 /**
  * UiEvent — mirrors the root package's EngineBridge contract
- * (src/bridge/EngineBridge.ts). Kept structurally identical so a real runner
- * can be `new EngineBridge(createMiMoStack(...).loop)` from the built engine,
- * while the TUI stays decoupled and runnable standalone with the mock.
+ * (src/bridge/EngineBridge.ts).
  */
 export type UiPlanStatus = 'pending' | 'in_progress' | 'completed';
 export interface UiPlanStep { label: string; status: UiPlanStatus; }
@@ -81,6 +79,10 @@ export function uiEventToMessages(ev: UiEvent): Message[] {
     case 'plan':
     case 'permission_request':
     case 'done':
+    case 'streaming':
+    case 'streaming_reasoning':
+    case 'streaming_start':
+    case 'streaming_end':
       return [];
   }
 }
@@ -106,10 +108,9 @@ function fallbackInfo(reason: EngineFallbackReason, error?: string): EngineInfo 
  * Build a live Runner backed by the real MiMo engine.
  *
  * Dynamically imports the built engine from ../../dist/index.js so the TUI
- * package stays dependency-free at compile time. Falls back to mockRunner if:
- *   - MIMO_API_KEY is not set
- *   - the engine has not been built yet
- *   - any import or construction error occurs
+ * package stays dependency-free at compile time.
+ *
+ * @throws if MIMO_API_KEY is not set or engine fails to initialize.
  */
 export async function createEngineRunner(
   workingDirectory: string,
@@ -169,4 +170,25 @@ export async function createEngineRunner(
   } catch (err) {
     return { runner: mockRunner, info: fallbackInfo('init-error', String((err as Error)?.message ?? err)) };
   }
+
+  const eng = await import('../../dist/index.js') as any;
+
+  const userConfig = await eng.loadMiMoConfig(workingDirectory);
+  const client = new eng.MiMoClient({ apiKey, baseUrl: process.env.MIMO_BASE_URL });
+
+  const tools = new eng.ToolRegistry();
+  for (const Ctor of [
+    eng.ReadFileTool, eng.ListDirectoryTool,
+    eng.WriteFileTool, eng.EditFileTool, eng.ApplyPatchTool,
+    eng.GrepTool, eng.GlobTool,
+    eng.GitTool,
+  ]) {
+    tools.register(new Ctor());
+  }
+  if (process.env.MIMO_ENABLE_SHELL === '1') {
+    tools.register(new eng.ExecShellTool());
+  }
+
+  const { loop } = eng.createMiMoStack(client, tools, workingDirectory, userConfig);
+  return new eng.EngineBridge(loop) as Runner;
 }

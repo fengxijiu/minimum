@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import React from 'react';
-import { render } from 'ink';
+import { render, Box, Text } from 'ink';
 import { App } from './app.js';
 import { createEngineRunner } from './engine.js';
 
