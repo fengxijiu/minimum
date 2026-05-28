@@ -49,10 +49,20 @@ export function createMiMoStack(
 		tailFraction: cfg.context.tailFraction,
 	});
 
-	// Register TodoWriteTool if the registry supports it (e.g. MockToolRegistry / real ToolRegistry).
-	if (typeof tools.register === 'function') {
+	// Register TodoWriteTool when the registry supports it. The object below
+	// satisfies both the real ToolRegistry (name/getDefinition/execute) and
+	// MockToolRegistry (name/parameters/fn), so it works with either.
+	if (typeof tools.register === 'function' && !tools.has?.('todo_write')) {
 		const todo = new TodoWriteTool();
-		tools.register({ name: todo.name, description: todo.description, parameters: todo.getDefinition().parameters, fn: (args: any) => todo.execute(args) });
+		const def = todo.getDefinition();
+		tools.register({
+			name: todo.name,
+			description: def.description,
+			parameters: def.parameters,
+			getDefinition: () => def,
+			execute: (args: any) => todo.execute(args),
+			fn: (args: any) => todo.execute(args),
+		});
 	}
 
 	const loop = new MiMoLoop({

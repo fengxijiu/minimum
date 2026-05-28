@@ -9,7 +9,11 @@
  */
 
 import readline from 'readline';
-import { createMiMoStack, loadMiMoConfig, MiMoClient, ToolRegistry, ReadFileTool, ListDirectoryTool, InitCommand } from '../dist/index.js';
+import {
+  createMiMoStack, loadMiMoConfig, MiMoClient, ToolRegistry, InitCommand,
+  ReadFileTool, ListDirectoryTool, WriteFileTool, EditFileTool,
+  ExecShellTool, GrepTool, GlobTool, GitTool,
+} from '../dist/index.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -326,9 +330,19 @@ async function processTask(task) {
 
   const client = new MiMoClient();
 
+  // Full toolset so the agent can actually read, edit, search and run.
+  // Shell is the one mutating tool we gate behind explicit opt-in.
   const tools = new ToolRegistry();
   tools.register(new ReadFileTool());
   tools.register(new ListDirectoryTool());
+  tools.register(new WriteFileTool());
+  tools.register(new EditFileTool());
+  tools.register(new GrepTool());
+  tools.register(new GlobTool());
+  tools.register(new GitTool());
+  if (process.env.MIMO_ENABLE_SHELL === '1') {
+    tools.register(new ExecShellTool());
+  }
   const userConfig = await loadMiMoConfig(process.cwd());
   const { loop } = createMiMoStack(client, tools, process.cwd(), userConfig);
   
