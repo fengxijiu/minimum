@@ -1,6 +1,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { theme } from '../theme.js';
+import type { EngineInfo } from '../engine.js';
 
 const LOGO_PREFIX = [
   '  __  ___   __  ',
@@ -14,7 +15,13 @@ const SUGGESTED = [
   'summarize recent commits',
 ];
 
-export function WelcomeScreen({ path = '~' }: { path?: string }) {
+export function WelcomeScreen({ path = '~', engine }: { path?: string; engine?: EngineInfo }) {
+  const tagline = engine
+    ? engine.mode === 'engine'
+      ? `engine · ${engine.model ?? 'mimo'}${engine.tools ? ` · ${engine.tools.length} tools` : ''}`
+      : `mock · ${engine.reason ?? 'unknown'}`
+    : 'mock';
+  const tagColor = engine?.mode === 'engine' ? theme.accent : theme.warn ?? theme.muted;
   return (
     <Box
       flexDirection="column"
@@ -28,6 +35,7 @@ export function WelcomeScreen({ path = '~' }: { path?: string }) {
         <Text key={i} color={theme.accent} bold>{line}</Text>
       ))}
       <Text color={theme.accent} bold>{`\\/  /_/  /_/     v0.1 · ${path}`}</Text>
+      <Text color={tagColor}>{`runtime · ${tagline}`}</Text>
 
       <Box marginTop={1} flexDirection="column">
         <Text color={theme.muted}>QUICK START</Text>

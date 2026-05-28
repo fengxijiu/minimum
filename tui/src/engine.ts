@@ -1,4 +1,20 @@
+import * as os from 'node:os';
+import * as path from 'node:path';
 import type { Message, ToolKind } from './types.js';
+
+export type EngineMode = 'engine' | 'mock';
+export type EngineFallbackReason = 'no-api-key' | 'not-built' | 'init-error';
+
+export interface EngineInfo {
+  mode: EngineMode;
+  reason?: EngineFallbackReason;
+  error?: string;
+  model?: string;
+  baseUrl?: string;
+  tools?: string[];
+  configPath?: string;
+  memoryPath?: string;
+}
 
 /**
  * UiEvent — mirrors the root package's EngineBridge contract
@@ -62,6 +78,15 @@ export const mockRunner: Runner = {
   },
 };
 
+function fallbackInfo(reason: EngineFallbackReason, error?: string): EngineInfo {
+  return {
+    mode: 'mock',
+    reason,
+    error,
+    configPath: path.join(process.env.HOME ?? os.homedir() ?? '~', '.minimum', 'config.json'),
+  };
+}
+
 /**
  * Build a live Runner backed by the real MiMo engine.
  *
@@ -71,16 +96,26 @@ export const mockRunner: Runner = {
  *   - the engine has not been built yet
  *   - any import or construction error occurs
  */
-export async function createEngineRunner(workingDirectory: string): Promise<Runner> {
+export async function createEngineRunner(
+  workingDirectory: string,
+): Promise<{ runner: Runner; info: EngineInfo }> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let eng: any;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const eng = await import('../../dist/index.js') as any;
+    eng = await import('../../dist/index.js');
+  } catch (err) {
+    return { runner: mockRunner, info: fallbackInfo('not-built', String((err as Error)?.message ?? err)) };
+  }
 
+  try {
     // 凭证优先级：env > 项目配置 > ~/.minimum/config.json
     const userConfig = await eng.loadMiMoConfig(workingDirectory);
     const apiKey = process.env.MIMO_API_KEY || userConfig.apiKey;
     const baseUrl = process.env.MIMO_BASE_URL || userConfig.baseUrl;
-    if (!apiKey) return mockRunner;
+    const configPath = eng.getGlobalConfigPath?.() ?? path.join(process.env.HOME ?? os.homedir() ?? '~', '.minimum', 'config.json');
+    if (!apiKey) {
+      return { runner: mockRunner, info: { ...fallbackInfo('no-api-key'), configPath } };
+    }
 
     const client = new eng.MiMoClient({ apiKey, baseUrl });
 
@@ -99,9 +134,17 @@ export async function createEngineRunner(workingDirectory: string): Promise<Runn
     }
 
     const { loop } = eng.createMiMoStack(client, tools, workingDirectory, userConfig);
-    return new eng.EngineBridge(loop) as Runner;
-  } catch {
-    // Engine not built or initialisation failed — degrade gracefully.
-    return mockRunner;
+    const toolNames: string[] = (tools.getDefinitions?.() ?? []).map((d: { name: string }) => d.name);
+    const info: EngineInfo = {
+      mode: 'engine',
+      model: userConfig.defaultModel ?? 'mimo-v2.5-pro',
+      baseUrl: baseUrl,
+      tools: toolNames,
+      configPath,
+      memoryPath: path.join(workingDirectory, '.minimum', 'memory.md'),
+    };
+    return { runner: new eng.EngineBridge(loop) as Runner, info };
+  } catch (err) {
+    return { runner: mockRunner, info: fallbackInfo('init-error', String((err as Error)?.message ?? err)) };
   }
 }

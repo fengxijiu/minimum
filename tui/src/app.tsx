@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Box, useApp, useInput, useStdout } from 'ink';
 import { TitleBar }       from './components/TitleBar.js';
 import { PlanStrip }      from './components/PlanStrip.js';
@@ -12,9 +12,9 @@ import { HelpOverlay }    from './components/HelpOverlay.js';
 import { WelcomeScreen }  from './components/WelcomeScreen.js';
 import { initialState }   from './mock.js';
 import {
-  filterCommands, runCommand, sysMessage, type CommandOutcome,
+  filterCommands, runCommand, sysMessage, type CommandOutcome, type CommandContext,
 } from './commands.js';
-import { mockRunner, uiEventToMessages, type Runner } from './engine.js';
+import { mockRunner, uiEventToMessages, type Runner, type EngineInfo } from './engine.js';
 import type { AppState, Message, FileEntry, SessionState, Chip } from './types.js';
 
 type Overlay = 'none' | 'cmd' | 'file';
@@ -28,7 +28,12 @@ function activeAtToken(input: string): string | null {
   return m ? (m[1] ?? '') : null;
 }
 
-export function App({ runner = mockRunner }: { runner?: Runner } = {}) {
+const DEFAULT_ENGINE_INFO: EngineInfo = { mode: 'mock', reason: 'not-built' };
+
+export function App({
+  runner = mockRunner,
+  engineInfo = DEFAULT_ENGINE_INFO,
+}: { runner?: Runner; engineInfo?: EngineInfo } = {}) {
   const { exit } = useApp();
   const { stdout } = useStdout();
   const termRows = stdout?.rows ?? 40;
@@ -37,6 +42,22 @@ export function App({ runner = mockRunner }: { runner?: Runner } = {}) {
   const [sel, setSel] = useState(0);
   const [helpOpen, setHelpOpen] = useState(false);
   const [pending, setPending] = useState<Pending>(null);
+
+  useEffect(() => {
+    if (engineInfo.mode === 'mock') {
+      const reason = engineInfo.reason ?? 'not-built';
+      const detail = reason === 'no-api-key'
+        ? `no MIMO_API_KEY — set env or write ${engineInfo.configPath ?? '~/.minimum/config.json'}`
+        : reason === 'not-built'
+        ? 'engine bundle missing — run `npm run build` in the repo root'
+        : `engine init failed${engineInfo.error ? ` — ${engineInfo.error}` : ''}`;
+      setState(s => ({
+        ...s,
+        messages: [sysMessage(`mock mode · ${detail}`, 'warn'), ...s.messages],
+      }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const atToken = activeAtToken(input);
   const overlay: Overlay = input.startsWith('/')
@@ -47,6 +68,15 @@ export function App({ runner = mockRunner }: { runner?: Runner } = {}) {
     () => (overlay === 'cmd' ? filterCommands(input) : []),
     [overlay, input],
   );
+
+  const cmdCtx: CommandContext = useMemo(() => ({
+    model: engineInfo.model,
+    tools: engineInfo.tools,
+    configPath: engineInfo.configPath,
+    memoryPath: engineInfo.memoryPath,
+    baseUrl: engineInfo.baseUrl,
+    engineMode: engineInfo.mode,
+  }), [engineInfo]);
   const fileItems = useMemo<FileEntry[]>(() => {
     if (overlay !== 'file') return [];
     const q = (atToken ?? '').toLowerCase();
@@ -156,7 +186,7 @@ export function App({ runner = mockRunner }: { runner?: Runner } = {}) {
 
     if (overlay === 'cmd') {
       const c = cmdItems[clampedSel];
-      applyOutcome(runCommand(c ? '/' + c.name + ' ' + text.replace(/^\/\S*\s*/, '') : text, state));
+      applyOutcome(runCommand(c ? '/' + c.name + ' ' + text.replace(/^\/\S*\s*/, '') : text, state, cmdCtx));
       changeInput('');
       return;
     }
@@ -224,7 +254,7 @@ export function App({ runner = mockRunner }: { runner?: Runner } = {}) {
         <ContextRail files={state.files} edits={state.edits} mode={state.mode} />
         <Box flexDirection="column" flexGrow={1}>
           {showWelcome
-            ? <WelcomeScreen path={state.path} />
+            ? <WelcomeScreen path={state.path} engine={engineInfo} />
             : <ChatStream stepLabel={state.currentStepLabel} messages={state.messages} />}
 
           {helpOpen ? <HelpOverlay /> : null}

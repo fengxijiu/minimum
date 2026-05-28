@@ -1,5 +1,14 @@
 import type { AppState, ApprovalMode, Message, PlanStep, Permission } from './types.js';
 
+export interface CommandContext {
+  model?: string;
+  tools?: string[];
+  configPath?: string;
+  memoryPath?: string;
+  baseUrl?: string;
+  engineMode?: 'engine' | 'mock';
+}
+
 export type CommandCategory = 'session' | 'context' | 'view' | 'system';
 
 export interface TuiCommand {
@@ -72,7 +81,7 @@ export function sysMessage(text: string, tone: 'info' | 'warn' | 'ok' = 'info'):
 }
 
 /** Execute a slash command against the current state, returning an outcome. */
-export function runCommand(raw: string, state: AppState): CommandOutcome {
+export function runCommand(raw: string, state: AppState, ctx: CommandContext = {}): CommandOutcome {
   const parts = raw.replace(/^\//, '').trim().split(/\s+/);
   const name = (parts[0] ?? '').toLowerCase();
   const args = parts.slice(1);
@@ -196,17 +205,38 @@ export function runCommand(raw: string, state: AppState): CommandOutcome {
       return { kind: 'patch', patch: { approvalMode: target }, note: `Approval mode → ${labels[target]}.`, tone: 'ok' };
     }
 
-    case 'tools':
-      return { kind: 'note', note: 'Tools: read · edit · apply_patch · run · find · todo' };
+    case 'tools': {
+      const list = ctx.tools && ctx.tools.length
+        ? ctx.tools.join(' · ')
+        : 'read · edit · apply_patch · run · find · todo (mock)';
+      return { kind: 'note', note: `Tools: ${list}` };
+    }
 
-    case 'model':
-      return { kind: 'note', note: 'Model: mimo-v2.5-pro · 1.0M ctx · 131k out' };
+    case 'model': {
+      const model = ctx.model ?? 'mimo-v2.5-pro';
+      const mode = ctx.engineMode === 'engine' ? 'engine' : 'mock';
+      return { kind: 'note', note: `Model: ${model} · ${mode} · ctx ${state.ctx.max}k` };
+    }
 
     case 'memory':
-      return { kind: 'note', note: 'Project memory: .mimo/memory.md (none loaded in mock).' };
+      return {
+        kind: 'note',
+        note: ctx.memoryPath
+          ? `Project memory: ${ctx.memoryPath} (loaded if present).`
+          : 'Project memory: .minimum/memory.md (none configured).',
+      };
 
-    case 'config':
-      return { kind: 'note', note: 'Config: .minimum/config.json (project) · ~/.minimum/config.json (global)' };
+    case 'config': {
+      const lines = [
+        `engine: ${ctx.engineMode ?? 'mock'}`,
+        ctx.model ? `model: ${ctx.model}` : null,
+        ctx.baseUrl ? `baseUrl: ${ctx.baseUrl}` : null,
+        ctx.configPath ? `global: ${ctx.configPath}` : null,
+        'project: .minimum/config.json',
+        `approval: ${state.approvalMode}`,
+      ].filter(Boolean).join(' · ');
+      return { kind: 'note', note: `Config — ${lines}` };
+    }
 
     case 'skill':
       return { kind: 'note', note: 'Skills: type `/skill list` (none registered in mock).' };

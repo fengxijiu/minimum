@@ -4,5 +4,5 @@ import { render } from 'ink';
 import { App } from './app.js';
 import { createEngineRunner } from './engine.js';
 
-const runner = await createEngineRunner(process.cwd());
-render(<App runner={runner} />);
+const { runner, info } = await createEngineRunner(process.cwd());
+render(<App runner={runner} engineInfo={info} />);
