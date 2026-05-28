@@ -17,14 +17,16 @@ function formatElapsed(ms: number): string {
 }
 
 export const ToolProgress = React.memo(function ToolProgress({ tool }: { tool: ToolProgressType | null }) {
-  if (!tool) return <Box />;
-  const [elapsed, setElapsed] = useState(Date.now() - tool.startedAt);
+  const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
-    if (tool.status !== 'running') return;
-    const timer = setInterval(() => setElapsed(Date.now() - tool.startedAt), 100);
+    if (!tool || tool.status !== 'running') return;
+    setElapsed(Date.now() - tool.startedAt);
+    const timer = setInterval(() => setElapsed(Date.now() - tool.startedAt), 250);
     return () => clearInterval(timer);
-  }, [tool.status, tool.startedAt]);
+  }, [tool?.id, tool?.status, tool?.startedAt]);
+
+  if (!tool) return null;
 
   const icon = TOOL_ICON[tool.name] ?? '◇';
   const statusColor = tool.status === 'err' ? theme.danger

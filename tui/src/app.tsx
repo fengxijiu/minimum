@@ -81,10 +81,11 @@ const ContextZone = React.memo(function ContextZone({ files, edits, mode }: {
   return <ContextRail files={files} edits={edits} mode={mode} />;
 });
 
-/** ChatStream zone — only re-renders on messages/stepLabel/activeTool changes. */
-const ChatZone = React.memo(function ChatZone({ messages, path, engineInfo, stepLabel, activeTool, helpOpen }: {
+/** ChatStream zone — only re-renders on messages/stepLabel/activeTool/streaming changes. */
+const ChatZone = React.memo(function ChatZone({ messages, path, engineInfo, stepLabel, activeTool, helpOpen, streaming }: {
   messages: Message[]; path: string; engineInfo: EngineInfo;
   stepLabel: string; activeTool: AppState['activeTool']; helpOpen: boolean;
+  streaming?: string | null;
 }) {
   const hasConversation = messages.some(m => m.type !== 'system');
   const showWelcome = !hasConversation && !helpOpen;
@@ -92,7 +93,7 @@ const ChatZone = React.memo(function ChatZone({ messages, path, engineInfo, step
     <>
       {showWelcome
         ? <WelcomeScreen path={path} engine={engineInfo} />
-        : <ChatStream stepLabel={stepLabel} messages={messages} />}
+        : <ChatStream stepLabel={stepLabel} messages={messages} streaming={streaming} />}
       {activeTool ? <ToolProgress tool={activeTool} /> : null}
     </>
   );
@@ -149,7 +150,7 @@ export function App({
   }, [dispatch]);
   const startChunkFlusher = useCallback(() => {
     if (chunkFlushTimerRef.current) return;
-    chunkFlushTimerRef.current = setInterval(flushChunks, 50);
+    chunkFlushTimerRef.current = setInterval(flushChunks, 100);
   }, [flushChunks]);
   const stopChunkFlusher = useCallback(() => {
     if (chunkFlushTimerRef.current) {
@@ -547,6 +548,7 @@ export function App({
   const sHelpOpen = useSlice(state, s => s.helpOpen);
   const sStepLabel = useSlice(state, s => s.currentStepLabel);
   const sActiveTool = useSlice(state, s => s.activeTool);
+  const sStreaming = useSlice(state, s => s.streaming);
   const sApprovalMode = useSlice(state, s => s.approvalMode);
   const sEditMode = useSlice(state, s => s.editMode);
   const sCtxUsed = useSlice(state, s => s.ctx.used);
@@ -579,6 +581,7 @@ export function App({
             stepLabel={sStepLabel}
             activeTool={sActiveTool}
             helpOpen={sHelpOpen}
+            streaming={sStreaming}
           />
 
           <ToastBar toasts={sToasts} onDismiss={handleToastDismiss} />
