@@ -21,9 +21,12 @@ export interface Runner {
 
 const KIND: Record<string, ToolKind> = {
   read_file: 'read', read: 'read',
-  write_file: 'edit', edit_file: 'edit', edit: 'edit',
+  list_directory: 'read',
+  write_file: 'edit', edit_file: 'edit', edit: 'edit', apply_patch: 'edit',
   exec_shell: 'run', run: 'run',
-  grep: 'find', glob: 'find', find: 'find',
+  grep: 'find', glob: 'find', find: 'find', search: 'find',
+  web_fetch: 'find',
+  git: 'run', git_status: 'read', git_diff: 'read', git_log: 'read',
 };
 
 let seq = 0;
@@ -85,6 +88,7 @@ export async function createEngineRunner(workingDirectory: string): Promise<Runn
       eng.WriteFileTool, eng.EditFileTool, eng.ApplyPatchTool,
       eng.GrepTool, eng.GlobTool,
       eng.GitTool,
+      eng.WebFetchTool,
     ]) {
       tools.register(new Ctor());
     }

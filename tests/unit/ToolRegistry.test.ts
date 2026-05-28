@@ -104,7 +104,7 @@ describe("ToolRegistry", () => {
 				},
 			});
 
-			expect(result.content).toContain("Tool execution failed");
+			expect(result.content).toContain("调用失败");
 			expect(result.isError).toBe(true);
 		});
 	});

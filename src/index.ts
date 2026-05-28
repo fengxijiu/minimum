@@ -51,6 +51,10 @@ export {
 // Search tools
 export { GrepTool, SearchTool } from "./tools/search/index.js";
 
+// Web tools
+export { WebFetchTool } from "./tools/web/index.js";
+export { truncateToolResult, DEFAULT_MAX_RESULT_BYTES } from "./tools/truncateResult.js";
+
 // Memory system
 export { MemoryStore } from "./memory/MemoryStore.js";
 export type { MemoryEntry, MemoryStoreOptions } from "./memory/MemoryStore.js";

@@ -243,7 +243,14 @@ export class MiMoLoop {
         if (response.toolCalls && response.toolCalls.length > 0) {
           // 工具调用修复
           const { calls: repairedCalls, report } = this.repairToolCalls(response.toolCalls);
-          
+
+          // 并行快速路径：全部为只读工具时并发执行（对标 Claude Code parallel tool calls）
+          if (repairedCalls.length > 1 && repairedCalls.every(tc => isReadTool(tc))) {
+            this.state.toolCalls += repairedCalls.length;
+            yield* this.executeReadBatch(repairedCalls);
+            continue;
+          }
+
           for (const toolCall of repairedCalls) {
             // 风暴检测
             const stormResult = this.stormBreaker.inspect(toolCall);
@@ -354,9 +361,9 @@ export class MiMoLoop {
               );
             }
 
-            // 执行工具
+            // 执行工具（含瞬时错误重试）
             this.state.toolCalls++;
-            const result = await this.executeTool(toolCall);
+            const result = await this.executeToolWithRetry(toolCall);
 
             // P0-2 PostToolUse hook
             const postHook = await this.runHooks('PostToolUse', {
@@ -737,7 +744,7 @@ export class MiMoLoop {
   }
 
   /**
-   * 执行工具
+   * 执行工具（单次）
    */
   private async executeTool(toolCall: ToolCall): Promise<{ content: string; isError?: boolean }> {
     try {
@@ -746,7 +753,51 @@ export class MiMoLoop {
         workingDirectory: this.config.workingDirectory
       });
     } catch (error: any) {
-      return { content: `Tool execution failed: ${error.message}`, isError: true };
+      return { content: `工具 "${toolCall.function.name}" 执行失败: ${error.message}`, isError: true };
+    }
+  }
+
+  /**
+   * 执行工具（带瞬时错误重试）
+   * 对标 Codex 的 transient-retry 策略：timeout/EBUSY/EAGAIN 最多重试 2 次，指数退避。
+   */
+  private async executeToolWithRetry(toolCall: ToolCall): Promise<{ content: string; isError?: boolean }> {
+    const TRANSIENT = /timeout|ETIMEDOUT|EBUSY|EAGAIN|ECONNRESET|ENFILE|EMFILE/i;
+    let last: { content: string; isError?: boolean } = { content: '', isError: true };
+    for (let attempt = 0; attempt <= 2; attempt++) {
+      const result = await this.executeTool(toolCall);
+      if (!result.isError || !TRANSIENT.test(result.content)) return result;
+      last = result;
+      if (attempt < 2) {
+        await new Promise<void>(r => setTimeout(r, 300 * (attempt + 1)));
+      }
+    }
+    return { ...last, content: `[重试 2 次后仍失败] ${last.content}` };
+  }
+
+  /**
+   * 并行执行只读工具批次（对标 Claude Code 的 parallel tool calls）。
+   * 所有工具均为只读 (isReadTool)，无副作用，可安全并发。
+   */
+  private async *executeReadBatch(calls: ToolCall[]): AsyncGenerator<LoopEvent> {
+    // 先 yield 所有 tool_call 事件
+    for (const tc of calls) {
+      yield { type: 'tool_call', toolCall: tc, repaired: false };
+    }
+
+    // 并行执行
+    const results = await Promise.all(calls.map(tc => this.executeTool(tc)));
+
+    // 收集结果，标记已读，推入消息
+    for (let i = 0; i < calls.length; i++) {
+      const tc = calls[i]!;
+      const result = results[i]!;
+      if (!result.isError) {
+        const args = this.safeParseArgs(tc);
+        if (args.path) this.readTracker.markRead(args.path, this.config.workingDirectory);
+      }
+      yield { type: 'tool_result', toolCall: tc, result, success: !result.isError };
+      this.messages.push({ role: 'tool', content: result.content, tool_call_id: tc.id });
     }
   }
 
