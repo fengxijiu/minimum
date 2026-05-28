@@ -6,6 +6,7 @@ import { MiMoLoop } from "../loop/MiMoLoop.js";
 import { TodoWriteTool } from "../tools/todo/TodoWriteTool.js";
 import { ApplyPatchTool } from "../tools/filesystem/ApplyPatchTool.js";
 import { ApprovalManager } from "../approval/ApprovalManager.js";
+import type { IHookManager } from "../loop/MiMoLoop.js";
 import { mergeConfig, type MiMoConfig } from "./MiMoConfig.js";
 
 export interface MiMoStack {
@@ -30,7 +31,7 @@ export function createMiMoStack(
 	tools: any,
 	workingDirectory: string,
 	userConfig: MiMoConfig = {},
-	deps: { hookManager?: any; approvalManager?: any } = {},
+	deps: { hookManager?: IHookManager; approvalManager?: ApprovalManager } = {},
 ): MiMoStack {
 	const cfg = mergeConfig(userConfig);
 
