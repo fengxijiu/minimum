@@ -54,7 +54,48 @@ export function uiEventToMessages(ev: UiEvent): Message[] {
 /** Default runner — preserves the standalone mock behavior. */
 export const mockRunner: Runner = {
   async *send(_input: string): AsyncIterable<UiEvent> {
-    yield { kind: 'assistant', text: '(mock) inject a real Runner — new EngineBridge(createMiMoStack(...).loop) — to stream live MiMo output' };
+    yield { kind: 'assistant', text: '(mock) set MIMO_API_KEY and rebuild the engine (npm run build in the root) to stream live MiMo output.' };
     yield { kind: 'done', success: true };
   },
 };
+
+/**
+ * Build a live Runner backed by the real MiMo engine.
+ *
+ * Dynamically imports the built engine from ../../dist/index.js so the TUI
+ * package stays dependency-free at compile time. Falls back to mockRunner if:
+ *   - MIMO_API_KEY is not set
+ *   - the engine has not been built yet
+ *   - any import or construction error occurs
+ */
+export async function createEngineRunner(workingDirectory: string): Promise<Runner> {
+  const apiKey = process.env.MIMO_API_KEY;
+  if (!apiKey) return mockRunner;
+
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const eng = await import('../../dist/index.js') as any;
+
+    const userConfig = await eng.loadMiMoConfig(workingDirectory);
+    const client = new eng.MiMoClient({ apiKey, baseUrl: process.env.MIMO_BASE_URL });
+
+    const tools = new eng.ToolRegistry();
+    for (const Ctor of [
+      eng.ReadFileTool, eng.ListDirectoryTool,
+      eng.WriteFileTool, eng.EditFileTool, eng.ApplyPatchTool,
+      eng.GrepTool, eng.GlobTool,
+      eng.GitTool,
+    ]) {
+      tools.register(new Ctor());
+    }
+    if (process.env.MIMO_ENABLE_SHELL === '1') {
+      tools.register(new eng.ExecShellTool());
+    }
+
+    const { loop } = eng.createMiMoStack(client, tools, workingDirectory, userConfig);
+    return new eng.EngineBridge(loop) as Runner;
+  } catch {
+    // Engine not built or initialisation failed — degrade gracefully.
+    return mockRunner;
+  }
+}

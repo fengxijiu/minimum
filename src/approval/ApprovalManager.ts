@@ -1,13 +1,40 @@
 import type {
 	ApprovalConfig,
+	ApprovalMode,
 	ApprovalRequest,
 	ApprovalResponse,
 	RiskLevel,
 } from "./types.js";
 
+// Tools that are always safe to run in any mode.
+const LOW_RISK_TOOLS = new Set([
+	"read_file", "list_directory", "glob", "grep", "search",
+	"git_status", "git_diff", "git_log", "todo_write",
+]);
+
+// File-mutating tools — allowed in auto-edit mode without confirmation.
+const EDIT_TOOLS = new Set([
+	"write_file", "edit_file", "apply_patch",
+]);
+
+// Dangerous shell patterns — always "high" risk.
+const DANGEROUS_SHELL_RE = [
+	/rm\s+-[rf]/,
+	/sudo/,
+	/chmod\s+777/,
+	/mkfs/,
+	/dd\s+/,
+	/>\s*\/dev/,
+	/curl.*\|\s*sh/,
+	/wget.*\|\s*sh/,
+];
+
 export class ApprovalManager {
 	private config: ApprovalConfig;
-	private history: Map<string, boolean> = new Map();
+	/** Per-exact-call memory (tool + serialised args) */
+	private callHistory: Map<string, boolean> = new Map();
+	/** Per-tool-name habit cache ("always allow" or "always block") */
+	private habitCache: Map<string, "always" | "block"> = new Map();
 	private nextId = 1;
 
 	constructor(config?: Partial<ApprovalConfig>) {
@@ -24,8 +51,7 @@ export class ApprovalManager {
 		description: string,
 	): Promise<ApprovalRequest> {
 		const risk = this.assessRisk(tool, args);
-
-		const request: ApprovalRequest = {
+		return {
 			id: `approval_${this.nextId++}`,
 			tool,
 			args,
@@ -33,94 +59,80 @@ export class ApprovalManager {
 			description,
 			timestamp: Date.now(),
 		};
-
-		return request;
 	}
 
 	async checkApproval(request: ApprovalRequest): Promise<ApprovalResponse> {
-		// 检查记忆的审批
-		const key = `${request.tool}:${JSON.stringify(request.args)}`;
-		if (this.history.has(key)) {
-			return {
-				approved: this.history.get(key)!,
-				reason: "Previously approved",
-			};
+		// 1. Habit cache by tool name takes top priority.
+		const habit = this.habitCache.get(request.tool);
+		if (habit === "always") return { approved: true, reason: "Habit: always allow", remembered: true };
+		if (habit === "block")  return { approved: false, reason: "Habit: always block", remembered: true };
+
+		// 2. Per-call history (exact args match).
+		const callKey = `${request.tool}:${JSON.stringify(request.args)}`;
+		if (this.callHistory.has(callKey)) {
+			return { approved: this.callHistory.get(callKey)!, reason: "Previously decided", remembered: true };
 		}
 
-		// 自动审批低风险
-		if (this.config.autoApproveLowRisk && request.risk === "low") {
-			return { approved: true, reason: "Low risk auto-approve" };
-		}
+		// 3. Mode-driven decision.
+		switch (this.config.mode) {
+			case "read-only":
+				// Only low-risk reads pass.
+				if (request.risk === "low") return { approved: true, reason: "read-only: safe read" };
+				return { approved: false, reason: "read-only mode: writes and shell are blocked" };
 
-		// 自动模式
-		if (this.config.mode === "auto") {
-			return { approved: true, reason: "Auto mode" };
-		}
-
-		// 永不模式
-		if (this.config.mode === "never") {
-			return { approved: false, reason: "Never mode" };
-		}
-
-		// 建议模式 - 需要用户确认
-		return { approved: false, reason: "Requires user confirmation" };
-	}
-
-	recordApproval(
-		request: ApprovalRequest,
-		approved: boolean,
-		remember = false,
-	): void {
-		if (remember) {
-			const key = `${request.tool}:${JSON.stringify(request.args)}`;
-			this.history.set(key, approved);
-		}
-	}
-
-	private assessRisk(tool: string, args: Record<string, any>): RiskLevel {
-		// 高风险工具
-		const highRiskTools = ["exec_shell", "write_file", "edit_file", "git_push"];
-		if (highRiskTools.includes(tool)) {
-			// 检查是否是危险操作
-			if (tool === "exec_shell") {
-				const command = args.command || "";
-				if (this.isDangerousCommand(command)) {
-					return "high";
+			case "auto-edit":
+				// File edits auto-approved; shell/high-risk needs confirmation.
+				if (request.risk === "low" || EDIT_TOOLS.has(request.tool)) {
+					return { approved: true, reason: "auto-edit: auto-approved" };
 				}
-			}
-			return "medium";
-		}
+				return { approved: false, reason: "auto-edit: shell requires confirmation" };
 
-		// 低风险工具
-		const lowRiskTools = [
-			"read_file",
-			"list_directory",
-			"glob",
-			"grep",
-			"git_status",
-			"git_diff",
-			"git_log",
-		];
-		if (lowRiskTools.includes(tool)) {
-			return "low";
-		}
+			case "full-auto":
+				return { approved: true, reason: "full-auto: unrestricted" };
 
-		return "medium";
+			case "never":
+				return { approved: false, reason: "never mode: all tools blocked" };
+
+			case "suggest":
+			default:
+				if (this.config.autoApproveLowRisk && request.risk === "low") {
+					return { approved: true, reason: "suggest: low risk auto-approved" };
+				}
+				return { approved: false, reason: "suggest: requires user confirmation" };
+		}
 	}
 
-	private isDangerousCommand(command: string): boolean {
-		const dangerousPatterns = [
-			/rm\s+-rf/,
-			/sudo/,
-			/chmod\s+777/,
-			/mkfs/,
-			/dd\s+/,
-			/>\s*\/dev/,
-			/curl.*\|\s*sh/,
-			/wget.*\|\s*sh/,
-		];
+	/**
+	 * Record a per-call approval decision (keyed by tool+args).
+	 * Call with `remember=true` to also populate the habit cache by tool name.
+	 */
+	recordApproval(request: ApprovalRequest, approved: boolean, remember = false): void {
+		const callKey = `${request.tool}:${JSON.stringify(request.args)}`;
+		this.callHistory.set(callKey, approved);
+		if (remember) {
+			this.habitCache.set(request.tool, approved ? "always" : "block");
+		}
+	}
 
-		return dangerousPatterns.some((pattern) => pattern.test(command));
+	/**
+	 * Directly set a per-tool habit ("always allow" or "always block").
+	 * Exposed so the TUI can wire "always for X" keyboard shortcut.
+	 */
+	rememberHabit(toolName: string, decision: "always" | "block"): void {
+		this.habitCache.set(toolName, decision);
+	}
+
+	/** Forget all habit-cache entries (keeps per-call history). */
+	clearHabits(): void {
+		this.habitCache.clear();
+	}
+
+	getMode(): ApprovalMode {
+		return this.config.mode;
+	}
+
+	setMode(mode: ApprovalMode): void {
+		this.config.mode = mode;
 	}
 
 	getConfig(): ApprovalConfig {
@@ -129,5 +141,17 @@ export class ApprovalManager {
 
 	updateConfig(config: Partial<ApprovalConfig>): void {
 		this.config = { ...this.config, ...config };
+	}
+
+	private assessRisk(tool: string, args: Record<string, any>): RiskLevel {
+		if (LOW_RISK_TOOLS.has(tool)) return "low";
+		if (tool === "exec_shell") {
+			const cmd = String(args.command ?? "");
+			if (DANGEROUS_SHELL_RE.some((r) => r.test(cmd))) return "high";
+			return "medium";
+		}
+		if (EDIT_TOOLS.has(tool)) return "medium";
+		if (tool === "git_push" || tool === "git_commit") return "high";
+		return "medium";
 	}
 }

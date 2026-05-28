@@ -1,11 +1,10 @@
 import type { ChatMessage, ToolCall, ToolDefinition } from '../types/common.js';
-import type { MiMoClient, StreamChunk } from '../clients/MiMoClient.js';
-import type { ToolRegistry } from '../tools/ToolRegistry.js';
+import type { StreamChunk } from '../clients/MiMoClient.js';
 import type { ICodeValidator } from '../types/validator.js';
 import type { IToolCallRepair } from '../types/repair.js';
 import type { ICompletenessChecker } from '../types/completeness.js';
 import type { IContextManager, TaskState } from '../types/context.js';
-import type { IIterationManager } from '../types/iteration.js';
+import type { ApprovalRequest, ApprovalResponse } from '../approval/types.js';
 import { StormBreaker } from '../repair/StormBreaker.js';
 import { CapacityController } from '../capacity/CapacityController.js';
 import type { CapacityConfig, CapacitySnapshot } from '../capacity/types.js';
@@ -13,18 +12,52 @@ import { ReadTracker, isReadTool, isEditTool } from './ReadTracker.js';
 import { SnapshotManager } from './SnapshotManager.js';
 import { countMessagesTokens } from '../utils/token-counter.js';
 
+// ============ Minimal collaborator interfaces ============
+
+/** Anything that can stream model chunks — satisfied by MiMoClient and MockClient. */
+export interface IStreamingClient {
+  streamChat(options: {
+    messages: ChatMessage[];
+    tools?: ToolDefinition[];
+    maxTokens?: number;
+    thinking?: { type: 'enabled' | 'disabled'; budget_tokens?: number };
+  }): AsyncIterable<StreamChunk>;
+}
+
+/** Anything that exposes tool definitions and executes calls — satisfied by ToolRegistry and MockToolRegistry. */
+export interface IToolHost {
+  getDefinitions(): ToolDefinition[];
+  execute(
+    toolCall: { function: { name: string; arguments: string } },
+    context?: { signal?: AbortSignal; workingDirectory?: string },
+  ): Promise<{ content: string; isError?: boolean }>;
+}
+
+/** Minimal hook manager contract — satisfied by HookManager and inline test doubles. */
+export interface IHookManager {
+  execute(
+    event: string,
+    context?: Record<string, unknown>,
+  ): Promise<Array<{ success: boolean; stdout?: string; stderr?: string }>>;
+}
+
+/** Minimal approval manager contract — satisfied by ApprovalManager. */
+export interface IApprovalManager {
+  requestApproval(tool: string, args: Record<string, any>, description: string): Promise<ApprovalRequest>;
+  checkApproval(request: ApprovalRequest): Promise<ApprovalResponse>;
+}
+
 // ============ Types ============
 
 export interface MiMoLoopConfig {
-  client: any; // MiMoClient or compatible
-  tools: any;  // ToolRegistry or compatible
-  validator?: any;
-  toolRepair?: any;
-  completenessChecker?: any;
-  contextManager?: any;
-  iterationManager?: any;
-  hookManager?: any;
-  approvalManager?: any;
+  client: IStreamingClient;
+  tools: IToolHost;
+  validator?: ICodeValidator;
+  toolRepair?: IToolCallRepair;
+  completenessChecker?: ICompletenessChecker;
+  contextManager?: IContextManager;
+  hookManager?: IHookManager;
+  approvalManager?: IApprovalManager;
   capacity?: Partial<CapacityConfig>;
   storm?: { windowSize?: number; threshold?: number };
   enableReadGuard?: boolean;
@@ -525,11 +558,9 @@ export class MiMoLoop {
       }
       this.capacity.recordRefresh(step);
     } else if (snapshot.action === 'verify_and_replan') {
-      this.messages.push({
-        role: 'user',
-        content:
-          '[Capacity guard] Context is nearly full. Before continuing, verify what is already done, finish any partially-implemented work, and avoid starting new subtasks.'
-      });
+      this.steerQueue.push(
+        '[Capacity guard] Context is nearly full. Before continuing, verify what is already done, finish any partially-implemented work, and avoid starting new subtasks.'
+      );
       this.capacity.recordRefresh(step);
     }
   }

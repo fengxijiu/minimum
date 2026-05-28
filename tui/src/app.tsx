@@ -169,9 +169,13 @@ export function App({ runner = mockRunner }: { runner?: Runner } = {}) {
 
     // Stream the engine's normalized events into the chat.
     void (async () => {
-      for await (const ev of runner.send(trimmed)) {
-        const msgs = uiEventToMessages(ev);
-        if (msgs.length) push(...msgs);
+      try {
+        for await (const ev of runner.send(trimmed)) {
+          const msgs = uiEventToMessages(ev);
+          if (msgs.length) push(...msgs);
+        }
+      } catch (err: any) {
+        push({ id: mid('x'), type: 'error', error: { title: 'runner error', lines: [String(err?.message ?? err)] } });
       }
     })();
   };
@@ -218,7 +222,7 @@ export function App({ runner = mockRunner }: { runner?: Runner } = {}) {
         <ContextRail files={state.files} edits={state.edits} mode={state.mode} />
         <Box flexDirection="column" flexGrow={1}>
           {showWelcome
-            ? <WelcomeScreen />
+            ? <WelcomeScreen path={state.path} />
             : <ChatStream stepLabel={state.currentStepLabel} messages={state.messages} />}
 
           {helpOpen ? <HelpOverlay /> : null}
@@ -236,6 +240,7 @@ export function App({ runner = mockRunner }: { runner?: Runner } = {}) {
       </Box>
       <StatusBar
         state={statusState}
+        approvalMode={state.approvalMode}
         ctxUsed={state.ctx.used}
         ctxMax={state.ctx.max}
         hint={`${state.edits.length} staged · ${state.branch}`}

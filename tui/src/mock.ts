@@ -5,6 +5,7 @@ export const initialState: AppState = {
   path: '~/proj/api',
   branch: 'main',
   mode: 'agent',
+  approvalMode: 'auto-edit',
   ctx: { used: 24.7, max: 200 },
   files: [
     { name: 'routes.py', meta: '+9', staged: true },

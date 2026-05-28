@@ -1,4 +1,4 @@
-import type { AppState, Message, PlanStep, Permission } from './types.js';
+import type { AppState, ApprovalMode, Message, PlanStep, Permission } from './types.js';
 
 export type CommandCategory = 'session' | 'context' | 'view' | 'system';
 
@@ -29,6 +29,7 @@ export const COMMANDS: TuiCommand[] = [
   { name: 'mode',   desc: 'Switch agent / chat mode',       category: 'view', usage: '/mode <agent|chat>' },
   { name: 'clear',  desc: 'Clear the chat stream',          category: 'view', aliases: ['cls'] },
   // system
+  { name: 'approval', desc: 'Set approval mode: read-only | auto-edit | full-auto', category: 'system', usage: '/approval <mode>', aliases: ['appr'] },
   { name: 'run',    desc: 'Run a shell command (asks first)', category: 'system', usage: '/run <cmd>' },
   { name: 'status', desc: 'Show session status',            category: 'system' },
   { name: 'tools',  desc: 'List available tools',           category: 'system' },
@@ -179,8 +180,24 @@ export function runCommand(raw: string, state: AppState): CommandOutcome {
       };
     }
 
+    case 'approval': {
+      const MODES: ApprovalMode[] = ['read-only', 'auto-edit', 'full-auto'];
+      const current = state.approvalMode;
+      const target = (args[0] as ApprovalMode | undefined) ??
+        MODES[(MODES.indexOf(current) + 1) % MODES.length]!;
+      if (!MODES.includes(target)) {
+        return { kind: 'note', note: `Unknown approval mode "${target}". Valid: ${MODES.join(' | ')}`, tone: 'warn' };
+      }
+      const labels: Record<ApprovalMode, string> = {
+        'read-only': 'read-only — writes blocked',
+        'auto-edit': 'auto-edit — file writes allowed, shell needs confirmation',
+        'full-auto': 'full-auto — unrestricted',
+      };
+      return { kind: 'patch', patch: { approvalMode: target }, note: `Approval mode → ${labels[target]}.`, tone: 'ok' };
+    }
+
     case 'tools':
-      return { kind: 'note', note: 'Tools: read · edit · run · find · diff · undo' };
+      return { kind: 'note', note: 'Tools: read · edit · apply_patch · run · find · todo' };
 
     case 'model':
       return { kind: 'note', note: 'Model: mimo-v2.5-pro · 1.0M ctx · 131k out' };

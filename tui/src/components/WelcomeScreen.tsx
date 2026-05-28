@@ -2,11 +2,10 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import { theme } from '../theme.js';
 
-const LOGO = [
+const LOGO_PREFIX = [
   '  __  ___   __  ',
   ' /  |/  /  / /   minimum',
   '/ /|_/ /  / /    interactive coding · mimo',
-  '\\/  /_/  /_/     v0.1 · ~/proj/api',
 ];
 
 const SUGGESTED = [
@@ -15,7 +14,7 @@ const SUGGESTED = [
   'summarize recent commits',
 ];
 
-export function WelcomeScreen() {
+export function WelcomeScreen({ path = '~' }: { path?: string }) {
   return (
     <Box
       flexDirection="column"
@@ -25,9 +24,10 @@ export function WelcomeScreen() {
       paddingX={2}
       paddingY={1}
     >
-      {LOGO.map((line, i) => (
+      {LOGO_PREFIX.map((line, i) => (
         <Text key={i} color={theme.accent} bold>{line}</Text>
       ))}
+      <Text color={theme.accent} bold>{`\\/  /_/  /_/     v0.1 · ${path}`}</Text>
 
       <Box marginTop={1} flexDirection="column">
         <Text color={theme.muted}>QUICK START</Text>
