@@ -1,4 +1,4 @@
-import { Box, Text, useApp, useInput } from "ink";
+import { Box, Text, useApp, useInput, useStdout } from "ink";
 import TextInput from "ink-text-input";
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -65,6 +65,8 @@ const WELCOME_CARD: Card = {
 
 export const App: React.FC = () => {
 	const { exit } = useApp();
+	const { stdout } = useStdout();
+	const termRows = stdout?.rows ?? process.stdout.rows ?? 40;
 	const controllerRef = useRef<TuiController | null>(null);
 	if (!controllerRef.current) {
 		controllerRef.current = new TuiController({ workingDirectory: process.cwd() });
@@ -515,7 +517,7 @@ export const App: React.FC = () => {
 	const visibleCards = cards.slice(-80);
 
 	return (
-		<Box flexDirection="column" height="100%">
+		<Box flexDirection="column" height={termRows}>
 			<StatusBar
 				busy={busy}
 				mode={mode}

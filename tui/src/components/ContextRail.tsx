@@ -36,8 +36,8 @@ export function ContextRail({ files, edits, mode }: {
           <Text color={f.staged ? theme.accent : theme.muted}>
             {f.staged ? '●' : '○'}{' '}
           </Text>
-          <Text color={theme.ink}>{truncate(f.name, 18)}</Text>
-          <Text color={theme.muted}>  {f.meta}</Text>
+          <Text color={theme.ink}>{truncate(f.name, 14)}</Text>
+          <Text color={theme.muted}>  {truncate(f.meta, 6)}</Text>
         </Box>
       ))}
 
@@ -79,10 +79,11 @@ export function ContextRail({ files, edits, mode }: {
       ))}
 
       <Text> </Text>
-      <Text color={theme.muted}>drop a file in,</Text>
-      <Text color={theme.muted}>or type </Text>
-      <Text color={theme.accent}>@</Text>
-      <Text color={theme.muted}> in the prompt ↘</Text>
+      <Text color={theme.muted}>
+        {'drop a file in, or type '}
+        <Text color={theme.accent}>@</Text>
+        {' in the prompt ↘'}
+      </Text>
     </Box>
   );
 }

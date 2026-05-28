@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Box, useApp, useInput } from 'ink';
+import { Box, useApp, useInput, useStdout } from 'ink';
 import { TitleBar }       from './components/TitleBar.js';
 import { PlanStrip }      from './components/PlanStrip.js';
 import { ContextRail }    from './components/ContextRail.js';
@@ -30,6 +30,8 @@ function activeAtToken(input: string): string | null {
 
 export function App({ runner = mockRunner }: { runner?: Runner } = {}) {
   const { exit } = useApp();
+  const { stdout } = useStdout();
+  const termRows = stdout?.rows ?? 40;
   const [state, setState] = useState<AppState>(initialState);
   const [input, setInput] = useState('');
   const [sel, setSel] = useState(0);
@@ -215,10 +217,10 @@ export function App({ runner = mockRunner }: { runner?: Runner } = {}) {
   const showWelcome = !hasConversation && !helpOpen && overlay === 'none';
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" height={termRows}>
       <TitleBar path={state.path} branch={state.branch} mode={titleMode} />
       <PlanStrip title={state.plan.title} steps={state.plan.steps} />
-      <Box flexDirection="row">
+      <Box flexDirection="row" flexGrow={1}>
         <ContextRail files={state.files} edits={state.edits} mode={state.mode} />
         <Box flexDirection="column" flexGrow={1}>
           {showWelcome

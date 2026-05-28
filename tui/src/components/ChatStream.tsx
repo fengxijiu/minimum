@@ -1,5 +1,5 @@
 import React from 'react';
-import { Box, Text } from 'ink';
+import { Box, Text, useStdout } from 'ink';
 import { theme } from '../theme.js';
 import type { Message } from '../types.js';
 import { ToolLine, DiffBlock, ChipsRow, PermissionCard, ErrorBlock } from './atoms.js';
@@ -8,6 +8,13 @@ export function ChatStream({ stepLabel, messages }: {
   stepLabel?: string;
   messages: Message[];
 }) {
+  const { stdout } = useStdout();
+  // Reserve rows for: titleBar(1) + planStrip(4) + prompt(3) + statusBar(1) + stepLabel(2) + borders(2)
+  const rows = stdout?.rows ?? 40;
+  const maxVisible = Math.max(6, rows - 14);
+  const clipped = Math.max(0, messages.length - maxVisible);
+  const visible = clipped > 0 ? messages.slice(-maxVisible) : messages;
+
   return (
     <Box
       flexDirection="column"
@@ -21,8 +28,13 @@ export function ChatStream({ stepLabel, messages }: {
           <Text color={theme.muted}>{stepLabel}</Text>
         </Box>
       ) : null}
+      {clipped > 0 && (
+        <Box paddingLeft={1}>
+          <Text color={theme.muted}>· {clipped} earlier message{clipped === 1 ? '' : 's'} hidden  (/clear to reset)</Text>
+        </Box>
+      )}
 
-      {messages.map(m => {
+      {visible.map(m => {
         switch (m.type) {
           case 'user':
             return (
