@@ -3,7 +3,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import * as readline from 'readline';
-import { GLOBAL_CONFIG_PATH } from '../config/loadMiMoConfig.js';
+import { getGlobalConfigPath, PROJECT_CONFIG_PATH } from '../config/loadMiMoConfig.js';
 import type { MiMoConfig } from '../config/MiMoConfig.js';
 
 // MiMo API 类型定义
@@ -177,11 +177,9 @@ export class InitCommand implements Command {
     const model: ModelType = options.model ?? 'mimo-v2.5-pro';
     const config = cmd.buildConfig(options.apiKey, apiType, model, baseUrl, options);
 
-    const configPath = path.join(workingDirectory, 'opencode.json');
-    const legacyGlobalPath = path.join(os.homedir() || process.env.HOME || '~', '.config', 'opencode', 'opencode.json');
+    const configPath = path.join(workingDirectory, PROJECT_CONFIG_PATH);
 
-    await cmd.saveConfig(configPath, config);
-    await cmd.saveGlobalConfig(legacyGlobalPath, config);
+    await cmd.saveProjectMinimumConfig(configPath, config);
     await cmd.saveMinimumGlobalConfig(config);
     await cmd.createDirectories(workingDirectory);
 
@@ -191,7 +189,7 @@ export class InitCommand implements Command {
 
     return {
       success: true,
-      output: cmd.formatSuccessMessage(config, configPath, GLOBAL_CONFIG_PATH),
+      output: cmd.formatSuccessMessage(config, configPath, getGlobalConfigPath()),
       data: { config },
     };
   }
@@ -201,8 +199,7 @@ export class InitCommand implements Command {
     const isReset = args.includes('--reset');
 
     // 检查是否已存在配置
-    const configPath = path.join(context.workingDirectory, 'opencode.json');
-    const legacyGlobalPath = path.join(os.homedir() || process.env.HOME || '~', '.config', 'opencode', 'opencode.json');
+    const configPath = path.join(context.workingDirectory, PROJECT_CONFIG_PATH);
 
     if (!isReset) {
       try {
@@ -231,9 +228,8 @@ export class InitCommand implements Command {
         config = await this.interactiveSetup(context);
       }
 
-      // 保存配置
-      await this.saveConfig(configPath, config);
-      await this.saveGlobalConfig(legacyGlobalPath, config);
+      // 保存配置（仅 .minimum/ 下两份）
+      await this.saveProjectMinimumConfig(configPath, config);
       await this.saveMinimumGlobalConfig(config);
 
       // 创建必要的目录
@@ -241,7 +237,7 @@ export class InitCommand implements Command {
 
       return {
         success: true,
-        output: this.formatSuccessMessage(config, configPath, GLOBAL_CONFIG_PATH),
+        output: this.formatSuccessMessage(config, configPath, getGlobalConfigPath()),
         data: { config }
       };
     } catch (error: any) {
@@ -536,40 +532,10 @@ export class InitCommand implements Command {
     };
   }
 
-  private async saveConfig(configPath: string, config: MinimumConfig): Promise<void> {
-    await fs.mkdir(path.dirname(configPath), { recursive: true });
-    await fs.writeFile(configPath, JSON.stringify(config, null, 2));
-  }
-
-  private async saveGlobalConfig(globalConfigPath: string, config: MinimumConfig): Promise<void> {
-    await fs.mkdir(path.dirname(globalConfigPath), { recursive: true });
-
-    // 保存全局配置（使用环境变量引用）
-    const globalConfig = {
-      ...config,
-      provider: {
-        mimo: {
-          ...config.provider.mimo,
-          options: {
-            baseURL: '${MIMO_BASE_URL}',
-            apiKey: '${MIMO_API_KEY}'
-          }
-        }
-      }
-    };
-
-    await fs.writeFile(globalConfigPath, JSON.stringify(globalConfig, null, 2));
-  }
-
-  /**
-   * 写入 `~/.minimum/config.json` —— minimum 引擎直接消费的 MiMoConfig 形状。
-   * loadMiMoConfig 没找到项目级配置时会回退到这里，所以 `init` 之后任何目录都能直接 `minimum`。
-   */
-  private async saveMinimumGlobalConfig(config: MinimumConfig): Promise<void> {
-    await fs.mkdir(path.dirname(GLOBAL_CONFIG_PATH), { recursive: true });
-
+  /** 把 InitCommand 的内部 MinimumConfig 投影成引擎消费的 MiMoConfig 形状。 */
+  private toMiMoConfig(config: MinimumConfig): MiMoConfig {
     const opt = config.minimum.optimization;
-    const minimumConfig: MiMoConfig = {
+    return {
       apiKey: config.provider.mimo.options.apiKey,
       baseUrl: config.provider.mimo.options.baseURL,
       defaultModel: config.minimum.defaultModel,
@@ -581,10 +547,31 @@ export class InitCommand implements Command {
         aggressiveThreshold: opt.context.aggressiveThreshold,
       },
     };
+  }
 
-    await fs.writeFile(GLOBAL_CONFIG_PATH, JSON.stringify(minimumConfig, null, 2));
+  /**
+   * 写入 `<project>/.minimum/config.json` —— 项目级标准位置。
+   * 凭证省略（继承全局），仅记录项目专属覆盖。
+   */
+  private async saveProjectMinimumConfig(configPath: string, config: MinimumConfig): Promise<void> {
+    await fs.mkdir(path.dirname(configPath), { recursive: true });
+    const minimumConfig = this.toMiMoConfig(config);
+    // 项目配置不含凭证：避免被误 git commit；引擎会从全局/env 取
+    delete minimumConfig.apiKey;
+    delete minimumConfig.baseUrl;
+    await fs.writeFile(configPath, JSON.stringify(minimumConfig, null, 2));
+  }
+
+  /**
+   * 写入 `~/.minimum/config.json` —— minimum 引擎直接消费的 MiMoConfig 形状。
+   * loadMiMoConfig 没找到项目级配置时会回退到这里，所以 `init` 之后任何目录都能直接 `minimum`。
+   */
+  private async saveMinimumGlobalConfig(config: MinimumConfig): Promise<void> {
+    await fs.mkdir(path.dirname(getGlobalConfigPath()), { recursive: true });
+    const minimumConfig = this.toMiMoConfig(config);
+    await fs.writeFile(getGlobalConfigPath(), JSON.stringify(minimumConfig, null, 2));
     // chmod 0600 — 仅 owner 可读，避免 API key 泄漏给其他用户
-    try { await fs.chmod(GLOBAL_CONFIG_PATH, 0o600); } catch { /* Windows / 非 POSIX 文件系统 */ }
+    try { await fs.chmod(getGlobalConfigPath(), 0o600); } catch { /* Windows / 非 POSIX 文件系统 */ }
   }
 
   private async createDirectories(projectRoot: string): Promise<void> {
@@ -628,9 +615,9 @@ export class InitCommand implements Command {
    • Input Modalities: ${modelConfig.modalities.input.join(', ')}
 
 📁 Configuration files created:
-   • Project: ${configPath}
-   • Global:  ${globalConfigPath}
-   ↑ minimum 引擎会自动读取 ${globalConfigPath}（无需 env 变量）
+   • Project: ${configPath}   (无凭证 · 可安全 git commit)
+   • Global:  ${globalConfigPath}   (含 apiKey · chmod 0600)
+   ↑ minimum 引擎会自动读取全局配置，无需 env 变量
 
 📂 Directories created:
    • .minimum/

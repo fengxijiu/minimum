@@ -206,7 +206,7 @@ export function runCommand(raw: string, state: AppState): CommandOutcome {
       return { kind: 'note', note: 'Project memory: .mimo/memory.md (none loaded in mock).' };
 
     case 'config':
-      return { kind: 'note', note: 'Config: .mimo/config.json · fold 0.70 · capacity on · read-guard on' };
+      return { kind: 'note', note: 'Config: .minimum/config.json (project) · ~/.minimum/config.json (global)' };
 
     case 'skill':
       return { kind: 'note', note: 'Skills: type `/skill list` (none registered in mock).' };

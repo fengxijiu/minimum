@@ -4,21 +4,31 @@ import * as path from "node:path";
 import * as os from "node:os";
 import type { MiMoConfig } from "./MiMoConfig.js";
 
-/**
- * `~/.minimum/config.json` — 全局默认配置，由 `init` 注册。
- * 含 apiKey/baseUrl/model 和优化参数（validation、context、approvalMode 等）。
- */
-export const GLOBAL_CONFIG_PATH = path.join(
-	os.homedir() ?? process.env.HOME ?? "~",
-	".minimum",
-	"config.json",
-);
+/** 动态解析 home：测试可通过修改 process.env.HOME 隔离全局配置。 */
+function resolveHome(): string {
+	return process.env.HOME ?? os.homedir() ?? "~";
+}
 
-// 项目级配置优先于全局；opencode.json 由旧版 init 写出，作为兼容路径。
+/** `~/.minimum/config.json` —— 由 `init` 注册的全局默认配置，每次调用重新解析 HOME。 */
+export function getGlobalConfigPath(): string {
+	return path.join(resolveHome(), ".minimum", "config.json");
+}
+
+/**
+ * @deprecated 使用 getGlobalConfigPath() 替代。保留作向后兼容字符串。
+ * 注意：此常量在模块加载时计算一次，不响应运行时 HOME 变化。
+ */
+export const GLOBAL_CONFIG_PATH: string = getGlobalConfigPath();
+
+/** 项目级标准配置路径（init 写入这里）。 */
+export const PROJECT_CONFIG_PATH = ".minimum/config.json";
+
+// 项目级配置优先于全局；前者为标准路径，后续为旧版兼容（init 不再写）。
 const PROJECT_CONFIG_PATHS = [
-	".mimo/config.json",
-	".mimo.json",
-	"opencode.json",
+	PROJECT_CONFIG_PATH, // 新标准
+	".mimo/config.json", // 旧版兼容
+	".mimo.json",        // 旧版兼容
+	"opencode.json",     // 旧版 init 兼容
 ];
 
 /**
@@ -96,7 +106,7 @@ function mergeProjectOverGlobal(project: MiMoConfig, global: MiMoConfig): MiMoCo
  */
 export async function loadMiMoConfig(projectRoot?: string): Promise<MiMoConfig> {
 	const root = projectRoot ?? process.cwd();
-	const global = (await tryRead(GLOBAL_CONFIG_PATH)) ?? {};
+	const global = (await tryRead(getGlobalConfigPath())) ?? {};
 
 	for (const rel of PROJECT_CONFIG_PATHS) {
 		const project = await tryRead(path.resolve(root, rel));
@@ -109,7 +119,7 @@ export async function loadMiMoConfig(projectRoot?: string): Promise<MiMoConfig> 
 /** 同步版本，供 bin 入口等非 async 上下文使用。 */
 export function loadMiMoConfigSync(projectRoot?: string): MiMoConfig {
 	const root = projectRoot ?? process.cwd();
-	const global = tryReadSync(GLOBAL_CONFIG_PATH) ?? {};
+	const global = tryReadSync(getGlobalConfigPath()) ?? {};
 
 	for (const rel of PROJECT_CONFIG_PATHS) {
 		const project = tryReadSync(path.resolve(root, rel));

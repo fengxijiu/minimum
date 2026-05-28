@@ -9,17 +9,42 @@ import { MockClient } from '../../src/mocks/MockClient.js';
 
 describe('loadMiMoConfig', () => {
   let dir: string;
-  beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mimo-cfg-')); });
-  afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+  let home: string;
+  let prevHome: string | undefined;
 
-  it('reads a native .mimo.json verbatim', async () => {
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mimo-cfg-'));
+    // Isolate HOME so the global ~/.minimum/config.json fallback doesn't bleed in.
+    home = fs.mkdtempSync(path.join(os.tmpdir(), 'mimo-home-'));
+    prevHome = process.env.HOME;
+    process.env.HOME = home;
+  });
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(home, { recursive: true, force: true });
+    if (prevHome !== undefined) process.env.HOME = prevHome;
+    else delete process.env.HOME;
+  });
+
+  it('reads the new canonical .minimum/config.json', async () => {
+    fs.mkdirSync(path.join(dir, '.minimum'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, '.minimum', 'config.json'),
+      JSON.stringify({ planMode: true, maxSteps: 9 }),
+    );
+    const cfg = await loadMiMoConfig(dir);
+    expect(cfg.planMode).toBe(true);
+    expect(cfg.maxSteps).toBe(9);
+  });
+
+  it('reads a legacy .mimo.json verbatim', async () => {
     fs.writeFileSync(path.join(dir, '.mimo.json'), JSON.stringify({ planMode: true, maxSteps: 7 }));
     const cfg = await loadMiMoConfig(dir);
     expect(cfg.planMode).toBe(true);
     expect(cfg.maxSteps).toBe(7);
   });
 
-  it('translates opencode.json (init output) into MiMoConfig', async () => {
+  it('translates opencode.json (legacy init output) into MiMoConfig', async () => {
     fs.writeFileSync(path.join(dir, 'opencode.json'), JSON.stringify({
       minimum: { optimization: {
         validation: false, completeness: true,
@@ -33,6 +58,14 @@ describe('loadMiMoConfig', () => {
     expect(merged.context.aggressiveThreshold).toBe(0.80);
   });
 
+  it('prefers .minimum/config.json over legacy .mimo.json', async () => {
+    fs.mkdirSync(path.join(dir, '.minimum'), { recursive: true });
+    fs.writeFileSync(path.join(dir, '.minimum', 'config.json'), JSON.stringify({ maxSteps: 11 }));
+    fs.writeFileSync(path.join(dir, '.mimo.json'), JSON.stringify({ maxSteps: 3 }));
+    const cfg = await loadMiMoConfig(dir);
+    expect(cfg.maxSteps).toBe(11);
+  });
+
   it('prefers .mimo.json over opencode.json', async () => {
     fs.writeFileSync(path.join(dir, '.mimo.json'), JSON.stringify({ maxSteps: 3 }));
     fs.writeFileSync(path.join(dir, 'opencode.json'), JSON.stringify({ minimum: { optimization: {} } }));
@@ -40,7 +73,35 @@ describe('loadMiMoConfig', () => {
     expect(cfg.maxSteps).toBe(3);
   });
 
-  it('returns {} when no config file exists', async () => {
+  it('falls back to ~/.minimum/config.json when no project config exists', async () => {
+    fs.mkdirSync(path.join(home, '.minimum'), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, '.minimum', 'config.json'),
+      JSON.stringify({ apiKey: 'tp-global', defaultModel: 'mimo-v2.5' }),
+    );
+    const cfg = await loadMiMoConfig(dir);
+    expect(cfg.apiKey).toBe('tp-global');
+    expect(cfg.defaultModel).toBe('mimo-v2.5');
+  });
+
+  it('project config inherits global fields it does not override', async () => {
+    fs.mkdirSync(path.join(home, '.minimum'), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, '.minimum', 'config.json'),
+      JSON.stringify({ apiKey: 'tp-global', defaultModel: 'mimo-v2.5-pro', approvalMode: 'suggest' }),
+    );
+    fs.mkdirSync(path.join(dir, '.minimum'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, '.minimum', 'config.json'),
+      JSON.stringify({ approvalMode: 'auto-edit' }),
+    );
+    const cfg = await loadMiMoConfig(dir);
+    expect(cfg.apiKey).toBe('tp-global');           // inherited
+    expect(cfg.defaultModel).toBe('mimo-v2.5-pro'); // inherited
+    expect(cfg.approvalMode).toBe('auto-edit');     // overridden
+  });
+
+  it('returns {} when no config file exists anywhere', async () => {
     expect(await loadMiMoConfig(dir)).toEqual({});
   });
 });
