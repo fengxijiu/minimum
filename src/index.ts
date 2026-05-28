@@ -29,9 +29,13 @@ export {
 	ReadFileTool,
 	WriteFileTool,
 	EditFileTool,
+	ApplyPatchTool,
 	GlobTool,
 	ListDirectoryTool,
 } from "./tools/filesystem/index.js";
+
+// LSP / persistent diagnostics
+export { getTsDiagnostics } from "./lsp/index.js";
 
 // Shell tools
 export { ExecShellTool } from "./tools/shell/index.js";

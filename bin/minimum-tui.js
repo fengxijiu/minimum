@@ -11,7 +11,7 @@
 import readline from 'readline';
 import {
   createMiMoStack, loadMiMoConfig, MiMoClient, ToolRegistry, InitCommand,
-  ReadFileTool, ListDirectoryTool, WriteFileTool, EditFileTool,
+  ReadFileTool, ListDirectoryTool, WriteFileTool, EditFileTool, ApplyPatchTool,
   ExecShellTool, GrepTool, GlobTool, GitTool,
 } from '../dist/index.js';
 import * as fs from 'fs';
@@ -337,6 +337,7 @@ async function processTask(task) {
   tools.register(new ListDirectoryTool());
   tools.register(new WriteFileTool());
   tools.register(new EditFileTool());
+  tools.register(new ApplyPatchTool());
   tools.register(new GrepTool());
   tools.register(new GlobTool());
   tools.register(new GitTool());

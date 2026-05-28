@@ -42,6 +42,8 @@ export type Message =
 
 export type SessionState = 'agent' | 'mimo' | 'paused' | 'error';
 
+export type ApprovalMode = 'read-only' | 'auto-edit' | 'full-auto';
+
 export type PlanStep = {
   label: string;
   status: 'done' | 'now' | 'next';
@@ -54,6 +56,7 @@ export type AppState = {
   path: string;
   branch: string;
   mode: Mode;
+  approvalMode: ApprovalMode;
   ctx: { used: number; max: number };
   files: FileEntry[];
   edits: StagedEdit[];

@@ -222,7 +222,7 @@ export function App({ runner = mockRunner }: { runner?: Runner } = {}) {
         <ContextRail files={state.files} edits={state.edits} mode={state.mode} />
         <Box flexDirection="column" flexGrow={1}>
           {showWelcome
-            ? <WelcomeScreen />
+            ? <WelcomeScreen path={state.path} />
             : <ChatStream stepLabel={state.currentStepLabel} messages={state.messages} />}
 
           {helpOpen ? <HelpOverlay /> : null}
@@ -240,6 +240,7 @@ export function App({ runner = mockRunner }: { runner?: Runner } = {}) {
       </Box>
       <StatusBar
         state={statusState}
+        approvalMode={state.approvalMode}
         ctxUsed={state.ctx.used}
         ctxMax={state.ctx.max}
         hint={`${state.edits.length} staged · ${state.branch}`}

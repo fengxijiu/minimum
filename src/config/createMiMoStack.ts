@@ -4,12 +4,15 @@ import { CompletenessChecker } from "../completeness/CompletenessChecker.js";
 import { ToolCallRepair } from "../repair/ToolCallRepair.js";
 import { MiMoLoop } from "../loop/MiMoLoop.js";
 import { TodoWriteTool } from "../tools/todo/TodoWriteTool.js";
+import { ApplyPatchTool } from "../tools/filesystem/ApplyPatchTool.js";
+import { ApprovalManager } from "../approval/ApprovalManager.js";
 import { mergeConfig, type MiMoConfig } from "./MiMoConfig.js";
 
 export interface MiMoStack {
 	loop: MiMoLoop;
 	validator: CodeValidator;
 	contextManager: ContextManager;
+	approvalManager: ApprovalManager;
 }
 
 /**
@@ -49,21 +52,30 @@ export function createMiMoStack(
 		tailFraction: cfg.context.tailFraction,
 	});
 
-	// Register TodoWriteTool when the registry supports it. The object below
-	// satisfies both the real ToolRegistry (name/getDefinition/execute) and
-	// MockToolRegistry (name/parameters/fn), so it works with either.
-	if (typeof tools.register === 'function' && !tools.has?.('todo_write')) {
-		const todo = new TodoWriteTool();
-		const def = todo.getDefinition();
-		tools.register({
-			name: todo.name,
-			description: def.description,
-			parameters: def.parameters,
-			getDefinition: () => def,
-			execute: (args: any) => todo.execute(args),
-			fn: (args: any) => todo.execute(args),
-		});
+	// Register built-in tools when the registry supports it. The compat shim
+	// below satisfies both the real ToolRegistry (getDefinition/execute) and
+	// MockToolRegistry (parameters/fn), so it works with either.
+	const builtins = [new TodoWriteTool(), new ApplyPatchTool()] as const;
+	if (typeof tools.register === 'function') {
+		for (const tool of builtins) {
+			if (tools.has?.(tool.name)) continue;
+			const def = tool.getDefinition();
+			tools.register({
+				name: tool.name,
+				description: def.description,
+				parameters: def.parameters,
+				getDefinition: () => def,
+				execute: (args: any, ctx?: any) => tool.execute(args, ctx),
+				fn: (args: any, ctx?: any) => tool.execute(args, ctx),
+			});
+		}
 	}
+
+	// ApprovalManager — built from config unless the caller injects one.
+	const approvalManager: ApprovalManager =
+		deps.approvalManager instanceof ApprovalManager
+			? deps.approvalManager
+			: new ApprovalManager({ mode: cfg.approvalMode });
 
 	const loop = new MiMoLoop({
 		client,
@@ -79,12 +91,12 @@ export function createMiMoStack(
 		enableReadGuard: cfg.enableReadGuard,
 		planMode: cfg.planMode,
 		hookManager: deps.hookManager,
-		approvalManager: deps.approvalManager,
+		approvalManager,
 		maxTokens: cfg.maxTokens,
 		maxSteps: cfg.maxSteps,
 		budgetUsd: cfg.budgetUsd || undefined,
 		workingDirectory,
 	});
 
-	return { loop, validator, contextManager };
+	return { loop, validator, contextManager, approvalManager };
 }

@@ -66,6 +66,15 @@ export interface MiMoConfig {
 	enableReadGuard?: boolean;
 	/** plan mode：只读规划，禁止变异工具（默认 false） */
 	planMode?: boolean;
+	/**
+	 * 三档审批模式（对标 Codex）:
+	 *   read-only  — 仅读工具，写操作全拦
+	 *   auto-edit  — 文件改写自动放行，shell 需确认
+	 *   full-auto  — 全自动（沙箱内使用）
+	 *   suggest    — 低风险自动放行，其余弹确认（默认）
+	 *   never      — 全拦
+	 */
+	approvalMode?: "read-only" | "auto-edit" | "full-auto" | "suggest" | "never";
 	/** 上下文管理阈值 */
 	context?: ContextConfig;
 	/** 容量检查点配置 */
@@ -85,6 +94,7 @@ export const DEFAULT_MIMO_CONFIG: Required<MiMoConfig> = {
 	budgetUsd: 0,
 	enableReadGuard: true,
 	planMode: false,
+	approvalMode: "suggest",
 	context: {
 		foldThreshold: 0.70,
 		aggressiveThreshold: 0.75,
@@ -121,6 +131,7 @@ export function mergeConfig(user: MiMoConfig = {}): Required<MiMoConfig> {
 		budgetUsd: user.budgetUsd ?? DEFAULT_MIMO_CONFIG.budgetUsd,
 		enableReadGuard: user.enableReadGuard ?? DEFAULT_MIMO_CONFIG.enableReadGuard,
 		planMode: user.planMode ?? DEFAULT_MIMO_CONFIG.planMode,
+		approvalMode: user.approvalMode ?? DEFAULT_MIMO_CONFIG.approvalMode,
 		context: { ...DEFAULT_MIMO_CONFIG.context, ...user.context },
 		capacity: { ...DEFAULT_MIMO_CONFIG.capacity, ...user.capacity },
 		storm: { ...DEFAULT_MIMO_CONFIG.storm, ...user.storm },
