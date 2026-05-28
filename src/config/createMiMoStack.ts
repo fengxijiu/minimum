@@ -53,9 +53,7 @@ export function createMiMoStack(
 		tailFraction: cfg.context.tailFraction,
 	});
 
-	// Register built-in tools when the registry supports it. The compat shim
-	// below satisfies both the real ToolRegistry (getDefinition/execute) and
-	// MockToolRegistry (parameters/fn), so it works with either.
+	// Register built-in tools when the registry supports it.
 	const builtins = [new TodoWriteTool(), new ApplyPatchTool()] as const;
 	if (typeof tools.register === 'function') {
 		for (const tool of builtins) {

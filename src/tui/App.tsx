@@ -557,7 +557,7 @@ export const App: React.FC = () => {
 					/: commands | @: files | Tab: complete | Esc: cancel | Ctrl+L: clear
 				</Text>
 				<Text color="gray" dimColor>
-					{process.env.MIMO_API_KEY ? "MiMo API" : "mock mode"}
+					{process.env.MIMO_API_KEY ? "MiMo API" : "no API key"}
 				</Text>
 			</Box>
 		</Box>

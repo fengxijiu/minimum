@@ -38,11 +38,40 @@ export class ImportChecker {
 	private extractUsedIdentifiers(code: string): Set<string> {
 		const identifiers = new Set<string>();
 
-		const matches = code.match(/\b[A-Z][a-zA-Z0-9]*\b/g);
-		if (matches) {
-			for (const match of matches) {
-				identifiers.add(match);
-			}
+		// Only match identifiers that appear in code-like contexts:
+		// - new ClassName
+		// - ClassName.method / ClassName.property
+		// - functionName(  (but this is lowercase, handled separately)
+		// - Type annotations: : ClassName, <ClassName>
+		// Skip plain capitalized words in natural language sentences.
+
+		// Pattern 1: new ClassName
+		const newPattern = /\bnew\s+([A-Z][a-zA-Z0-9]*)/g;
+		let match;
+		while ((match = newPattern.exec(code)) !== null) {
+			identifiers.add(match[1]!);
+		}
+
+		// Pattern 2: ClassName.something
+		const dotPattern = /\b([A-Z][a-zA-Z0-9]*)\s*\./g;
+		while ((match = dotPattern.exec(code)) !== null) {
+			identifiers.add(match[1]!);
+		}
+
+		// Pattern 3: import/require statements
+		const importPattern2 = /\b(?:import|require)\s*\(?\s*['"][^'"]*['"]/g;
+		// These are handled by extractImportedIdentifiers
+
+		// Pattern 4: Type annotations after : or as
+		const typePattern = /(?::\s*|as\s+)([A-Z][a-zA-Z0-9]*)/g;
+		while ((match = typePattern.exec(code)) !== null) {
+			identifiers.add(match[1]!);
+		}
+
+		// Pattern 5: Generic type parameters <T>
+		const genericPattern = /<([A-Z][a-zA-Z0-9]*)>/g;
+		while ((match = genericPattern.exec(code)) !== null) {
+			identifiers.add(match[1]!);
 		}
 
 		return identifiers;

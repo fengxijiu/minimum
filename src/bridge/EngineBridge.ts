@@ -14,7 +14,11 @@ export type UiEvent =
 	| { kind: "tool_result"; name: string; ok: boolean; content: string }
 	| { kind: "notice"; text: string; tone: "info" | "warn" | "ok" }
 	| { kind: "error"; text: string }
-	| { kind: "done"; success: boolean };
+	| { kind: "done"; success: boolean }
+	| { kind: "streaming"; text: string }
+	| { kind: "streaming_reasoning"; text: string }
+	| { kind: "streaming_start" }
+	| { kind: "streaming_end" };
 
 export interface EngineLoop {
 	run(userInput: string): AsyncGenerator<LoopEvent>;
@@ -83,10 +87,41 @@ export function mapLoopEvent(e: LoopEvent): UiEvent | null {
  * EngineBridge — 把一个 MiMoLoop（或兼容对象）包成规范化事件流。
  */
 export class EngineBridge {
-	constructor(private loop: EngineLoop) {}
+	private streamingBuffer = "";
+	private streamingReasonBuffer = "";
+
+	constructor(private loop: EngineLoop) {
+		// Wire onChunk to emit streaming events if the loop supports it.
+		if ("config" in loop && typeof loop.config === "object" && loop.config) {
+			(loop.config as any).onChunk = (chunk: {
+				type: "content" | "reasoning" | "tool_call";
+				text?: string;
+				name?: string;
+			}) => {
+				if (chunk.type === "content" && chunk.text) {
+					this.streamingBuffer += chunk.text;
+				} else if (chunk.type === "reasoning" && chunk.text) {
+					this.streamingReasonBuffer += chunk.text;
+				}
+			};
+		}
+	}
 
 	async *send(userInput: string): AsyncGenerator<UiEvent> {
+		this.streamingBuffer = "";
+		this.streamingReasonBuffer = "";
+
 		for await (const e of this.loop.run(userInput)) {
+			// Before yielding the final content event, emit any buffered streaming text.
+			if (e.type === "content" && this.streamingBuffer) {
+				yield { kind: "streaming", text: this.streamingBuffer };
+				this.streamingBuffer = "";
+			}
+			if (e.type === "reasoning" && this.streamingReasonBuffer) {
+				yield { kind: "streaming_reasoning", text: this.streamingReasonBuffer };
+				this.streamingReasonBuffer = "";
+			}
+
 			const ui = mapLoopEvent(e);
 			if (ui) yield ui;
 		}

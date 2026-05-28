@@ -136,14 +136,7 @@ export {
 	registerBuiltinSkills,
 } from "./skills/BuiltinSkills.js";
 
-// Mocks (单独导出避免冲突)
-export { MockClient } from "./mocks/MockClient.js";
-export { MockToolRegistry } from "./mocks/MockToolRegistry.js";
-export { MockValidator } from "./mocks/MockValidator.js";
-export { MockCompletenessChecker } from "./mocks/MockCompletenessChecker.js";
-export { MockContextManager } from "./mocks/MockContextManager.js";
-export { MockIterationManager } from "./mocks/MockIterationManager.js";
-export { MockRepair } from "./mocks/MockRepair.js";
+// Mocks — test-only, not exported in production build
 
 // MCP (Model Context Protocol) support
 export { McpClient, McpManager } from "./mcp/index.js";
