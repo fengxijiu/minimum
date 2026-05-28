@@ -56,6 +56,12 @@ export interface CompletenessConfig {
 }
 
 export interface MiMoConfig {
+	/** MiMo API key（来自 `init` 注册的全局配置，env MIMO_API_KEY 优先） */
+	apiKey?: string;
+	/** MiMo API base URL（默认 https://api.xiaomimimo.com/v1） */
+	baseUrl?: string;
+	/** 默认模型名（默认 mimo-v2.5-pro） */
+	defaultModel?: string;
 	/** 最大 context 窗口 token 数（默认 131072） */
 	maxTokens?: number;
 	/** 单次任务最大步骤数（默认 50） */
@@ -89,6 +95,9 @@ export interface MiMoConfig {
 
 /** 所有优化分析得来的默认值 */
 export const DEFAULT_MIMO_CONFIG: Required<MiMoConfig> = {
+	apiKey: "",
+	baseUrl: "https://api.xiaomimimo.com/v1",
+	defaultModel: "mimo-v2.5-pro",
 	maxTokens: 131072,
 	maxSteps: 50,
 	budgetUsd: 0,
@@ -125,6 +134,9 @@ export const DEFAULT_MIMO_CONFIG: Required<MiMoConfig> = {
 /** 深合并用户配置与默认配置 */
 export function mergeConfig(user: MiMoConfig = {}): Required<MiMoConfig> {
 	return {
+		apiKey: user.apiKey ?? DEFAULT_MIMO_CONFIG.apiKey,
+		baseUrl: user.baseUrl ?? DEFAULT_MIMO_CONFIG.baseUrl,
+		defaultModel: user.defaultModel ?? DEFAULT_MIMO_CONFIG.defaultModel,
 		maxTokens: user.maxTokens ?? DEFAULT_MIMO_CONFIG.maxTokens,
 		maxSteps: user.maxSteps ?? DEFAULT_MIMO_CONFIG.maxSteps,
 		// 0 means no limit; undefined from user also means no limit

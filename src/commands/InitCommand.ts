@@ -1,7 +1,10 @@
 import type { Command, CommandContext, CommandResult } from './types.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import * as os from 'os';
 import * as readline from 'readline';
+import { GLOBAL_CONFIG_PATH } from '../config/loadMiMoConfig.js';
+import type { MiMoConfig } from '../config/MiMoConfig.js';
 
 // MiMo API 类型定义
 type ApiType = 'api' | 'token-plan';
@@ -175,10 +178,11 @@ export class InitCommand implements Command {
     const config = cmd.buildConfig(options.apiKey, apiType, model, baseUrl, options);
 
     const configPath = path.join(workingDirectory, 'opencode.json');
-    const globalConfigPath = path.join(process.env.HOME || '~', '.config', 'opencode', 'opencode.json');
+    const legacyGlobalPath = path.join(os.homedir() || process.env.HOME || '~', '.config', 'opencode', 'opencode.json');
 
     await cmd.saveConfig(configPath, config);
-    await cmd.saveGlobalConfig(globalConfigPath, config);
+    await cmd.saveGlobalConfig(legacyGlobalPath, config);
+    await cmd.saveMinimumGlobalConfig(config);
     await cmd.createDirectories(workingDirectory);
 
     // Also export env vars so MiMoClient picks them up immediately
@@ -187,7 +191,7 @@ export class InitCommand implements Command {
 
     return {
       success: true,
-      output: cmd.formatSuccessMessage(config, configPath, globalConfigPath),
+      output: cmd.formatSuccessMessage(config, configPath, GLOBAL_CONFIG_PATH),
       data: { config },
     };
   }
@@ -198,7 +202,7 @@ export class InitCommand implements Command {
 
     // 检查是否已存在配置
     const configPath = path.join(context.workingDirectory, 'opencode.json');
-    const globalConfigPath = path.join(process.env.HOME || '~', '.config', 'opencode', 'opencode.json');
+    const legacyGlobalPath = path.join(os.homedir() || process.env.HOME || '~', '.config', 'opencode', 'opencode.json');
 
     if (!isReset) {
       try {
@@ -229,14 +233,15 @@ export class InitCommand implements Command {
 
       // 保存配置
       await this.saveConfig(configPath, config);
-      await this.saveGlobalConfig(globalConfigPath, config);
+      await this.saveGlobalConfig(legacyGlobalPath, config);
+      await this.saveMinimumGlobalConfig(config);
 
       // 创建必要的目录
       await this.createDirectories(context.workingDirectory);
 
       return {
         success: true,
-        output: this.formatSuccessMessage(config, configPath, globalConfigPath),
+        output: this.formatSuccessMessage(config, configPath, GLOBAL_CONFIG_PATH),
         data: { config }
       };
     } catch (error: any) {
@@ -538,7 +543,7 @@ export class InitCommand implements Command {
 
   private async saveGlobalConfig(globalConfigPath: string, config: MinimumConfig): Promise<void> {
     await fs.mkdir(path.dirname(globalConfigPath), { recursive: true });
-    
+
     // 保存全局配置（使用环境变量引用）
     const globalConfig = {
       ...config,
@@ -552,11 +557,38 @@ export class InitCommand implements Command {
         }
       }
     };
-    
+
     await fs.writeFile(globalConfigPath, JSON.stringify(globalConfig, null, 2));
   }
 
+  /**
+   * 写入 `~/.minimum/config.json` —— minimum 引擎直接消费的 MiMoConfig 形状。
+   * loadMiMoConfig 没找到项目级配置时会回退到这里，所以 `init` 之后任何目录都能直接 `minimum`。
+   */
+  private async saveMinimumGlobalConfig(config: MinimumConfig): Promise<void> {
+    await fs.mkdir(path.dirname(GLOBAL_CONFIG_PATH), { recursive: true });
+
+    const opt = config.minimum.optimization;
+    const minimumConfig: MiMoConfig = {
+      apiKey: config.provider.mimo.options.apiKey,
+      baseUrl: config.provider.mimo.options.baseURL,
+      defaultModel: config.minimum.defaultModel,
+      approvalMode: config.minimum.approval.mode as MiMoConfig['approvalMode'],
+      validation: { enabled: opt.validation },
+      completeness: { enabled: opt.completeness },
+      context: {
+        foldThreshold: opt.context.foldThreshold,
+        aggressiveThreshold: opt.context.aggressiveThreshold,
+      },
+    };
+
+    await fs.writeFile(GLOBAL_CONFIG_PATH, JSON.stringify(minimumConfig, null, 2));
+    // chmod 0600 — 仅 owner 可读，避免 API key 泄漏给其他用户
+    try { await fs.chmod(GLOBAL_CONFIG_PATH, 0o600); } catch { /* Windows / 非 POSIX 文件系统 */ }
+  }
+
   private async createDirectories(projectRoot: string): Promise<void> {
+    const home = os.homedir() || process.env.HOME || '~';
     const dirs = [
       path.join(projectRoot, '.minimum'),
       path.join(projectRoot, '.minimum', 'memory'),
@@ -564,10 +596,10 @@ export class InitCommand implements Command {
       path.join(projectRoot, '.minimum', 'checkpoints'),
       path.join(projectRoot, '.minimum', 'skills'),
       path.join(projectRoot, '.minimum', 'transcripts'),
-      path.join(process.env.HOME || '~', '.minimum'),
-      path.join(process.env.HOME || '~', '.minimum', 'memory'),
-      path.join(process.env.HOME || '~', '.minimum', 'sessions'),
-      path.join(process.env.HOME || '~', '.minimum', 'skills')
+      path.join(home, '.minimum'),
+      path.join(home, '.minimum', 'memory'),
+      path.join(home, '.minimum', 'sessions'),
+      path.join(home, '.minimum', 'skills')
     ];
 
     for (const dir of dirs) {
@@ -598,6 +630,7 @@ export class InitCommand implements Command {
 📁 Configuration files created:
    • Project: ${configPath}
    • Global:  ${globalConfigPath}
+   ↑ minimum 引擎会自动读取 ${globalConfigPath}（无需 env 变量）
 
 📂 Directories created:
    • .minimum/

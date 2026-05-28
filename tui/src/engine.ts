@@ -72,15 +72,17 @@ export const mockRunner: Runner = {
  *   - any import or construction error occurs
  */
 export async function createEngineRunner(workingDirectory: string): Promise<Runner> {
-  const apiKey = process.env.MIMO_API_KEY;
-  if (!apiKey) return mockRunner;
-
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const eng = await import('../../dist/index.js') as any;
 
+    // 凭证优先级：env > 项目配置 > ~/.minimum/config.json
     const userConfig = await eng.loadMiMoConfig(workingDirectory);
-    const client = new eng.MiMoClient({ apiKey, baseUrl: process.env.MIMO_BASE_URL });
+    const apiKey = process.env.MIMO_API_KEY || userConfig.apiKey;
+    const baseUrl = process.env.MIMO_BASE_URL || userConfig.baseUrl;
+    if (!apiKey) return mockRunner;
+
+    const client = new eng.MiMoClient({ apiKey, baseUrl });
 
     const tools = new eng.ToolRegistry();
     for (const Ctor of [
