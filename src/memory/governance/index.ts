@@ -1,4 +1,11 @@
 export {
+	loadCanonicalMemory,
+	resolveLoadKeys,
+	type LoadOptions,
+	type LoadedMemory,
+	type TaskType,
+} from "./MemoryLoader.js";
+export {
 	canonicalPath,
 	defaultManifest,
 	getOrInitManifest,
