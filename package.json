@@ -1,6 +1,6 @@
 {
   "name": "minimum",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "MiMo Coding Experience Optimization - 针对MiMo模型的编码体验优化",
   "type": "module",
   "main": "dist/index.js",
