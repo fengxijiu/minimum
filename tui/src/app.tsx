@@ -15,6 +15,7 @@ import {
   filterCommands, runCommand, sysMessage, type CommandOutcome, type CommandContext,
 } from './commands.js';
 import { mockRunner, uiEventToMessages, type Runner, type EngineInfo, type UiPlanStatus } from './engine.js';
+import { loadHistory, appendHistory } from './inputHistory.js';
 import type { AppState, Message, FileEntry, SessionState, Chip, PlanStep } from './types.js';
 
 const PLAN_STATUS: Record<UiPlanStatus, PlanStep['status']> = {
@@ -48,6 +49,10 @@ export function App({
   const [sel, setSel] = useState(0);
   const [helpOpen, setHelpOpen] = useState(false);
   const [pending, setPending] = useState<Pending>(null);
+  const [history] = useState<string[]>(() => loadHistory().map(h => h.text));
+  // -1 means "live input"; 0..N indexes into history newest-last
+  const [histIdx, setHistIdx] = useState(-1);
+  const [savedDraft, setSavedDraft] = useState('');
 
   useEffect(() => {
     if (engineInfo.mode === 'mock') {
@@ -170,6 +175,30 @@ export function App({
     if (v === '?' && input === '') { setHelpOpen(true); return; }
     setInput(v);
     setSel(0);
+    // Any free-form typing exits history navigation.
+    if (histIdx !== -1) setHistIdx(-1);
+  };
+
+  const stepHistory = (dir: -1 | 1): boolean => {
+    if (!history.length) return false;
+    if (histIdx === -1) {
+      if (dir === 1) return false;  // already at live edge, ↓ is no-op
+      setSavedDraft(input);
+      const next = history.length - 1;
+      setHistIdx(next);
+      setInput(history[next]!);
+      return true;
+    }
+    const next = histIdx + dir;
+    if (next < 0) { setInput(history[0]!); setHistIdx(0); return true; }
+    if (next >= history.length) {
+      setHistIdx(-1);
+      setInput(savedDraft);
+      return true;
+    }
+    setInput(history[next]!);
+    setHistIdx(next);
+    return true;
   };
 
   const completeCommand = () => {
@@ -204,6 +233,10 @@ export function App({
     if (pending) setPending(null); // a typed message redirects the agent
 
     push({ id: mid('u'), type: 'user', text: trimmed });
+    appendHistory(trimmed);
+    history.push(trimmed);
+    setHistIdx(-1);
+    setSavedDraft('');
     changeInput('');
 
     // Stream the engine's normalized events into the chat.
@@ -251,6 +284,10 @@ export function App({
     if (overlay !== 'none' && itemCount) {
       if (key.downArrow) { setSel(s => (s + 1) % itemCount); return; }
       if (key.upArrow)   { setSel(s => (s - 1 + itemCount) % itemCount); return; }
+    }
+    if (overlay === 'none' && !pending) {
+      if (key.upArrow)   { if (stepHistory(-1)) return; }
+      if (key.downArrow) { if (stepHistory(1)) return; }
     }
     if (key.tab) {
       if (overlay === 'cmd' && cmdItems.length) completeCommand();
