@@ -16,6 +16,7 @@ import {
 } from './commands.js';
 import { mockRunner, uiEventToMessages, type Runner, type EngineInfo, type UiPlanStatus } from './engine.js';
 import { loadHistory, appendHistory } from './inputHistory.js';
+import { scanFiles, readBranch, touch } from './files.js';
 import type { AppState, Message, FileEntry, SessionState, Chip, PlanStep } from './types.js';
 
 const PLAN_STATUS: Record<UiPlanStatus, PlanStep['status']> = {
@@ -43,6 +44,17 @@ function activeAtToken(input: string): string | null {
   return m ? (m[1] ?? '') : null;
 }
 
+/** Best-effort extract a file path from the tool args JSON-ish string. */
+function extractFileArg(args: string): string | null {
+  try {
+    const obj = JSON.parse(args.replace(/^\S+\s/, ''));
+    const v = obj?.path ?? obj?.file ?? obj?.file_path ?? obj?.filepath;
+    return typeof v === 'string' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 const DEFAULT_ENGINE_INFO: EngineInfo = { mode: 'mock', reason: 'not-built' };
 
 export function App({
@@ -64,6 +76,16 @@ export function App({
   const [savedDraft, setSavedDraft] = useState('');
 
   useEffect(() => {
+    const root = process.cwd();
+    const scanned = scanFiles(root);
+    const branch = readBranch(root);
+    const displayPath = root.replace(process.env.HOME ?? '', '~');
+    setState(s => ({
+      ...s,
+      path: displayPath,
+      branch,
+      files: scanned.length ? scanned : s.files,
+    }));
     if (engineInfo.mode === 'mock') {
       const reason = engineInfo.reason ?? 'not-built';
       const detail = reason === 'no-api-key'
@@ -282,6 +304,12 @@ export function App({
               },
             });
             continue;
+          }
+          if (ev.kind === 'tool') {
+            const fname = extractFileArg(ev.args);
+            if (fname) {
+              setState(s => ({ ...s, files: touch(s.files, { name: fname, meta: ev.name }) }));
+            }
           }
           if (ev.kind === 'usage') {
             const used = Number((ev.totalTokens / 1000).toFixed(1));
