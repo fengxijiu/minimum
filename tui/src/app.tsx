@@ -516,7 +516,7 @@ export function App({
 
   // ── Render: zone-based layout ───────────────────────────────────────
   return (
-    <Box flexDirection="column" maxHeight={termRows - 1}>
+    <Box flexDirection="column" height={termRows - 1}>
       <TitleZone path={sPath} branch={sBranch} mode={titleMode} />
       <PlanZone title={sPlanTitle} steps={sPlanSteps} />
       <PipelineZone phases={sPipeline} />

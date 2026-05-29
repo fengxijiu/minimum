@@ -93,10 +93,11 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
 
     case 'tool.end': {
       let changed = false;
+      const status: 'ok' | 'err' = event.ok ? 'ok' : 'err';
       const messages = state.messages.map(m => {
         if (m.id !== event.id || m.type !== 'tool') return m;
         changed = true;
-        return { ...m, tool: { ...m.tool, status: event.ok ? 'ok' : 'err', meta: event.meta ?? m.tool.meta, output: event.output ?? m.tool.output } };
+        return { ...m, tool: { ...m.tool, status, meta: event.meta ?? m.tool.meta, output: event.output ?? m.tool.output } };
       });
       const activeMatches = state.activeTool?.id === event.id;
       if (!changed && !activeMatches) return state;
@@ -104,7 +105,7 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
         ...state,
         messages,
         activeTool: activeMatches
-          ? { ...state.activeTool!, status: event.ok ? 'ok' : 'err', meta: event.meta }
+          ? { ...state.activeTool!, status, meta: event.meta }
           : state.activeTool,
       };
     }
