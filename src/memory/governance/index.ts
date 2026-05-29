@@ -1,4 +1,13 @@
 export {
+	buildContextPack,
+	contextPackPath,
+	rankCandidates,
+	writeContextPack,
+	type CanonicalSection,
+	type ContextPack,
+	type ContextPackInput,
+} from "./ContextPackBuilder.js";
+export {
 	loadCanonicalMemory,
 	resolveLoadKeys,
 	type LoadOptions,
