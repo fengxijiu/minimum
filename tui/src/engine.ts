@@ -63,6 +63,55 @@ const KIND: Record<string, ToolKind> = {
 let seq = 0;
 const id = (p: string) => p + Date.now() + '_' + seq++;
 
+/** Convert raw JSON args into a compact human-readable summary. */
+export function summarizeTool(name: string, rawArgs: string): string {
+  try {
+    const a: Record<string, unknown> = JSON.parse(rawArgs);
+    switch (name) {
+      case 'read_file': case 'read': {
+        const p = String(a.path ?? a.file_path ?? a.filepath ?? '');
+        const s = a.start_line != null ? `:${a.start_line}` : '';
+        const e = a.end_line   != null ? `–${a.end_line}`   : '';
+        return p + s + e;
+      }
+      case 'list_directory':
+        return String(a.path ?? a.directory ?? '.');
+      case 'write_file': case 'edit_file': case 'edit': case 'apply_patch':
+        return String(a.path ?? a.file_path ?? a.filepath ?? '').slice(0, 80);
+      case 'exec_shell': case 'run':
+        return String(a.command ?? rawArgs).slice(0, 80);
+      case 'grep':
+        return `"${a.pattern ?? ''}" in ${a.path ?? '.'}`;
+      case 'glob': case 'find': case 'search':
+        return String(a.pattern ?? a.path ?? rawArgs).slice(0, 60);
+      case 'git': case 'git_status': case 'git_diff': case 'git_log':
+        return String(a.command ?? a.subcommand ?? name).slice(0, 60);
+      case 'web_fetch':
+        return String(a.url ?? rawArgs).slice(0, 80);
+      case 'todo_write': case 'todo_read':
+        return String(a.title ?? a.id ?? 'todo').slice(0, 40);
+      default:
+        return rawArgs.slice(0, 80);
+    }
+  } catch {
+    return String(rawArgs).slice(0, 80);
+  }
+}
+
+/** Build a brief result summary for display in tool meta. */
+export function summarizeToolResult(ok: boolean, content: string): string {
+  if (!ok) return '';
+  const lines = content.split('\n').filter(l => l.trim() !== '');
+  if (lines.length === 0) return '✓';
+  if (lines.length === 1) return lines[0]!.slice(0, 80);
+  const added   = lines.filter(l => l.startsWith('+')).length;
+  const removed = lines.filter(l => l.startsWith('-')).length;
+  if (added > 0 || removed > 0) return `+${added} −${removed}`;
+  const exitM = content.match(/exit\s+(\d+)/i);
+  if (exitM) return `exit ${exitM[1]}`;
+  return `${lines.length} ln`;
+}
+
 /** Translate one normalized engine event into chat messages. */
 export function uiEventToMessages(ev: UiEvent): Message[] {
   switch (ev.kind) {

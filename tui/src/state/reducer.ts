@@ -1,5 +1,13 @@
-import type { AppState, Message, PipelinePhase, Toast } from '../types.js';
+import type { AppState, Message, PipelinePhase, Toast, ToolKind } from '../types.js';
 import type { AgentEvent } from './events.js';
+
+const TOOL_KIND: Record<string, ToolKind> = {
+  read_file: 'read', read: 'read', list_directory: 'read',
+  git_status: 'read', git_diff: 'read', git_log: 'read',
+  write_file: 'edit', edit_file: 'edit', edit: 'edit', apply_patch: 'edit',
+  exec_shell: 'run', run: 'run', git: 'run',
+  grep: 'find', glob: 'find', find: 'find', search: 'find', web_fetch: 'find',
+};
 
 let seq = 0;
 const mid = (p: string) => p + Date.now() + '_' + seq++;
@@ -45,7 +53,7 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
       return {
         ...pushMessage(state, {
           id: event.id, type: 'tool',
-          tool: { kind: 'read', args: event.name + ' ' + event.args },
+          tool: { kind: TOOL_KIND[event.name] ?? 'read', args: event.args },
         }),
         activeTool: {
           id: event.id,

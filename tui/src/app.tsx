@@ -14,7 +14,7 @@ import { createInitialState } from './seed.js';
 import {
   runCommand, type CommandOutcome, type CommandContext,
 } from './commands.js';
-import { mockRunner, uiEventToMessages, type Runner, type EngineInfo, type UiPlanStatus } from './engine.js';
+import { mockRunner, uiEventToMessages, summarizeTool, summarizeToolResult, type Runner, type EngineInfo, type UiPlanStatus } from './engine.js';
 import { scanFiles, readBranch, touch } from './files.js';
 import { useAgentStore, useSlice, type Dispatch } from './state/store.js';
 import type { AppState, Message, FileEntry, SessionState, Chip, PlanStep, PendingState, ApprovalMode, EditMode, UsageInfo, Mode, StagedEdit } from './types.js';
@@ -134,6 +134,8 @@ export function App({
   stateRef.current = state;
   const activePermRef = useRef(activePerm);
   activePermRef.current = activePerm;
+  // Tracks the last-started tool message id so tool_result can close it out.
+  const lastToolIdRef = useRef<string | null>(null);
 
   // ── Streaming chunk buffer (50ms flush) ─────────────────────────────
   const chunkBufferRef = useRef('');
@@ -304,6 +306,21 @@ export function App({
             if (fname) {
               dispatch({ type: 'files.set', files: touch(stateRef.current.files, { name: fname, meta: ev.name }) });
             }
+            const toolId = tid();
+            lastToolIdRef.current = toolId;
+            dispatch({ type: 'tool.start', id: toolId, name: ev.name, args: summarizeTool(ev.name, ev.args) });
+            continue;
+          }
+          if (ev.kind === 'tool_result') {
+            if (lastToolIdRef.current) {
+              const meta = summarizeToolResult(ev.ok, ev.content);
+              dispatch({ type: 'tool.end', id: lastToolIdRef.current, ok: ev.ok, meta: meta || undefined });
+              lastToolIdRef.current = null;
+            }
+            if (!ev.ok) {
+              dispatch({ type: 'error.push', title: `${ev.name} failed`, lines: ev.content.split('\n').slice(0, 6) });
+            }
+            continue;
           }
           if (ev.kind === 'usage') {
             dispatch({ type: 'ctx.update', used: Number((ev.totalTokens / 1000).toFixed(1)) });

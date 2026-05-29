@@ -2,14 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Box, Text } from 'ink';
 import { theme } from '../theme.js';
 import type { ToolProgress as ToolProgressType } from '../types.js';
-
-const TOOL_ICON: Record<string, string> = {
-  read_file: '◇', read: '◇',
-  write_file: '◆', edit_file: '◆', edit: '◆', apply_patch: '◆',
-  exec_shell: '▶', run: '▶',
-  grep: '⌕', glob: '⌕', find: '⌕',
-  git: '⑂', git_status: '⑂', git_diff: '⑂', git_log: '⑂',
-};
+import { toolIcon } from '../toolIcon.js';
 
 function formatElapsed(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -28,7 +21,7 @@ export const ToolProgress = React.memo(function ToolProgress({ tool }: { tool: T
 
   if (!tool) return null;
 
-  const icon = TOOL_ICON[tool.name] ?? '◇';
+  const icon = toolIcon(tool.name);
   const statusColor = tool.status === 'err' ? theme.danger
     : tool.status === 'ok' ? theme.plus
     : theme.accent;
