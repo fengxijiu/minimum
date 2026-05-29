@@ -1,4 +1,4 @@
-import type { AppState, Message, PipelinePhase, Toast } from '../types.js';
+import type { AppState, Message, PipelinePhase, Toast, ToolCall } from '../types.js';
 import type { AgentEvent } from './events.js';
 
 let seq = 0;
@@ -7,6 +7,20 @@ let toastSeq = 0;
 
 function pushMessage(state: AppState, msg: Message): AppState {
   return { ...state, messages: [...state.messages, msg] };
+}
+
+function samePlanSteps(a: AppState['plan']['steps'], b: AppState['plan']['steps']): boolean {
+  return a.length === b.length && a.every((step, index) => {
+    const other = b[index];
+    return other?.label === step.label && other.status === step.status;
+  });
+}
+
+function sameFiles(a: AppState['files'], b: AppState['files']): boolean {
+  return a.length === b.length && a.every((file, index) => {
+    const other = b[index];
+    return other?.name === file.name && other.meta === file.meta && other.staged === file.staged;
+  });
 }
 
 function dismissExpiredToasts(toasts: Toast[]): Toast[] {
@@ -27,6 +41,7 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
       });
 
     case 'assistant.chunk':
+      if (!event.text) return state;
       return {
         ...state,
         streaming: (state.streaming ?? '') + event.text,
@@ -34,6 +49,7 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
 
     case 'assistant.final': {
       const text = event.text || state.streaming || '';
+      if (!text && state.streaming === null) return state;
       const next: AppState = { ...state, streaming: null };
       if (!text) return next;
       return pushMessage(next, {
@@ -56,28 +72,37 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
         },
       };
 
-    case 'tool.output':
-      return {
-        ...state,
-        messages: state.messages.map(m =>
-          m.id === event.id && m.type === 'tool'
-            ? { ...m, tool: { ...m.tool, meta: event.text.slice(0, 80) } }
-            : m
-        ),
-      };
+    case 'tool.output': {
+      let changed = false;
+      const meta = event.text.slice(0, 80);
+      const messages = state.messages.map(m => {
+        if (m.id !== event.id || m.type !== 'tool' || m.tool.meta === meta) return m;
+        changed = true;
+        return { ...m, tool: { ...m.tool, meta } };
+      });
+      return changed ? { ...state, messages } : state;
+    }
 
-    case 'tool.end':
-      return {
-        ...state,
-        messages: state.messages.map(m =>
-          m.id === event.id && m.type === 'tool'
-            ? { ...m, tool: { ...m.tool, status: event.ok ? 'ok' : 'err', meta: event.meta ?? m.tool.meta } }
-            : m
-        ),
-        activeTool: state.activeTool?.id === event.id
-          ? { ...state.activeTool, status: event.ok ? 'ok' : 'err', meta: event.meta }
-          : state.activeTool,
-      };
+    case 'tool.end': {
+      let changed = false;
+      const nextStatus: NonNullable<ToolCall['status']> = event.ok ? 'ok' : 'err';
+      const messages = state.messages.map(m => {
+        if (m.id !== event.id || m.type !== 'tool') return m;
+        const nextMeta = event.meta ?? m.tool.meta;
+        if (m.tool.status === nextStatus && m.tool.meta === nextMeta) return m;
+        changed = true;
+        return { ...m, tool: { ...m.tool, status: nextStatus, meta: nextMeta } };
+      });
+      let activeTool = state.activeTool;
+      if (state.activeTool?.id === event.id) {
+        const nextMeta = event.meta ?? state.activeTool.meta;
+        if (state.activeTool.status !== nextStatus || state.activeTool.meta !== nextMeta) {
+          activeTool = { ...state.activeTool, status: nextStatus, meta: nextMeta };
+        }
+      }
+      if (!changed && activeTool === state.activeTool) return state;
+      return { ...state, messages, activeTool };
+    }
 
     case 'system.push':
       return pushMessage(state, {
@@ -136,7 +161,7 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
       };
 
     case 'messages.clear':
-      return { ...state, messages: [] };
+      return state.messages.length ? { ...state, messages: [] } : state;
 
     case 'session.load':
       return {
@@ -155,26 +180,35 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
       return { ...state, input: '' };
 
     case 'approval.change':
-      return { ...state, approvalMode: event.mode };
+      return state.approvalMode === event.mode ? state : { ...state, approvalMode: event.mode };
 
     case 'mode.change':
-      return { ...state, mode: event.mode };
+      return state.mode === event.mode ? state : { ...state, mode: event.mode };
 
-    case 'ctx.update':
+    case 'ctx.update': {
+      const nextMax = event.max ?? state.ctx.max;
+      if (state.ctx.used === event.used && state.ctx.max === nextMax) return state;
       return {
         ...state,
-        ctx: { used: event.used, max: event.max ?? state.ctx.max },
+        ctx: { used: event.used, max: nextMax },
       };
+    }
 
     // ── plan ──────────────────────────────────────────────────────
     case 'plan.set': {
       const nowIdx = event.steps.findIndex(s => s.status === 'now');
+      const currentStepLabel = event.steps.length && nowIdx >= 0
+        ? `STEP ${nowIdx + 1} · ${event.steps[nowIdx]!.label}`.toUpperCase()
+        : '';
+      if (
+        state.plan.title === event.title
+        && samePlanSteps(state.plan.steps, event.steps)
+        && state.currentStepLabel === currentStepLabel
+      ) return state;
       return {
         ...state,
         plan: { title: event.title, steps: event.steps },
-        currentStepLabel: event.steps.length && nowIdx >= 0
-          ? `STEP ${nowIdx + 1} · ${event.steps[nowIdx]!.label}`.toUpperCase()
-          : '',
+        currentStepLabel,
       };
     }
 
@@ -194,7 +228,7 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
 
     // ── files / edits ─────────────────────────────────────────────
     case 'files.set':
-      return { ...state, files: event.files };
+      return sameFiles(state.files, event.files) ? state : { ...state, files: event.files };
 
     case 'edit.add':
       return { ...state, edits: [...state.edits, event.edit] };
@@ -213,16 +247,17 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
       return { ...state, pending: event.value };
 
     case 'pending.clear':
-      return { ...state, pending: null };
+      return state.pending === null ? state : { ...state, pending: null };
 
     case 'help.toggle':
       return { ...state, helpOpen: !state.helpOpen };
 
     // ── turn lifecycle ────────────────────────────────────────────
     case 'turn.start':
-      return { ...state, turnInProgress: true, streaming: '' };
+      return state.turnInProgress && state.streaming === '' ? state : { ...state, turnInProgress: true, streaming: '' };
 
     case 'turn.end':
+      if (!state.turnInProgress && state.streaming === null && state.activeTool === null) return state;
       return {
         ...state,
         turnInProgress: false,
@@ -242,8 +277,10 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
       return { ...state, toasts: [...dismissExpiredToasts(state.toasts), toast] };
     }
 
-    case 'toast.dismiss':
-      return { ...state, toasts: state.toasts.filter(t => t.id !== event.id) };
+    case 'toast.dismiss': {
+      const toasts = state.toasts.filter(t => t.id !== event.id);
+      return toasts.length === state.toasts.length ? state : { ...state, toasts };
+    }
 
     // ── usage / cost ──────────────────────────────────────────────
     case 'usage.update':

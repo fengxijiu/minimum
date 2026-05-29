@@ -135,24 +135,27 @@ export function App({
   const activePermRef = useRef(activePerm);
   activePermRef.current = activePerm;
 
-  // ── Streaming chunk buffer (50ms flush) ─────────────────────────────
+  // ── Streaming chunk buffer (adaptive flush) ────────────────────────
   const chunkBufferRef = useRef('');
-  const chunkFlushTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const chunkFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const chunkLastFlushRef = useRef(0);
   const flushChunks = useCallback(() => {
-    if (chunkBufferRef.current) {
-      dispatch({ type: 'assistant.chunk', text: chunkBufferRef.current });
-      chunkBufferRef.current = '';
-    }
-  }, [dispatch]);
-  const startChunkFlusher = useCallback(() => {
-    if (chunkFlushTimerRef.current) return;
-    chunkFlushTimerRef.current = setInterval(flushChunks, 100);
-  }, [flushChunks]);
-  const stopChunkFlusher = useCallback(() => {
     if (chunkFlushTimerRef.current) {
-      clearInterval(chunkFlushTimerRef.current);
+      clearTimeout(chunkFlushTimerRef.current);
       chunkFlushTimerRef.current = null;
     }
+    if (!chunkBufferRef.current) return;
+    dispatch({ type: 'assistant.chunk', text: chunkBufferRef.current });
+    chunkBufferRef.current = '';
+    chunkLastFlushRef.current = Date.now();
+  }, [dispatch]);
+  const scheduleChunkFlush = useCallback(() => {
+    if (chunkFlushTimerRef.current) return;
+    const elapsed = Date.now() - chunkLastFlushRef.current;
+    const delay = Math.max(0, 120 - elapsed);
+    chunkFlushTimerRef.current = setTimeout(flushChunks, delay);
+  }, [flushChunks]);
+  const stopChunkFlusher = useCallback(() => {
     flushChunks();
   }, [flushChunks]);
 
@@ -273,7 +276,7 @@ export function App({
   const W_PHASES = useMemo(() => new Set(['W0', 'W1', 'W0.5', 'W2/3', 'W4']), []);
   const runTurn = useCallback((activeRunner: Runner, trimmed: string, isPipeline: boolean) => {
     void (async () => {
-      startChunkFlusher();
+      dispatch({ type: 'turn.start' });
       if (isPipeline) dispatch({ type: 'pipeline.start' });
       try {
         for await (const ev of activeRunner.send(trimmed)) {
@@ -327,6 +330,7 @@ export function App({
           }
           if (ev.kind === 'streaming') {
             chunkBufferRef.current += ev.text;
+            scheduleChunkFlush();
             continue;
           }
           const msgs = uiEventToMessages(ev);
@@ -345,7 +349,7 @@ export function App({
         dispatch({ type: 'turn.end', success: true });
       }
     })();
-  }, [dispatch, startChunkFlusher, stopChunkFlusher, W_PHASES]);
+  }, [dispatch, scheduleChunkFlush, stopChunkFlusher, W_PHASES]);
 
   const handleSubmit = useCallback((text: string) => {
     const st = stateRef.current;

@@ -22,7 +22,7 @@ export const ToolProgress = React.memo(function ToolProgress({ tool }: { tool: T
   useEffect(() => {
     if (!tool || tool.status !== 'running') return;
     setElapsed(Date.now() - tool.startedAt);
-    const timer = setInterval(() => setElapsed(Date.now() - tool.startedAt), 250);
+    const timer = setInterval(() => setElapsed(Date.now() - tool.startedAt), 500);
     return () => clearInterval(timer);
   }, [tool?.id, tool?.status, tool?.startedAt]);
 
