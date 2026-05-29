@@ -5,6 +5,15 @@ export {
 	type ValidationResult,
 } from "./ContractValidator.js";
 export {
+	PERCEPTION_PERSONAS,
+	runPipeline,
+	type PipelineEvent,
+	type PipelineOptions,
+	type PipelinePhase,
+	type PipelineResult,
+	type PlannerBridge,
+} from "./MiMoPipeline.js";
+export {
 	compileRefinement,
 	refineDag,
 	type RefineCompileResult,

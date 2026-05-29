@@ -28,6 +28,13 @@ export {
 	type PatchMergeEntry,
 } from "./MemoryGovernor.js";
 export {
+	inspectCanonical,
+	inspectStaging,
+	renderMemoryReport,
+	type CanonicalFileInfo,
+	type StagingInfo,
+} from "./MemoryInspector.js";
+export {
 	canonicalPath,
 	defaultManifest,
 	getOrInitManifest,
