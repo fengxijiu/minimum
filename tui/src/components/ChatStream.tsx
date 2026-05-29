@@ -3,6 +3,7 @@ import { Box, Text, Static, useStdout } from 'ink';
 import { theme } from '../theme.js';
 import type { Message } from '../types.js';
 import { ToolLine, DiffBlock, ChipsRow, PermissionCard, ErrorBlock } from './atoms.js';
+import { MarkdownText } from './MarkdownText.js';
 
 // ── Layout constants ──────────────────────────────────────────────────
 const CHROME_ROWS    = 14;

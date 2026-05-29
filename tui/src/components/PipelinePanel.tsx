@@ -4,6 +4,7 @@ import { theme } from '../theme.js';
 import type { PipelinePhase } from '../types.js';
 
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+const SPINNER_FRAME_MS = 250;
 
 function formatMs(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -84,7 +85,7 @@ export const PipelinePanel = React.memo(function PipelinePanel({ phases }: {
 
   useEffect(() => {
     if (!hasActive) return;
-    const timer = setInterval(() => setTick(t => t + 1), 80);
+    const timer = setInterval(() => setTick(t => t + 1), SPINNER_FRAME_MS);
     return () => clearInterval(timer);
   }, [hasActive]);
 

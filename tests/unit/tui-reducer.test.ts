@@ -12,6 +12,7 @@ const base: AppState = {
 	ctx: { used: 10, max: 200 },
 	files: [],
 	edits: [],
+	redo: [],
 	plan: { title: "", steps: [] },
 	currentStepLabel: "",
 	messages: [],
@@ -34,6 +35,7 @@ const base: AppState = {
 	},
 	mcpLoading: null,
 	sessionName: null,
+	pipeline: null,
 };
 
 describe("TUI reducer", () => {
@@ -303,6 +305,34 @@ describe("TUI reducer", () => {
 			type: "assistant",
 			text: "Hello world",
 		});
+	});
+
+	// ── render stability ─────────────────────────────────────────────
+	it("assistant.chunk with empty text is a no-op", () => {
+		const s = reduce(base, { type: "assistant.chunk", text: "" });
+		expect(s).toBe(base);
+	});
+
+	it("repeated plan.set with identical content preserves reference", () => {
+		const event: AgentEvent = {
+			type: "plan.set",
+			title: "test plan",
+			steps: [{ label: "step 1", status: "now" }],
+		};
+		const s1 = reduce(base, event);
+		const s2 = reduce(s1, event);
+		expect(s2).toBe(s1);
+	});
+
+	it("tool.end for a non-matching id preserves state reference", () => {
+		const running = reduce(base, {
+			type: "tool.start",
+			id: "t1",
+			name: "read_file",
+			args: "foo.ts",
+		});
+		const s = reduce(running, { type: "tool.end", id: "t2", ok: true });
+		expect(s).toBe(running);
 	});
 
 	// ── toast ─────────────────────────────────────────────────────

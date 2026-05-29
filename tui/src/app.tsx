@@ -148,24 +148,22 @@ export function App({
   const reasoningBufferRef = useRef('');
   const chunkFlushTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const flushChunks = useCallback(() => {
-    if (chunkBufferRef.current) {
-      dispatch({ type: 'assistant.chunk', text: chunkBufferRef.current });
-      chunkBufferRef.current = '';
+    if (chunkFlushTimerRef.current) {
+      clearTimeout(chunkFlushTimerRef.current);
+      chunkFlushTimerRef.current = null;
     }
     if (reasoningBufferRef.current) {
       dispatch({ type: 'reasoning.chunk', text: reasoningBufferRef.current });
       reasoningBufferRef.current = '';
     }
   }, [dispatch]);
-  const startChunkFlusher = useCallback(() => {
+  const scheduleChunkFlush = useCallback(() => {
     if (chunkFlushTimerRef.current) return;
-    chunkFlushTimerRef.current = setInterval(flushChunks, 100);
+    const elapsed = Date.now() - chunkLastFlushRef.current;
+    const delay = Math.max(0, 120 - elapsed);
+    chunkFlushTimerRef.current = setTimeout(flushChunks, delay);
   }, [flushChunks]);
   const stopChunkFlusher = useCallback(() => {
-    if (chunkFlushTimerRef.current) {
-      clearInterval(chunkFlushTimerRef.current);
-      chunkFlushTimerRef.current = null;
-    }
     flushChunks();
   }, [flushChunks]);
 
@@ -383,6 +381,7 @@ export function App({
           }
           if (ev.kind === 'streaming') {
             chunkBufferRef.current += ev.text;
+            scheduleChunkFlush();
             continue;
           }
           const msgs = uiEventToMessages(ev);
@@ -415,7 +414,7 @@ export function App({
         dispatch({ type: 'messages.commit' });
       }
     })();
-  }, [dispatch, startChunkFlusher, stopChunkFlusher, W_PHASES]);
+  }, [dispatch, scheduleChunkFlush, stopChunkFlusher, W_PHASES]);
 
   const handleSubmit = useCallback((text: string) => {
     const st = stateRef.current;
