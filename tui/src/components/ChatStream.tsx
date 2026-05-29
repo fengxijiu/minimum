@@ -4,6 +4,33 @@ import { theme } from '../theme.js';
 import type { Message, ToolProgress as ToolProgressType } from '../types.js';
 import { ToolLine, DiffBlock, ChipsRow, PermissionCard, ErrorBlock } from './atoms.js';
 
+// ── @mention highlighting in user messages ───────────────────────────
+
+function UserText({ text }: { text: string }) {
+  const parts = useMemo(() => {
+    const out: Array<{ v: string; mention: boolean }> = [];
+    const re = /@([^\s]+)/g;
+    let last = 0; let m;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > last) out.push({ v: text.slice(last, m.index), mention: false });
+      out.push({ v: m[0], mention: true });
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) out.push({ v: text.slice(last), mention: false });
+    return out;
+  }, [text]);
+  if (!parts.some(p => p.mention)) return <Text color={theme.ink}>{text}</Text>;
+  return (
+    <Text>
+      {parts.map((p, i) =>
+        p.mention
+          ? <Text key={i} color={theme.accent} bold>{p.v}</Text>
+          : <Text key={i} color={theme.ink}>{p.v}</Text>
+      )}
+    </Text>
+  );
+}
+
 // ── Role visual system ────────────────────────────────────────────────
 //
 // Each conversational role gets a distinct colour + gutter glyph + label so
@@ -281,8 +308,16 @@ function MarkdownBlock({ text, color, cols }: { text: string; color?: string; co
                 borderStyle="round"
                 borderColor={theme.line}
                 paddingX={1}
+                marginTop={1}
               >
-                {b.lang ? <Text color={theme.muted}>{b.lang}</Text> : null}
+                {b.lang || b.lines.length > 1 ? (
+                  <Box justifyContent="space-between" marginBottom={1}>
+                    <Text color={theme.accent2} bold>{b.lang || ' '}</Text>
+                    {b.lines.length > 1
+                      ? <Text color={theme.muted} dimColor>{b.lines.length} lines</Text>
+                      : null}
+                  </Box>
+                ) : null}
                 {(b.lines.length ? b.lines : ['']).map((l, j) => (
                   <Text key={j} color={theme.plus}>{l || ' '}</Text>
                 ))}
@@ -363,22 +398,70 @@ function ToolGroupRow({ tools, verbose }: { tools: ToolMsg[]; verbose?: boolean 
   );
 }
 
+// ── Elapsed timer (1s tick) ───────────────────────────────────────────
+
+function ElapsedTimer({ startedAt }: { startedAt: number }) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => tick(n => n + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const secs = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+  if (secs < 1) return null;
+  return <Text color={theme.muted}> {secs}s</Text>;
+}
+
 // ── Turn divider ──────────────────────────────────────────────────────
 
-function TurnDivider({ cols }: { cols: number }) {
+function TurnDivider({ cols, turnNum }: { cols: number; turnNum: number }) {
+  const timeStr = useMemo(() => {
+    const d = new Date();
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  }, []);
+  const label = ` ${timeStr}  #${turnNum} `;
   const w = Math.max(4, cols - 4);
+  const rest = Math.max(0, w - label.length);
+  const left = Math.floor(rest / 2);
+  const right = rest - left;
   return (
     <Box marginTop={1}>
-      <Text color={theme.line}>{'─'.repeat(w)}</Text>
+      <Text color={theme.line}>{'─'.repeat(left)}</Text>
+      <Text color={theme.muted}>{label}</Text>
+      <Text color={theme.line}>{'─'.repeat(right)}</Text>
     </Box>
   );
 }
 
 function TurnMetaRule({ summary, cols }: { summary: string; cols: number }) {
+  // Extract cost from summary like "3 tools · 12.4k tok · $0.03" and colour it
+  const costMatch = summary.match(/\$(\d+\.\d+)/);
+  const cost = costMatch ? parseFloat(costMatch[1]!) : 0;
+  const costColor = cost > 0.5 ? theme.danger : cost > 0.1 ? theme.warn : theme.plus;
+
   const label = ` ${summary} `;
   const rest = Math.max(2, cols - 4 - label.length);
   const left = Math.floor(rest / 2);
   const right = rest - left;
+
+  if (costMatch) {
+    const [before, after] = summary.split(costMatch[0]);
+    const labelBefore = ` ${before ?? ''}`;
+    const labelAfter = `${after ?? ''} `;
+    const totalLen = labelBefore.length + costMatch[0].length + labelAfter.length;
+    const r = Math.max(2, cols - 4 - totalLen);
+    const l2 = Math.floor(r / 2);
+    const r2 = r - l2;
+    return (
+      <Box marginTop={1}>
+        <Text color={theme.line}>{'─'.repeat(l2)}</Text>
+        <Text color={theme.muted}>{labelBefore}</Text>
+        <Text color={costColor}>{costMatch[0]}</Text>
+        <Text color={theme.muted}>{labelAfter}</Text>
+        <Text color={theme.line}>{'─'.repeat(r2)}</Text>
+      </Box>
+    );
+  }
+
   return (
     <Box marginTop={1}>
       <Text color={theme.line}>{'─'.repeat(left)}</Text>
@@ -426,13 +509,14 @@ function ReasoningRow({ text, verbose, spinning }: { text: string; verbose?: boo
 type RenderItem = (
   | { kind: 'msg';       msg: Message }
   | { kind: 'toolgroup'; tools: ToolMsg[] }
-  | { kind: 'divider' }
+  | { kind: 'divider';   turnNum: number }
 ) & { id: string; lastMsgIndex: number };
 
 function buildRenderItems(msgs: Message[]): RenderItem[] {
   const items: RenderItem[] = [];
   let toolBuf: ToolMsg[] = [];
   let toolBufIdx = -1;
+  let turnCount = 0;
 
   const flushTools = () => {
     if (!toolBuf.length) return;
@@ -449,10 +533,13 @@ function buildRenderItems(msgs: Message[]): RenderItem[] {
       continue;
     }
     flushTools();
-    if (msg.type === 'user' && i > 0) {
-      const prev = items[items.length - 1];
-      const prevIsMeta = prev?.kind === 'msg' && prev.msg.type === 'turnmeta';
-      if (!prevIsMeta) items.push({ id: `div:${msg.id}`, kind: 'divider', lastMsgIndex: i });
+    if (msg.type === 'user') {
+      turnCount++;
+      if (i > 0) {
+        const prev = items[items.length - 1];
+        const prevIsMeta = prev?.kind === 'msg' && prev.msg.type === 'turnmeta';
+        if (!prevIsMeta) items.push({ id: `div:${msg.id}`, kind: 'divider', turnNum: turnCount, lastMsgIndex: i });
+      }
     }
     items.push({ id: msg.id, kind: 'msg', msg, lastMsgIndex: i });
   }
@@ -472,7 +559,7 @@ const MessageRow = React.memo(function MessageRow({ msg, cols, verbose }: {
           <RoleGutter role="you" />
           <Box flexDirection="column" flexGrow={1}>
             <RoleLabel role="you" />
-            <Text color={theme.ink}>{msg.text}</Text>
+            <UserText text={msg.text} />
           </Box>
         </Box>
       );
@@ -535,7 +622,7 @@ const MessageRow = React.memo(function MessageRow({ msg, cols, verbose }: {
 // ── Render item dispatcher ────────────────────────────────────────────
 
 function RenderItemRow({ item, cols, verbose }: { item: RenderItem; cols: number; verbose?: boolean }) {
-  if (item.kind === 'divider') return <TurnDivider cols={cols} />;
+  if (item.kind === 'divider') return <TurnDivider cols={cols} turnNum={item.turnNum} />;
   if (item.kind === 'toolgroup') return <ToolGroupRow tools={item.tools} verbose={verbose} />;
   return <MessageRow msg={item.msg} cols={cols} verbose={verbose} />;
 }
@@ -628,7 +715,7 @@ export const ChatStream = React.memo(function ChatStream({
       {/* ── live streaming frame ────────────────────────────────────── */}
       {hasLive ? (
         <Box flexDirection="row" marginTop={1}>
-          <Text color={theme.line}>▎ </Text>
+          <Text color={streamText ? theme.accent2 : activeTool?.status === 'running' ? theme.warn : theme.muted}>▎ </Text>
           <Box flexDirection="column" flexGrow={1}>
             {stepLabel ? (
               <Text color={theme.muted}>{stepLabel}</Text>
@@ -645,10 +732,15 @@ export const ChatStream = React.memo(function ChatStream({
                 </Text>
                 <Text color={theme.ink} bold>{activeTool.name} </Text>
                 <Text color={theme.inkSoft}>{activeTool.args}</Text>
+                {activeTool.status === 'running'
+                  ? <ElapsedTimer startedAt={activeTool.startedAt} />
+                  : activeTool.meta
+                  ? <Text color={theme.muted}> · {activeTool.meta}</Text>
+                  : null}
               </Box>
             ) : null}
 
-            {reasoning ? <ReasoningRow text={reasoning} verbose={verbose} spinning={!!streamText} /> : null}
+            {reasoning ? <ReasoningRow text={reasoning} verbose={verbose} spinning /> : null}
 
             {streamViewport ? (
               <Box marginTop={(activeTool || reasoning) ? 1 : 0}>
@@ -656,7 +748,10 @@ export const ChatStream = React.memo(function ChatStream({
                 <Box flexDirection="column" flexGrow={1}>
                   <RoleLabel role="mimo" />
                   <MarkdownBlock text={streamViewport} color={theme.inkSoft} cols={cols} />
-                  <Text color={theme.muted}>▍</Text>
+                  <Box>
+                    <Text color={theme.muted}>▍</Text>
+                    <Text color={theme.muted} dimColor>  ~{Math.round(streamText.length / 4)}tok</Text>
+                  </Box>
                 </Box>
               </Box>
             ) : null}

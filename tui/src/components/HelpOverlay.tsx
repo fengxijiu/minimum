@@ -6,11 +6,16 @@ import { COMMANDS, type CommandCategory } from '../commands.js';
 const KEYS: Array<[string, string]> = [
   ['/', 'command palette'],
   ['@', 'file picker'],
-  ['tab', 'cycle mode (agent/chat/orch)'],
-  ['↑ ↓', 'navigate palette'],
-  ['⏎', 'run / send'],
-  ['esc', 'close overlay / quit'],
-  ['?', 'this help'],
+  ['⏎', 'send'],
+  ['tab', 'mode: agent ↔ chat ↔ orch'],
+  ['S+tab', 'edit mode: review / auto / yolo'],
+  ['↑ ↓', 'history / palette nav'],
+  ['esc', 'close / quit'],
+  ['ctrl+r', 'toggle verbose'],
+  ['ctrl+u', 'clear input'],
+  ['alt+s', 'stash / unstash input'],
+  ['u', 'undo last edit (empty input)'],
+  ['ctrl+d', 'force quit'],
 ];
 
 const ORDER: CommandCategory[] = ['session', 'context', 'view', 'system'];

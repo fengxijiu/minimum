@@ -34,6 +34,7 @@ export const COMMANDS: TuiCommand[] = [
   { name: 'redo',    desc: 'Redo the last undone edit',     category: 'context' },
   { name: 'memory',  desc: 'Show project memory',           category: 'context', aliases: ['mem'] },
   // view
+  { name: 'copy',   desc: 'Copy last reply to clipboard',   category: 'view' },
   { name: 'diff',   desc: 'Toggle inline diff blocks',      category: 'view' },
   { name: 'plan',   desc: 'Jump to the plan strip',         category: 'view' },
   { name: 'mode',   desc: 'Switch mode: agent / chat / orchestrate', category: 'view', usage: '/mode <agent|chat|orchestrate>' },
@@ -160,7 +161,8 @@ export type CommandOutcome =
   | { kind: 'permission'; perm: Permission }
   | { kind: 'note'; note: string; tone?: 'info' | 'warn' | 'ok' }
   | { kind: 'pipeline'; text: string }
-  | { kind: 'event'; event: import('./state/events.js').AgentEvent };
+  | { kind: 'event'; event: import('./state/events.js').AgentEvent }
+  | { kind: 'copy'; text: string };
 
 let msgSeq = 0;
 export function sysMessage(text: string, tone: 'info' | 'warn' | 'ok' = 'info'): Message {
@@ -346,6 +348,14 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
 
     case 'sessions':
       return { kind: 'note', note: 'Saved sessions: (none). Use /save <name> and /load <name>.' };
+
+    case 'copy': {
+      const lastMsg = [...state.messages].reverse().find(m => m.type === 'assistant');
+      if (!lastMsg || lastMsg.type !== 'assistant') {
+        return { kind: 'note', note: 'No assistant reply to copy.', tone: 'warn' };
+      }
+      return { kind: 'copy', text: lastMsg.text };
+    }
 
     case 'verbose':
       return { kind: 'event', event: { type: 'verbose.toggle' } };

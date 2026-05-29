@@ -36,6 +36,7 @@ export const ToolLine = React.memo(function ToolLine({ tool, compact, verbose }:
   const hidden = out.length - shown.length;
   const pad = compact ? 2 : 4;
 
+  const outColor = tool.status === 'err' ? theme.minus : theme.muted;
   return (
     <Box flexDirection="column">
       <Box paddingLeft={pad}>
@@ -43,14 +44,14 @@ export const ToolLine = React.memo(function ToolLine({ tool, compact, verbose }:
         <Text color={theme.inkSoft}>{tool.args}</Text>
         {tool.meta ? <Text color={metaColor}>  {tool.meta}</Text> : null}
       </Box>
-      {shown.map((l, i) => (
-        <Box key={i} paddingLeft={pad + 2}>
-          <Text color={theme.muted}>{l.slice(0, 100)}</Text>
-        </Box>
-      ))}
-      {hidden > 0 && (
-        <Box paddingLeft={pad + 2}>
-          <Text color={theme.muted}>⋯ {hidden} more line{hidden > 1 ? 's' : ''}</Text>
+      {shown.length > 0 && (
+        <Box paddingLeft={pad + 2} flexDirection="column">
+          {shown.map((l, i) => (
+            <Text key={i} color={outColor} dimColor>{l.slice(0, 100)}</Text>
+          ))}
+          {hidden > 0 && (
+            <Text color={theme.muted}>⋯ {hidden} more</Text>
+          )}
         </Box>
       )}
     </Box>

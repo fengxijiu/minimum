@@ -222,6 +222,13 @@ export function App({
       case 'quit': exit(); return;
       case 'help': dispatch({ type: 'help.toggle' }); return;
       case 'note': dispatch({ type: 'system.push', text: o.note, tone: o.tone }); return;
+      case 'copy': {
+        // OSC 52: write base64-encoded text to the terminal clipboard.
+        const b64 = Buffer.from(o.text, 'utf-8').toString('base64');
+        process.stdout.write(`\x1b]52;c;${b64}\x07`);
+        dispatch({ type: 'toast.show', text: 'Copied last reply', tone: 'ok', ttlMs: 2000 });
+        return;
+      }
       case 'permission':
         dispatch({ type: 'permission.show', perm: o.perm });
         return;
@@ -635,7 +642,11 @@ export function App({
         editMode={sEditMode}
         ctxUsed={sCtxUsed}
         ctxMax={sCtxMax}
-        hint={`${sEdits.length} staged · ${sBranch}`}
+        hint={[
+          sMessages.length > 0 && `${sMessages.length}msg`,
+          sEdits.length > 0 && `${sEdits.length} staged`,
+          sBranch,
+        ].filter(Boolean).join(' · ')}
         usage={sUsage}
         mcpLoading={sMcpLoading}
       />
