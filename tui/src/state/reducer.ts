@@ -96,7 +96,7 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
       const messages = state.messages.map(m => {
         if (m.id !== event.id || m.type !== 'tool') return m;
         changed = true;
-        return { ...m, tool: { ...m.tool, status: event.ok ? 'ok' : 'err', meta: event.meta ?? m.tool.meta, output: event.output ?? m.tool.output } };
+        return { ...m, tool: { ...m.tool, status: (event.ok ? 'ok' : 'err') as 'ok' | 'err', meta: event.meta ?? m.tool.meta, output: event.output ?? m.tool.output } };
       });
       const activeMatches = state.activeTool?.id === event.id;
       if (!changed && !activeMatches) return state;

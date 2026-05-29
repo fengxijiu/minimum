@@ -1,21 +1,13 @@
-import React, { useRef } from 'react';
-import { Box, Text, Static, useStdout } from 'ink';
+import React, { useMemo } from 'react';
+import { Box, Text } from 'ink';
 import { theme } from '../theme.js';
-import type { Message } from '../types.js';
+import type { Message, ToolProgress as ToolProgressType } from '../types.js';
 import { ToolLine, DiffBlock, ChipsRow, PermissionCard, ErrorBlock } from './atoms.js';
-import { MarkdownText } from './MarkdownText.js';
 
-// ── Layout constants ──────────────────────────────────────────────────
-const CHROME_ROWS    = 14;
 const STREAM_MAX_LINES = 8;
 
-// ── Role visual system (Module A) ─────────────────────────────────────
+// ── Role visual system ────────────────────────────────────────────────
 
-/**
- * Left accent bar for user / assistant messages.
- * system / tool messages intentionally have no gutter — they're supporting
- * cast and should visually recede.
- */
 function RoleGutter({ color }: { color: string }) {
   return <Text color={color}>▎ </Text>;
 }
@@ -24,7 +16,7 @@ function RoleLabel({ label, color }: { label: string; color: string }) {
   return <Text color={color} bold>{label}  </Text>;
 }
 
-// ── Tool group rendering (Module C) ──────────────────────────────────
+// ── Tool group rendering ──────────────────────────────────────────────
 
 type ToolMsg = Message & { type: 'tool' };
 
@@ -57,7 +49,7 @@ function ToolGroupRow({ tools, verbose }: { tools: ToolMsg[]; verbose?: boolean 
   );
 }
 
-// ── Turn divider (Module E) ───────────────────────────────────────────
+// ── Turn divider ──────────────────────────────────────────────────────
 
 function TurnDivider({ cols }: { cols: number }) {
   const w = Math.max(4, cols - 4);
@@ -68,7 +60,6 @@ function TurnDivider({ cols }: { cols: number }) {
   );
 }
 
-/** Informative end-of-turn rule: ──── 4 steps · 7 tools · 1.2k tok · $0.03 ──── */
 function TurnMetaRule({ summary, cols }: { summary: string; cols: number }) {
   const label = ` ${summary} `;
   const rest = Math.max(2, cols - 4 - label.length);
@@ -83,7 +74,6 @@ function TurnMetaRule({ summary, cols }: { summary: string; cols: number }) {
   );
 }
 
-/** Folded reasoning indicator shown in the live frame while the model thinks. */
 function ReasoningRow({ text, verbose }: { text: string; verbose?: boolean }) {
   const lines = text.split('\n').filter(l => l.trim() !== '');
   const tail = verbose ? lines.slice(-6) : lines.slice(-1);
@@ -109,11 +99,6 @@ type RenderItem =
   | { id: string; kind: 'toolgroup'; tools: ToolMsg[] }
   | { id: string; kind: 'divider' };
 
-/**
- * Build the render item list from a flat message array:
- *  - Adjacent tool messages → single ToolGroupRow
- *  - user message after non-user → TurnDivider inserted before it
- */
 function buildRenderItems(msgs: Message[]): RenderItem[] {
   const items: RenderItem[] = [];
   let toolBuf: ToolMsg[] = [];
@@ -132,7 +117,6 @@ function buildRenderItems(msgs: Message[]): RenderItem[] {
     }
     flushTools();
     if (msg.type === 'user' && i > 0) {
-      // A turnmeta rule already serves as the boundary — don't stack a plain divider on it.
       const prev = items[items.length - 1];
       const prevIsMeta = prev?.kind === 'msg' && prev.msg.type === 'turnmeta';
       if (!prevIsMeta) items.push({ id: `div:${msg.id}`, kind: 'divider' });
@@ -143,9 +127,84 @@ function buildRenderItems(msgs: Message[]): RenderItem[] {
   return items;
 }
 
+// ── Height estimation (for virtual scroll) ────────────────────────────
+
+function estimateItemHeight(item: RenderItem, cols: number): number {
+  const w = Math.max(20, cols - 6);
+  if (item.kind === 'divider') return 2;
+  if (item.kind === 'toolgroup') return 2 + item.tools.length;
+  const msg = item.msg;
+  switch (msg.type) {
+    case 'user': {
+      const lines = msg.text.split('\n').reduce((acc, l) =>
+        acc + Math.max(1, Math.ceil(l.length / w)), 0);
+      return 2 + lines;
+    }
+    case 'assistant': {
+      const lines = msg.text.split('\n').reduce((acc, l) =>
+        acc + Math.max(1, Math.ceil(l.length / w)), 0);
+      return 2 + lines;
+    }
+    case 'system':     return 1;
+    case 'tool':       return 1;
+    case 'turnmeta':   return 2;
+    case 'error':      return 3 + Math.min(6, msg.error.lines?.length ?? 0);
+    case 'diff':       return 3 + Math.min(12, msg.diff.lines?.length ?? 0);
+    case 'chips':      return 2;
+    case 'permission': return 7;
+    default:           return 2;
+  }
+}
+
+// ── Viewport calculator ───────────────────────────────────────────────
+
+function buildViewport(
+  items: RenderItem[],
+  viewportH: number,
+  scrollOffset: number,
+  cols: number,
+): { visible: RenderItem[]; linesAbove: number; totalLines: number } {
+  if (viewportH <= 0 || items.length === 0) {
+    return { visible: [], linesAbove: 0, totalLines: 0 };
+  }
+
+  const heights = items.map(it => Math.max(1, estimateItemHeight(it, cols)));
+  const totalLines = heights.reduce((a, b) => a + b, 0);
+
+  if (totalLines <= viewportH) {
+    return { visible: items, linesAbove: 0, totalLines };
+  }
+
+  // bottomEdge = the last line index (0-based) we want to show
+  const clampedOffset = Math.max(0, Math.min(scrollOffset, totalLines - viewportH));
+  const bottomEdge = totalLines - clampedOffset;
+  const topEdge = Math.max(0, bottomEdge - viewportH);
+
+  let cum = 0;
+  const visible: RenderItem[] = [];
+  let linesAbove = 0;
+
+  for (let i = 0; i < items.length; i++) {
+    const h = heights[i]!;
+    const end = cum + h;
+    if (end <= topEdge) {
+      linesAbove += h;
+    } else if (cum >= topEdge + viewportH) {
+      break;
+    } else {
+      visible.push(items[i]!);
+    }
+    cum += h;
+  }
+
+  return { visible, linesAbove, totalLines };
+}
+
 // ── Single message renderer ───────────────────────────────────────────
 
-const MessageRow = React.memo(function MessageRow({ msg, cols, verbose }: { msg: Message; cols: number; verbose?: boolean }) {
+const MessageRow = React.memo(function MessageRow({ msg, cols, verbose }: {
+  msg: Message; cols: number; verbose?: boolean;
+}) {
   switch (msg.type) {
     case 'user':
       return (
@@ -221,72 +280,105 @@ function RenderItemRow({ item, cols, verbose }: { item: RenderItem; cols: number
 }
 
 // ── ChatStream ────────────────────────────────────────────────────────
+//
+// Full-viewport chat area. No <Static>: every message lives in the live
+// region, and a virtual-scroll window selects which items to render.
+// scrollOffset=0 pins to the bottom (latest messages); positive values
+// scroll upward through history.
 
 export const ChatStream = React.memo(function ChatStream({
   stepLabel,
   messages,
-  committedCount,
   streaming,
   reasoning,
+  activeTool,
   verbose,
+  scrollOffset,
+  chatHeight,
+  cols,
 }: {
   stepLabel?: string;
   messages: Message[];
-  committedCount: number;
   streaming?: string | null;
   reasoning?: string | null;
+  activeTool?: ToolProgressType | null;
   verbose?: boolean;
+  scrollOffset: number;
+  chatHeight: number;
+  cols: number;
 }) {
-  const { stdout } = useStdout();
-  const rows = stdout?.rows ?? 40;
-  const cols = stdout?.columns ?? 80;
+  const allItems = useMemo(() => buildRenderItems(messages), [messages]);
 
-  // ── Stable committed items for <Static> ───────────────────────────
-  // Recomputed only when committedCount advances (turn ends).
-  const lastCountRef   = useRef(0);
-  const committedItemsRef = useRef<RenderItem[]>([]);
-
-  if (committedCount !== lastCountRef.current) {
-    lastCountRef.current = committedCount;
-    committedItemsRef.current = buildRenderItems(messages.slice(0, committedCount));
-  }
-  const committedItems = committedItemsRef.current;
-
-  // ── Live tail (current turn) ──────────────────────────────────────
-  const live = messages.slice(committedCount);
-
-  // Clip live messages so the active frame never exceeds terminal height.
-  const activeHeight = Math.max(8, rows - CHROME_ROWS);
-  const maxLive = Math.max(4, Math.floor((activeHeight - STREAM_MAX_LINES) / 2));
-  const clippedLive = Math.max(0, live.length - maxLive);
-  const visibleLive = clippedLive > 0 ? live.slice(-maxLive) : live;
-  const liveItems = buildRenderItems(visibleLive);
-
-  // Cap streaming viewport.
+  // Estimate live-frame height so we don't let it crowd the history pane.
   const streamText = streaming ?? '';
   const streamViewport = streamText.split('\n').slice(-STREAM_MAX_LINES).join('\n');
+  const hasLive = !!stepLabel || !!activeTool || !!reasoning || !!streamViewport;
 
-  // The active frame is rendered ONLY when the current turn has something live.
-  // When idle (typing between turns), the dynamic region collapses to nothing so
-  // Ink repaints only a handful of lines per keystroke — no full-height redraw,
-  // no flicker. (See: flexGrow full-height boxes force whole-screen repaints.)
-  const hasLive = !!stepLabel || clippedLive > 0 || liveItems.length > 0 || !!reasoning || !!streamViewport;
+  const liveH = hasLive
+    ? 2                                           // border top+bottom
+    + (stepLabel ? 1 : 0)
+    + (activeTool ? 1 : 0)
+    + (reasoning ? (verbose ? 4 : 2) : 0)
+    + (streamViewport ? 3 : 0)
+    : 0;
+
+  // One row for the scroll indicator, reserved whenever there are items above.
+  const indicatorH = 1;
+  const historyH = Math.max(4, chatHeight - liveH - indicatorH);
+
+  const { visible, linesAbove, totalLines } = useMemo(
+    () => buildViewport(allItems, historyH, scrollOffset, cols),
+    [allItems, historyH, scrollOffset, cols],
+  );
+
+  const isScrolled = scrollOffset > 0;
+  const canScrollDown = isScrolled;
 
   return (
-    <>
-      {/* Phase 2: committed messages rendered once, never redrawn. */}
-      <Static items={committedItems}>
-        {(item) => <RenderItemRow key={item.id} item={item} cols={cols} verbose={verbose} />}
-      </Static>
+    <Box flexDirection="column" flexGrow={1}>
 
-      {/* Active frame: current-turn live messages + streaming cursor.
-          Content-sized (no flexGrow) so its height tracks actual content. */}
+      {/* ── scroll-up indicator ─────────────────────────────────────── */}
+      {linesAbove > 0 ? (
+        <Box paddingLeft={2}>
+          <Text color={theme.muted}>
+            {'↑ '}
+            <Text color={theme.inkSoft}>{Math.round(linesAbove / 2)}</Text>
+            {' messages above · '}
+            <Text color={theme.accent}>PgUp</Text>
+          </Text>
+        </Box>
+      ) : (
+        // Always keep one blank indicator row so the layout height is stable.
+        <Box paddingLeft={2}><Text> </Text></Box>
+      )}
+
+      {/* ── visible history ─────────────────────────────────────────── */}
+      {visible.map(item => (
+        <RenderItemRow key={item.id} item={item} cols={cols} verbose={verbose} />
+      ))}
+
+      {/* ── scroll-down indicator (shown when scrolled up) ──────────── */}
+      {canScrollDown ? (
+        <Box paddingLeft={2} marginTop={1}>
+          <Text color={theme.muted}>
+            {'↓ '}
+            {hasLive
+              ? <Text color={theme.accent}>turn in progress</Text>
+              : <Text color={theme.inkSoft}>latest messages</Text>}
+            {' · '}
+            <Text color={theme.accent}>PgDn</Text>
+          </Text>
+        </Box>
+      ) : null}
+
+      {/* ── live frame ──────────────────────────────────────────────── */}
       {hasLive ? (
         <Box
           flexDirection="column"
           borderStyle="single"
           borderColor={theme.line}
           paddingX={1}
+          marginTop={1}
         >
           {stepLabel ? (
             <Box marginBottom={1}>
@@ -294,17 +386,19 @@ export const ChatStream = React.memo(function ChatStream({
             </Box>
           ) : null}
 
-          {clippedLive > 0 && (
+          {activeTool ? (
             <Box paddingLeft={1}>
-              <Text color={theme.muted}>
-                · {clippedLive} earlier message{clippedLive === 1 ? '' : 's'} hidden
+              <Text color={
+                activeTool.status === 'err' ? theme.danger
+                : activeTool.status === 'ok' ? theme.plus
+                : theme.accent
+              }>
+                {activeTool.status === 'running' ? '⟳' : activeTool.status === 'ok' ? '✓' : '✗'}{' '}
               </Text>
+              <Text color={theme.ink} bold>{activeTool.name} </Text>
+              <Text color={theme.inkSoft}>{activeTool.args}</Text>
             </Box>
-          )}
-
-          {liveItems.map(item => (
-            <RenderItemRow key={item.id} item={item} cols={cols} verbose={verbose} />
-          ))}
+          ) : null}
 
           {reasoning ? <ReasoningRow text={reasoning} verbose={verbose} /> : null}
 
@@ -320,6 +414,7 @@ export const ChatStream = React.memo(function ChatStream({
           ) : null}
         </Box>
       ) : null}
-    </>
+
+    </Box>
   );
 });
