@@ -57,7 +57,7 @@ export type AgentEvent =
   | { type: 'verbose.toggle' }
   // pipeline (orchestrator)
   | { type: 'pipeline.start' }
-  | { type: 'pipeline.phase'; phase: string; label: string }
+  | { type: 'pipeline.phase'; phase: string; label: string; detail?: string }
   | { type: 'pipeline.end' }
   // init
   | { type: 'init.run'; cwd: string; args?: string[] };

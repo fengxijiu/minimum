@@ -1,52 +1,127 @@
-import React from 'react';
-import { Box, Text } from 'ink';
+import React, { useEffect, useState } from 'react';
+import { Box, Text, useStdout } from 'ink';
 import { theme } from '../theme.js';
 import type { PipelinePhase } from '../types.js';
 
-/**
- * PipelinePanel — render the W0–W4 orchestrator phases as a horizontal strip,
- * mirroring PlanStrip's look. Active phase is accented; completed phases show a
- * check. Hidden when the pipeline is not running.
- */
+const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+function formatMs(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.floor(ms / 60_000)}m${String(Math.floor((ms % 60_000) / 1000)).padStart(2, '0')}s`;
+}
+
+function PhaseBox({
+  phase, tick, compact, now,
+}: {
+  phase: PipelinePhase;
+  tick: number;
+  compact: boolean;
+  now: number;
+}) {
+  const isActive  = phase.status === 'active';
+  const isDone    = phase.status === 'done';
+  const isErr     = phase.status === 'err';
+  const isPending = phase.status === 'pending';
+
+  // Sigil
+  const sigil = isDone
+    ? '✓'
+    : isErr
+    ? '✗'
+    : isActive
+    ? SPINNER[tick % SPINNER.length]!
+    : '○';
+
+  // Timing
+  let durationStr = '';
+  if (isDone && phase.startedAt && phase.endedAt) {
+    durationStr = formatMs(phase.endedAt - phase.startedAt);
+  } else if (isActive && phase.startedAt) {
+    durationStr = formatMs(now - phase.startedAt);
+  }
+
+  const borderColor = isActive ? theme.accent : isErr ? theme.danger : isDone ? theme.line : theme.line;
+  const phaseColor  = isActive ? theme.accent : isErr ? theme.danger : isDone ? theme.plus : theme.muted;
+  const labelColor  = isActive ? theme.ink    : isDone ? theme.inkSoft : theme.muted;
+
+  return (
+    <Box
+      key={phase.phase}
+      flexDirection="column"
+      marginRight={1}
+      borderStyle="round"
+      borderColor={borderColor}
+      paddingX={compact ? 0 : 1}
+    >
+      {/* header row: phase id + sigil */}
+      <Box flexDirection="row">
+        <Text color={phaseColor} bold={isActive}>{phase.phase} </Text>
+        <Text color={phaseColor}>{sigil}</Text>
+        {durationStr ? <Text color={theme.muted}>  {durationStr}</Text> : null}
+      </Box>
+
+      {/* label + optional detail */}
+      {!compact && (
+        <Text color={labelColor} bold={isActive}>{phase.label}</Text>
+      )}
+      {!compact && phase.detail && (
+        <Text color={theme.muted}>{phase.detail}</Text>
+      )}
+    </Box>
+  );
+}
+
 export const PipelinePanel = React.memo(function PipelinePanel({ phases }: {
   phases: PipelinePhase[] | null;
 }) {
-  if (!phases || phases.length === 0) {
-    return <Box />;
-  }
+  const [tick, setTick] = useState(0);
+  const { stdout } = useStdout();
+  const termWidth = stdout?.columns ?? 80;
+  const compact = termWidth < 72;
 
-  const done = phases.filter(p => p.status === 'done').length;
+  const hasActive = phases?.some(p => p.status === 'active') ?? false;
+
+  useEffect(() => {
+    if (!hasActive) return;
+    const timer = setInterval(() => setTick(t => t + 1), 80);
+    return () => clearInterval(timer);
+  }, [hasActive]);
+
+  if (!phases || phases.length === 0) return <Box />;
+
+  const now = Date.now();
+  const doneCount   = phases.filter(p => p.status === 'done').length;
+  const activePhase = phases.find(p => p.status === 'active');
+  const allDone     = doneCount === phases.length;
 
   return (
     <Box flexDirection="column" paddingX={1}>
+      {/* ── header ── */}
       <Box justifyContent="space-between">
-        <Text>
+        <Box>
           <Text color={theme.muted}>PIPELINE · </Text>
-          <Text color={theme.ink} bold>orchestrator</Text>
+          <Text color={theme.accent2} bold>orchestrator</Text>
+          {activePhase && !compact && (
+            <Text color={theme.muted}> · {activePhase.label}</Text>
+          )}
+        </Box>
+        <Text color={allDone ? theme.plus : theme.muted}>
+          {allDone ? '✓ done' : `${doneCount}/${phases.length}`}
         </Text>
-        <Text color={theme.muted}>{done} of {phases.length} phases</Text>
       </Box>
+
+      {/* ── phase boxes ── */}
       <Box flexDirection="row" marginTop={0}>
-        {phases.map((p, i) => {
-          const isActive = p.status === 'active';
-          const isDone = p.status === 'done';
-          const sigil = isDone ? '✓' : isActive ? '●' : '○';
-          const kickerColor = isActive ? theme.accent : theme.muted;
-          const labelColor = isActive ? theme.accent : isDone ? theme.inkSoft : theme.muted;
-          return (
-            <Box
-              key={`${p.phase}-${i}`}
-              flexDirection="column"
-              marginRight={1}
-              borderStyle="round"
-              borderColor={isActive ? theme.accent : theme.line}
-              paddingX={1}
-            >
-              <Text color={kickerColor}>{p.phase} · {sigil}</Text>
-              <Text color={labelColor} bold={isActive}>{p.label}</Text>
-            </Box>
-          );
-        })}
+        {phases.map((p, i) => (
+          <PhaseBox
+            key={`${p.phase}-${i}`}
+            phase={p}
+            tick={tick}
+            compact={compact}
+            now={now}
+          />
+        ))}
       </Box>
     </Box>
   );

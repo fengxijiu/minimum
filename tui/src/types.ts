@@ -58,9 +58,12 @@ export type EditMode = 'review' | 'auto' | 'yolo';
 
 /** One W0–W4 phase in the orchestrator pipeline panel. */
 export type PipelinePhase = {
-  phase: string;   // 'W0' | 'W1' | 'W0.5' | 'W2/3' | 'W4'
+  phase: string;     // 'W0' | 'W1' | 'W0.5' | 'W2/3' | 'W4'
   label: string;
-  status: 'pending' | 'active' | 'done';
+  status: 'pending' | 'active' | 'done' | 'err';
+  startedAt?: number;
+  endedAt?: number;
+  detail?: string;
 };
 
 export type ToolProgress = {

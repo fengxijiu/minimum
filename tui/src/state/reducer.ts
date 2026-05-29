@@ -293,21 +293,32 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
       return { ...state, pipeline: [] };
 
     case 'pipeline.phase': {
-      // Mark every prior phase done; activate the incoming one (append if new).
-      const prior: PipelinePhase[] = (state.pipeline ?? []).map(p => ({ ...p, status: 'done' as const }));
+      // Mark every prior phase done (record endedAt); activate the incoming one.
+      const now = Date.now();
+      const prior: PipelinePhase[] = (state.pipeline ?? []).map(p => ({
+        ...p,
+        status: 'done' as const,
+        endedAt: p.status === 'active' ? now : p.endedAt,
+      }));
       const existing = prior.findIndex(p => p.phase === event.phase);
+      const newPhase: PipelinePhase = {
+        phase: event.phase, label: event.label, status: 'active',
+        startedAt: now, detail: event.detail,
+      };
       if (existing >= 0) {
-        prior[existing] = { phase: event.phase, label: event.label, status: 'active' };
+        prior[existing] = newPhase;
         return { ...state, pipeline: prior };
       }
-      return {
-        ...state,
-        pipeline: [...prior, { phase: event.phase, label: event.label, status: 'active' }],
-      };
+      return { ...state, pipeline: [...prior, newPhase] };
     }
 
     case 'pipeline.end': {
-      const done = (state.pipeline ?? []).map(p => ({ ...p, status: 'done' as const }));
+      const now = Date.now();
+      const done = (state.pipeline ?? []).map(p => ({
+        ...p,
+        status: 'done' as const,
+        endedAt: p.status === 'active' ? now : p.endedAt,
+      }));
       return { ...state, pipeline: done.length ? done : null };
     }
 

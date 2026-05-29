@@ -279,7 +279,7 @@ export function App({
         for await (const ev of activeRunner.send(trimmed)) {
           if (ev.kind === 'pipeline') {
             if (W_PHASES.has(ev.phase)) {
-              dispatch({ type: 'pipeline.phase', phase: ev.phase, label: ev.label });
+              dispatch({ type: 'pipeline.phase', phase: ev.phase, label: ev.label, detail: ev.detail });
             }
             continue;
           }
