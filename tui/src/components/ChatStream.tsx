@@ -4,16 +4,27 @@ import { theme } from '../theme.js';
 import type { Message, ToolProgress as ToolProgressType } from '../types.js';
 import { ToolLine, DiffBlock, ChipsRow, PermissionCard, ErrorBlock } from './atoms.js';
 
-const STREAM_MAX_LINES = 8;
-
 // ── Role visual system ────────────────────────────────────────────────
+//
+// Each conversational role gets a distinct colour + gutter glyph + label so
+// who-said-what stays legible while scrolling, even on monochrome terminals
+// (the label text alone disambiguates).
 
-function RoleGutter({ color }: { color: string }) {
-  return <Text color={color}>▎ </Text>;
+type Role = 'you' | 'mimo' | 'error' | 'system';
+
+const ROLE_STYLE: Record<Role, { color: string; glyph: string }> = {
+  you:    { color: theme.accent,  glyph: '▌' }, // cyan
+  mimo:   { color: theme.accent2, glyph: '▎' }, // magenta
+  error:  { color: theme.danger,  glyph: '▍' }, // red
+  system: { color: theme.muted,   glyph: '·' },
+};
+
+function RoleGutter({ role }: { role: Role }) {
+  return <Text color={ROLE_STYLE[role].color}>{ROLE_STYLE[role].glyph} </Text>;
 }
 
-function RoleLabel({ label, color }: { label: string; color: string }) {
-  return <Text color={color} bold>{label}  </Text>;
+function RoleLabel({ role }: { role: Role }) {
+  return <Text color={ROLE_STYLE[role].color} bold>{role}  </Text>;
 }
 
 // ── Markdown rendering ────────────────────────────────────────────────
@@ -437,9 +448,9 @@ const MessageRow = React.memo(function MessageRow({ msg, cols, verbose }: {
     case 'user':
       return (
         <Box marginTop={1}>
-          <RoleGutter color={theme.accent} />
+          <RoleGutter role="you" />
           <Box flexDirection="column" flexGrow={1}>
-            <RoleLabel label="you" color={theme.accent} />
+            <RoleLabel role="you" />
             <Text color={theme.ink}>{msg.text}</Text>
           </Box>
         </Box>
@@ -448,9 +459,9 @@ const MessageRow = React.memo(function MessageRow({ msg, cols, verbose }: {
     case 'assistant':
       return (
         <Box marginTop={1}>
-          <RoleGutter color={theme.inkSoft} />
+          <RoleGutter role="mimo" />
           <Box flexDirection="column" flexGrow={1}>
-            <RoleLabel label="mimo" color={theme.inkSoft} />
+            <RoleLabel role="mimo" />
             <MarkdownBlock text={msg.text} color={theme.ink} />
           </Box>
         </Box>
@@ -486,9 +497,9 @@ const MessageRow = React.memo(function MessageRow({ msg, cols, verbose }: {
     case 'error':
       return (
         <Box marginTop={1}>
-          <RoleGutter color={theme.danger} />
+          <RoleGutter role="error" />
           <Box flexDirection="column" flexGrow={1}>
-            <RoleLabel label="error" color={theme.danger} />
+            <RoleLabel role="error" />
             <ErrorBlock error={msg.error} />
           </Box>
         </Box>
@@ -529,6 +540,7 @@ export const ChatStream = React.memo(function ChatStream({
   activeTool,
   verbose,
   cols,
+  maxRows,
   header,
 }: {
   stepLabel?: string;
@@ -539,6 +551,7 @@ export const ChatStream = React.memo(function ChatStream({
   activeTool?: ToolProgressType | null;
   verbose?: boolean;
   cols: number;
+  maxRows: number;
   header?: ReactNode;
 }) {
   const allItems = useMemo(() => buildRenderItems(messages), [messages]);
@@ -557,9 +570,21 @@ export const ChatStream = React.memo(function ChatStream({
     return { staticEntries: entries, liveItems: live };
   }, [allItems, committedCount, header]);
 
-  // Live streaming frame (the only thing repainted on every token).
+  // Live streaming frame (the only thing repainted on every token). Its
+  // height is capped so the whole dynamic region stays *strictly* below the
+  // terminal height — otherwise Ink falls back to clearTerminal, which both
+  // flickers and wipes the scrollback (\x1b[3J), destroying history.
+  // `reserved` overestimates everything else in the repainting region
+  // (plan + pipeline + toast + input + status + box chrome + margins, plus
+  // reasoning, a running tool, and any uncommitted tail items).
+  const reserved =
+    15
+    + liveItems.length * 3
+    + (reasoning ? (verbose ? 6 : 2) : 0)
+    + (activeTool ? 1 : 0);
+  const streamCap = Math.max(3, maxRows - reserved - 1);
   const streamText = streaming ?? '';
-  const streamViewport = streamText.split('\n').slice(-STREAM_MAX_LINES).join('\n');
+  const streamViewport = streamText.split('\n').slice(-streamCap).join('\n');
   const hasLive = !!stepLabel || !!activeTool || !!reasoning || !!streamViewport;
 
   return (
@@ -611,9 +636,9 @@ export const ChatStream = React.memo(function ChatStream({
 
           {streamViewport ? (
             <Box marginTop={1}>
-              <RoleGutter color={theme.inkSoft} />
+              <RoleGutter role="mimo" />
               <Box flexDirection="column" flexGrow={1}>
-                <RoleLabel label="mimo" color={theme.inkSoft} />
+                <RoleLabel role="mimo" />
                 <MarkdownBlock text={streamViewport} color={theme.inkSoft} />
                 <Text color={theme.muted}>▍</Text>
               </Box>

@@ -72,12 +72,12 @@ const PipelineZone = React.memo(function PipelineZone({ phases }: {
 /** ChatStream zone — only re-renders on messages/stepLabel/activeTool/streaming changes. */
 const ChatZone = React.memo(function ChatZone({
   messages, committedCount, stepLabel, activeTool,
-  streaming, reasoning, verbose, cols, header,
+  streaming, reasoning, verbose, cols, maxRows, header,
 }: {
   messages: Message[]; committedCount: number;
   stepLabel: string; activeTool: AppState['activeTool'];
   streaming?: string | null; reasoning?: string | null; verbose?: boolean;
-  cols: number; header: React.ReactNode;
+  cols: number; maxRows: number; header: React.ReactNode;
 }) {
   return (
     <ChatStream
@@ -89,6 +89,7 @@ const ChatZone = React.memo(function ChatZone({
       activeTool={activeTool}
       verbose={verbose}
       cols={cols}
+      maxRows={maxRows}
       header={header}
     />
   );
@@ -123,10 +124,14 @@ export function App({
   engineInfo = DEFAULT_ENGINE_INFO,
 }: { runner?: Runner; pipelineRunner?: Runner; engineInfo?: EngineInfo } = {}) {
   const { exit } = useApp();
-  // ── Terminal width — used for text-wrap / divider sizing on resize ──
+  // ── Terminal size — width drives text wrap, height caps the live frame ─
   const [termCols, setTermCols] = useState(() => process.stdout.columns ?? 80);
+  const [termRows, setTermRows] = useState(() => process.stdout.rows ?? 40);
   useEffect(() => {
-    const onResize = () => setTermCols(process.stdout.columns ?? 80);
+    const onResize = () => {
+      setTermCols(process.stdout.columns ?? 80);
+      setTermRows(process.stdout.rows ?? 40);
+    };
     process.stdout.on('resize', onResize);
     return () => { process.stdout.off('resize', onResize); };
   }, []);
@@ -415,7 +420,18 @@ export function App({
           const msgs = uiEventToMessages(ev);
           for (const msg of msgs) {
             if (msg.type === 'system') dispatch({ type: 'system.push', text: msg.text, tone: msg.tone });
-            else if (msg.type === 'assistant') dispatch({ type: 'assistant.final', text: msg.text });
+            else if (msg.type === 'assistant') {
+              // The final event carries the complete text, so any chunks still
+              // buffered are superseded. Drop them (and cancel the pending
+              // flush) so they can't resurrect a stray streaming frame after
+              // the message is committed.
+              if (chunkFlushTimerRef.current) {
+                clearTimeout(chunkFlushTimerRef.current);
+                chunkFlushTimerRef.current = null;
+              }
+              chunkBufferRef.current = '';
+              dispatch({ type: 'assistant.final', text: msg.text });
+            }
             else if (msg.type === 'error') dispatch({ type: 'error.push', title: msg.error.title, lines: msg.error.lines });
             else if (msg.type === 'tool') dispatch({ type: 'tool.start', id: msg.id, name: msg.tool.kind, args: msg.tool.args });
           }
@@ -520,17 +536,30 @@ export function App({
   );
 
   // ── Keep the live (repainting) region minimal ───────────────────────
-  // Commit settled messages into the <Static> scrollback as soon as the
-  // turn is idle. Without this the dynamic region can grow tall enough
-  // that Ink falls back to clearing + reprinting the whole screen on every
-  // render — visible as the top of the transcript re-rendering on each
-  // keystroke. Gating on streaming/reasoning/activeTool guarantees we never
-  // freeze a still-mutating tool row into Static (tool.end mutates by id).
-  useEffect(() => {
-    if (!sStreaming && !sReasoning && !sActiveTool && !sPending && sCommittedCount < sMessages.length) {
-      dispatch({ type: 'messages.commit' });
+  // Continuously commit the longest *settled* prefix of messages into the
+  // <Static> scrollback — even mid-turn. The repainting region then only
+  // ever holds the in-flight tail (a running tool + the streaming frame),
+  // so its height stays far below the terminal height and Ink never falls
+  // back to clearing + reprinting the whole screen (the flicker path).
+  //
+  // A message is settled unless it's a tool whose tool.end hasn't fired
+  // yet (status undefined). We stop at the first such tool so a still
+  // mutating row is never frozen into Static (tool.end mutates by id). The
+  // streaming assistant text lives in `streaming`, not in messages, so it
+  // never blocks the prefix.
+  const settledCount = useMemo(() => {
+    let n = 0;
+    for (; n < sMessages.length; n++) {
+      const m = sMessages[n]!;
+      if (m.type === 'tool' && m.tool.status === undefined) break;
     }
-  }, [sStreaming, sReasoning, sActiveTool, sPending, sCommittedCount, sMessages, dispatch]);
+    return n;
+  }, [sMessages]);
+  useEffect(() => {
+    if (settledCount > sCommittedCount) {
+      dispatch({ type: 'messages.commit', count: settledCount });
+    }
+  }, [settledCount, sCommittedCount, dispatch]);
 
   // ── Text-wrap width for dividers / turn-meta rules ──────────────────
   // No sidebar any more: the chat uses (nearly) the full terminal width.
@@ -561,6 +590,7 @@ export function App({
         reasoning={sReasoning}
         verbose={sVerbose}
         cols={chatCols}
+        maxRows={termRows}
         header={
           <Box flexDirection="column">
             <TitleZone path={sPath} branch={sBranch} mode={titleMode} />
