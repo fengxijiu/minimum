@@ -37,61 +37,20 @@ describe("loadMiMoConfig", () => {
 		expect(cfg.maxSteps).toBe(9);
 	});
 
-	it("reads a legacy .mimo.json verbatim", async () => {
-		fs.writeFileSync(
-			path.join(dir, ".mimo.json"),
-			JSON.stringify({ planMode: true, maxSteps: 7 }),
-		);
-		const cfg = await loadMiMoConfig(dir);
-		expect(cfg.planMode).toBe(true);
-		expect(cfg.maxSteps).toBe(7);
-	});
-
-	it("translates opencode.json (legacy init output) into MiMoConfig", async () => {
-		fs.writeFileSync(
-			path.join(dir, "opencode.json"),
-			JSON.stringify({
-				minimum: {
-					optimization: {
-						validation: false,
-						completeness: true,
-						context: { foldThreshold: 0.55, aggressiveThreshold: 0.8 },
-					},
-				},
-			}),
-		);
-		const merged = mergeConfig(await loadMiMoConfig(dir));
-		expect(merged.validation.enabled).toBe(false);
-		expect(merged.completeness.enabled).toBe(true);
-		expect(merged.context.foldThreshold).toBe(0.55);
-		expect(merged.context.aggressiveThreshold).toBe(0.8);
-	});
-
-	it("prefers .minimum/config.json over legacy .mimo.json", async () => {
+	it("ignores unknown top-level keys (forward-compat)", async () => {
 		fs.mkdirSync(path.join(dir, ".minimum"), { recursive: true });
 		fs.writeFileSync(
 			path.join(dir, ".minimum", "config.json"),
-			JSON.stringify({ maxSteps: 11 }),
-		);
-		fs.writeFileSync(
-			path.join(dir, ".mimo.json"),
-			JSON.stringify({ maxSteps: 3 }),
+			JSON.stringify({ planMode: true, maxSteps: 5, unknownFutureKey: 42 }),
 		);
 		const cfg = await loadMiMoConfig(dir);
-		expect(cfg.maxSteps).toBe(11);
+		expect(cfg.planMode).toBe(true);
+		expect(cfg.maxSteps).toBe(5);
 	});
 
-	it("prefers .mimo.json over opencode.json", async () => {
-		fs.writeFileSync(
-			path.join(dir, ".mimo.json"),
-			JSON.stringify({ maxSteps: 3 }),
-		);
-		fs.writeFileSync(
-			path.join(dir, "opencode.json"),
-			JSON.stringify({ minimum: { optimization: {} } }),
-		);
-		const cfg = await loadMiMoConfig(dir);
-		expect(cfg.maxSteps).toBe(3);
+	it("returns {} when only unknown files exist in project dir", async () => {
+		fs.writeFileSync(path.join(dir, "opencode.json"), JSON.stringify({ provider: {} }));
+		expect(await loadMiMoConfig(dir)).toEqual({});
 	});
 
 	it("falls back to ~/.minimum/config.json when no project config exists", async () => {

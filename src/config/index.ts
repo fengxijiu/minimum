@@ -11,7 +11,6 @@ export {
 	loadMiMoConfig,
 	loadMiMoConfigSync,
 	getGlobalConfigPath,
-	GLOBAL_CONFIG_PATH,
 	PROJECT_CONFIG_PATH,
 } from "./loadMiMoConfig.js";
 export { createMiMoStack, type MiMoStack } from "./createMiMoStack.js";

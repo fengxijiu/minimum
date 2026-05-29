@@ -478,13 +478,15 @@ async function runInit(cwd: string, dispatch: Dispatch, args?: string[]) {
   const path = await import('node:path');
   const isReset = args?.includes('--reset') ?? false;
 
-  const opencodePath = path.join(cwd, 'opencode.json');
+  const configDir = path.join(cwd, '.minimum');
+  const configPath = path.join(configDir, 'config.json');
+
   if (!isReset) {
     try {
-      await fs.access(opencodePath);
-      dispatch({ type: 'toast.show', text: 'opencode.json already exists. Use /init --reset to reinitialize.', tone: 'warn', ttlMs: 5000 });
+      await fs.access(configPath);
+      dispatch({ type: 'toast.show', text: '.minimum/config.json already exists. Use /init --reset to reinitialize.', tone: 'warn', ttlMs: 5000 });
       return;
-    } catch { /* good — doesn't exist yet */ }
+    } catch { /* doesn't exist yet — proceed */ }
   }
 
   const apiKey = process.env.MIMO_API_KEY;
@@ -496,75 +498,51 @@ async function runInit(cwd: string, dispatch: Dispatch, args?: string[]) {
     return;
   }
 
+  // Detect project type from marker files
   const markers: Array<{ file: string; type: string }> = [
-    { file: 'package.json', type: 'node' },
-    { file: 'tsconfig.json', type: 'typescript' },
+    { file: 'package.json',   type: 'node' },
+    { file: 'tsconfig.json',  type: 'typescript' },
     { file: 'pyproject.toml', type: 'python' },
-    { file: 'Cargo.toml', type: 'rust' },
-    { file: 'go.mod', type: 'go' },
-    { file: 'pom.xml', type: 'java' },
-    { file: 'build.gradle', type: 'java' },
-    { file: 'Gemfile', type: 'ruby' },
-    { file: 'composer.json', type: 'php' },
+    { file: 'Cargo.toml',     type: 'rust' },
+    { file: 'go.mod',         type: 'go' },
+    { file: 'pom.xml',        type: 'java' },
+    { file: 'build.gradle',   type: 'java' },
+    { file: 'Gemfile',        type: 'ruby' },
+    { file: 'composer.json',  type: 'php' },
   ];
-
   const detected: string[] = [];
   for (const m of markers) {
-    try {
-      await fs.access(path.join(cwd, m.file));
-      detected.push(m.type);
-    } catch { /* not found */ }
+    try { await fs.access(path.join(cwd, m.file)); detected.push(m.type); } catch { /* skip */ }
   }
-  const projectType = detected.length > 0 ? detected[0] : 'unknown';
+  const projectType = detected[0] ?? 'unknown';
 
+  // Auto-select endpoint from key prefix
   const isTokenPlan = apiKey.startsWith('tp-');
   const baseUrl = isTokenPlan
     ? 'https://token-plan-cn.xiaomimimo.com/v1'
     : 'https://api.xiaomimimo.com/v1';
 
-  try {
-    const eng = await import('../../dist/index.js') as any;
-    const result = await eng.InitCommand.executeFromArgs(cwd, {
-      apiKey,
-      apiType: isTokenPlan ? 'token-plan' : 'api',
-      model: 'mimo-v2.5-pro',
-      baseUrl,
-    });
+  const config = {
+    apiKey,
+    baseUrl,
+    defaultModel: 'mimo-v2.5-pro',
+    maxTokens: 131072,
+    maxSteps: 50,
+    approvalMode: 'suggest',
+    enableReadGuard: true,
+    context:      { foldThreshold: 0.70, aggressiveThreshold: 0.75, tailFraction: 0.25 },
+    capacity:     { enabled: true, lowRiskMax: 0.50, mediumRiskMax: 0.62 },
+    storm:        { windowSize: 6, threshold: 3 },
+    validation:   { enabled: true, syntax: true, tsc: true, pattern: true },
+    completeness: { enabled: true },
+  };
 
-    if (result.success) {
-      dispatch({ type: 'toast.show', text: '/init complete — configuration created', tone: 'ok', ttlMs: 5000 });
-      const lines = [
-        `Project type: ${projectType}`,
-        `API type: ${isTokenPlan ? 'Token Plan' : 'Pay-as-you-go'}`,
-        `Base URL: ${baseUrl}`,
-        `Model: mimo-v2.5-pro · 1M ctx · 131k out`,
-        `Config: opencode.json + ~/.config/opencode/opencode.json`,
-      ];
-      for (const line of lines) {
-        dispatch({ type: 'system.push', text: line, tone: 'info' });
-      }
-    } else {
-      dispatch({ type: 'error.push', title: '/init failed', lines: [result.output] });
-    }
-  } catch (err: any) {
-    const mimoDir = path.join(cwd, '.mimo');
-    const configPath = path.join(mimoDir, 'config.json');
-    const config = {
-      maxTokens: 131072,
-      maxSteps: 50,
-      approvalMode: 'suggest',
-      enableReadGuard: true,
-      context: { foldThreshold: 0.70, aggressiveThreshold: 0.75, tailFraction: 0.25 },
-      capacity: { enabled: true, lowRiskMax: 0.50, mediumRiskMax: 0.62 },
-      storm: { windowSize: 6, threshold: 3 },
-      validation: { enabled: true, syntax: true, tsc: true, pattern: true },
-      completeness: { enabled: true },
-    };
-    await fs.mkdir(mimoDir, { recursive: true });
-    await fs.writeFile(configPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
+  await fs.mkdir(configDir, { recursive: true });
+  await fs.writeFile(configPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
 
-    dispatch({ type: 'toast.show', text: '/init fallback — .mimo/config.json created', tone: 'ok', ttlMs: 5000 });
-    dispatch({ type: 'system.push', text: `Project type: ${projectType}`, tone: 'info' });
-    dispatch({ type: 'system.push', text: 'Config: .mimo/config.json (InitCommand unavailable, used defaults)', tone: 'info' });
-  }
+  dispatch({ type: 'toast.show', text: '/init complete — .minimum/config.json created', tone: 'ok', ttlMs: 5000 });
+  dispatch({ type: 'system.push', text: `Project type: ${projectType}`, tone: 'info' });
+  dispatch({ type: 'system.push', text: `API: ${isTokenPlan ? 'Token Plan' : 'Pay-as-you-go'} · ${baseUrl}`, tone: 'info' });
+  dispatch({ type: 'system.push', text: `Model: mimo-v2.5-pro · 1M ctx · 131k out`, tone: 'info' });
+  dispatch({ type: 'system.push', text: `Config: ${configPath}`, tone: 'info' });
 }

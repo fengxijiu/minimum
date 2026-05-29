@@ -50,7 +50,7 @@ export const COMMANDS: TuiCommand[] = [
   { name: 'model',  desc: 'Show the active model',          category: 'system' },
   { name: 'skill',  desc: 'Manage skills',                  category: 'system', usage: '/skill [list|run]' },
   { name: 'config', desc: 'View configuration',             category: 'system', aliases: ['cfg'] },
-  { name: 'init',   desc: 'Initialize .mimo/config.json for this project', category: 'system' },
+  { name: 'init',   desc: 'Initialize .minimum/config.json for this project', category: 'system' },
   { name: 'help',   desc: 'Show keys & commands',           category: 'system', aliases: ['?'] },
 ];
 
@@ -362,7 +362,7 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
         kind: 'note',
         note: state.mcpLoading
           ? `MCP: loading ${state.mcpLoading.ready}/${state.mcpLoading.total} servers`
-          : 'MCP: no servers configured. Add MCP servers in .mimo/config.json',
+          : 'MCP: no servers configured. Add MCP servers in .minimum/config.json',
       };
 
     case 'init':
