@@ -26,11 +26,15 @@ export interface InputAreaProps {
   onApplyFix: () => void;
   dispatch: Dispatch;
   cmdCtx: CommandContext;
+  chatHeight?: number;
+  onScrollUp?: (lines: number) => void;
+  onScrollDown?: (lines: number) => void;
 }
 
 export const InputArea = React.memo(function InputArea({
   files, helpOpen, pending, hasMessages, mode, editMode, verbose, hasEdits,
   onSubmit, onPermAllow, onPermDeny, onApplyFix, dispatch, cmdCtx,
+  chatHeight, onScrollUp, onScrollDown,
 }: InputAreaProps) {
   const { exit } = useApp();
   const [inputValue, setInputValue] = useState('');
@@ -193,6 +197,15 @@ export const InputArea = React.memo(function InputArea({
       const idx = Math.max(historyIdxRef.current - 1, -1);
       historyIdxRef.current = idx;
       setInput(idx >= 0 ? promptHistoryRef.current[idx]! : '');
+      return;
+    }
+
+    if (key.pageUp) {
+      onScrollUp?.(Math.max(4, Math.floor((chatHeight ?? 20) / 2)));
+      return;
+    }
+    if (key.pageDown) {
+      onScrollDown?.(Math.max(4, Math.floor((chatHeight ?? 20) / 2)));
       return;
     }
 
