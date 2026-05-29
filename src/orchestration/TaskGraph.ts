@@ -1,4 +1,9 @@
-import { findGlobConflicts, validateContract } from "./ContractValidator.js";
+import {
+	findDanglingDeps,
+	findGlobConflicts,
+	validateContract,
+} from "./ContractValidator.js";
+import { groupBy } from "../utils/collections.js";
 import type { CoarseDag, CoarseTask, TaskContract } from "./TaskContract.js";
 
 /**
@@ -50,6 +55,15 @@ export function buildWaves(
 				),
 			});
 		}
+		const dangling = findDanglingDeps(contracts);
+		if (dangling.length > 0) {
+			errors.push({
+				taskId: "_dangling_dep",
+				errors: dangling.map(
+					(d) => `${d.taskId} depends on unknown task ${d.missingDep}`,
+				),
+			});
+		}
 	}
 
 	const byId = new Map<string, TaskContract>();
@@ -64,7 +78,7 @@ export function buildWaves(
 	}
 	for (const c of contracts) {
 		for (const dep of c.dependsOn) {
-			if (!byId.has(dep)) continue; // dangling already reported elsewhere
+			if (!byId.has(dep)) continue; // dangling dep — reported via findDanglingDeps
 			adjacency.get(dep)!.push(c.taskId);
 			indegree.set(c.taskId, (indegree.get(c.taskId) ?? 0) + 1);
 		}
@@ -111,13 +125,7 @@ export function buildWaves(
 export function partitionByParallelGroup(
 	wave: WaveSlot,
 ): Map<string, TaskContract[]> {
-	const out = new Map<string, TaskContract[]>();
-	for (const t of wave.tasks) {
-		const list = out.get(t.parallelGroup) ?? [];
-		list.push(t);
-		out.set(t.parallelGroup, list);
-	}
-	return out;
+	return groupBy(wave.tasks, (t) => t.parallelGroup);
 }
 
 /** Flatten a coarse DAG into a plain task list (master_planner output). */

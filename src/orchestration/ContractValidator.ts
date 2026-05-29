@@ -1,4 +1,6 @@
+import type { Persona } from "../personas/Persona.js";
 import { getPersona } from "../personas/PersonaRegistry.js";
+import { groupBy } from "../utils/collections.js";
 import type { TaskContract } from "./TaskContract.js";
 
 /**
@@ -17,13 +19,6 @@ export interface ValidationResult {
 }
 
 const TASK_ID_RE = /^T(?:[-_])?[A-Za-z0-9_.-]+$/;
-const PERSONA_PERMITS_WRITE_NO_CONTRACT_GLOBS = new Set([
-	// These personas have alwaysAllowedGlobs that cover their own paths;
-	// they can run without contract-level allowedGlobs.
-	"context_builder",
-	"test_writer",
-	"docs",
-]);
 
 /** Validate a fully-formed contract. Returns the collected error list. */
 export function validateContract(contract: TaskContract): ValidationResult {
@@ -45,9 +40,9 @@ export function validateContract(contract: TaskContract): ValidationResult {
 	else {
 		try {
 			const persona = getPersona(contract.personaId);
-			validatePersonaCompatibility(contract, persona.id, errors);
-			validatePathPolicy(contract, persona.id, errors);
-		} catch (e) {
+			validatePersonaCompatibility(contract, persona, errors);
+			validatePathPolicy(contract, persona, errors);
+		} catch {
 			errors.push(`unknown personaId: ${contract.personaId}`);
 		}
 	}
@@ -75,20 +70,19 @@ export function validateContract(contract: TaskContract): ValidationResult {
 
 function validatePersonaCompatibility(
 	contract: TaskContract,
-	personaId: string,
+	persona: Persona,
 	errors: string[],
 ): void {
-	const persona = getPersona(contract.personaId);
 	if (contract.outputSchema && contract.outputSchema !== persona.outputSchema) {
 		errors.push(
-			`outputSchema ${contract.outputSchema} does not match persona ${personaId} (expects ${persona.outputSchema})`,
+			`outputSchema ${contract.outputSchema} does not match persona ${persona.id} (expects ${persona.outputSchema})`,
 		);
 	}
 }
 
 function validatePathPolicy(
 	contract: TaskContract,
-	personaId: string,
+	persona: Persona,
 	errors: string[],
 ): void {
 	if (!contract.pathPolicy) {
@@ -103,27 +97,26 @@ function validatePathPolicy(
 	if (!Array.isArray(forbiddenGlobs))
 		errors.push("pathPolicy.forbiddenGlobs must be an array");
 
-	const persona = getPersona(contract.personaId);
-
 	// Read-only personas should not have any contract-level allowed globs;
 	// PathPolicyEnforcer will deny writes regardless, but flagging here keeps
 	// the master honest.
 	if (!persona.pathPolicy.canWrite && allowedGlobs.length > 0) {
 		errors.push(
-			`persona ${personaId} is read-only; allowedGlobs must be empty`,
+			`persona ${persona.id} is read-only; allowedGlobs must be empty`,
 		);
 	}
 
 	// Write-capable personas without their own always-allowed globs MUST get
-	// scoped paths from the contract (e.g. code_executor).
+	// scoped paths from the contract (e.g. code_executor). Personas that carry
+	// their own alwaysAllowedGlobs (test_writer, docs, context_builder) are
+	// already covered and need no contract globs — derived, not hardcoded.
 	if (
 		persona.pathPolicy.canWrite &&
 		persona.pathPolicy.alwaysAllowedGlobs.length === 0 &&
-		allowedGlobs.length === 0 &&
-		!PERSONA_PERMITS_WRITE_NO_CONTRACT_GLOBS.has(personaId)
+		allowedGlobs.length === 0
 	) {
 		errors.push(
-			`persona ${personaId} requires allowedGlobs from the contract`,
+			`persona ${persona.id} requires allowedGlobs from the contract`,
 		);
 	}
 }
@@ -136,23 +129,18 @@ export function findGlobConflicts(
 	contracts: TaskContract[],
 ): Array<{ taskA: string; taskB: string; glob: string }> {
 	const conflicts: Array<{ taskA: string; taskB: string; glob: string }> = [];
-	const byGroup = new Map<string, TaskContract[]>();
-	for (const c of contracts) {
-		const list = byGroup.get(c.parallelGroup) ?? [];
-		list.push(c);
-		byGroup.set(c.parallelGroup, list);
-	}
+	const byGroup = groupBy(contracts, (c) => c.parallelGroup);
 
 	for (const group of byGroup.values()) {
 		for (let i = 0; i < group.length; i++) {
 			for (let j = i + 1; j < group.length; j++) {
 				const a = group[i]!;
 				const b = group[j]!;
-				const shared = a.pathPolicy.allowedGlobs.filter((g) =>
-					b.pathPolicy.allowedGlobs.includes(g),
-				);
-				for (const glob of shared) {
-					conflicts.push({ taskA: a.taskId, taskB: b.taskId, glob });
+				const bGlobs = new Set(b.pathPolicy.allowedGlobs);
+				for (const glob of a.pathPolicy.allowedGlobs) {
+					if (bGlobs.has(glob)) {
+						conflicts.push({ taskA: a.taskId, taskB: b.taskId, glob });
+					}
 				}
 			}
 		}

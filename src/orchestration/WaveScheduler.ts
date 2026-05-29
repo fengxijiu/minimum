@@ -1,4 +1,6 @@
+import type { PersonaId } from "../personas/Persona.js";
 import { getPersona } from "../personas/PersonaRegistry.js";
+import { groupBy } from "../utils/collections.js";
 import type { TaskContract } from "./TaskContract.js";
 import { runTask, type TaskResult, type TaskRunnerOptions } from "./TaskRunner.js";
 import type { WaveSlot } from "./TaskGraph.js";
@@ -66,18 +68,12 @@ async function executeWave(
 ): Promise<TaskResult[]> {
 	const selected = applyParallelismPolicy(tasks);
 
-	// Group by persona so we can apply per-persona concurrency caps independently.
-	const byPersona = new Map<string, TaskContract[]>();
-	for (const t of selected) {
-		const list = byPersona.get(t.personaId) ?? [];
-		list.push(t);
-		byPersona.set(t.personaId, list);
-	}
-
-	// Run all persona groups concurrently; within each group obey maxConcurrent.
+	// Group by persona so we can apply per-persona concurrency caps independently,
+	// then run all persona groups concurrently with each obeying maxConcurrent.
+	const byPersona = groupBy(selected, (t): PersonaId => t.personaId);
 	const groupPromises: Promise<TaskResult[]>[] = [];
 	for (const [personaId, personaTasks] of byPersona) {
-		const cap = safeMaxConcurrent(personaId);
+		const cap = getPersona(personaId).parallelism.maxConcurrent;
 		groupPromises.push(runGroupWithCap(personaTasks, cap, waveIndex, opts, emit));
 	}
 
@@ -95,14 +91,6 @@ function applyParallelismPolicy(tasks: TaskContract[]): TaskContract[] {
 		seenSolo.add(t.personaId);
 		return true;
 	});
-}
-
-function safeMaxConcurrent(personaId: string): number {
-	try {
-		return getPersona(personaId as Parameters<typeof getPersona>[0]).parallelism.maxConcurrent;
-	} catch {
-		return 1;
-	}
 }
 
 /**

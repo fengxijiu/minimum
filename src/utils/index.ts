@@ -1,3 +1,4 @@
+export * from "./collections.js";
 export * from "./json-repair.js";
 export * from "./path-utils.js";
 export * from "./token-counter.js";

@@ -173,6 +173,18 @@ describe("buildWaves", () => {
 		const { errors } = buildWaves([bad], { validate: false });
 		expect(errors).toEqual([]);
 	});
+
+	it("surfaces dangling dependencies", () => {
+		const a = mkContract({
+			taskId: "T1",
+			dependsOn: ["T-missing"],
+			pathPolicy: { allowedGlobs: ["a.ts"], forbiddenGlobs: [] },
+		});
+		const { errors } = buildWaves([a]);
+		const dangling = errors.find((e) => e.taskId === "_dangling_dep");
+		expect(dangling).toBeDefined();
+		expect(dangling!.errors[0]).toContain("T-missing");
+	});
 });
 
 describe("partitionByParallelGroup", () => {
