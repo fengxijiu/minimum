@@ -200,6 +200,84 @@ function buildViewport(
   return { visible, linesAbove, totalLines };
 }
 
+// ── Markdown rendering ────────────────────────────────────────────────
+
+type MdSpan = { k: 't' | 'b' | 'i' | 'c'; v: string };
+
+function parseInlineMd(text: string): MdSpan[] {
+  const spans: MdSpan[] = [];
+  const re = /\*\*(.+?)\*\*|\*(.+?)\*|`(.+?)`/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) spans.push({ k: 't', v: text.slice(last, m.index) });
+    if (m[1] !== undefined) spans.push({ k: 'b', v: m[1] });
+    else if (m[2] !== undefined) spans.push({ k: 'i', v: m[2] });
+    else spans.push({ k: 'c', v: m[3]! });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) spans.push({ k: 't', v: text.slice(last) });
+  return spans;
+}
+
+function InlineMd({ text, color }: { text: string; color?: string }) {
+  const spans = useMemo(() => parseInlineMd(text), [text]);
+  return (
+    <Text>
+      {spans.map((s, i) =>
+        s.k === 'b' ? <Text key={i} bold color={color}>{s.v}</Text>
+        : s.k === 'i' ? <Text key={i} italic color={color}>{s.v}</Text>
+        : s.k === 'c' ? <Text key={i} color={theme.accent2}>{s.v}</Text>
+        : <Text key={i} color={color}>{s.v}</Text>
+      )}
+    </Text>
+  );
+}
+
+type MdLine =
+  | { k: 'code'; t: string }
+  | { k: 'h1' | 'h2' | 'h3'; t: string }
+  | { k: 'li'; prefix: string; t: string }
+  | { k: 'text'; t: string };
+
+function parseMdLines(raw: string): MdLine[] {
+  const result: MdLine[] = [];
+  let inCode = false;
+  for (const line of raw.split('\n')) {
+    if (line.startsWith('```')) { inCode = !inCode; continue; }
+    if (inCode) { result.push({ k: 'code', t: line }); continue; }
+    const h = line.match(/^(#{1,3}) (.+)/);
+    if (h) { result.push({ k: `h${h[1]!.length}` as 'h1' | 'h2' | 'h3', t: h[2]! }); continue; }
+    const ul = line.match(/^[-*] (.+)/);
+    if (ul) { result.push({ k: 'li', prefix: '• ', t: ul[1]! }); continue; }
+    const ol = line.match(/^(\d+)\. (.+)/);
+    if (ol) { result.push({ k: 'li', prefix: ol[1]! + '. ', t: ol[2]! }); continue; }
+    result.push({ k: 'text', t: line });
+  }
+  return result;
+}
+
+function MarkdownBlock({ text, color }: { text: string; color?: string }) {
+  const lines = useMemo(() => parseMdLines(text), [text]);
+  return (
+    <Box flexDirection="column">
+      {lines.map((line, i) => {
+        if (line.k === 'code') return <Text key={i} color={theme.accent2}>{line.t}</Text>;
+        if (line.k === 'h1')   return <Text key={i} bold color={theme.accent}>{line.t}</Text>;
+        if (line.k === 'h2')   return <Text key={i} bold color={theme.inkSoft}>{line.t}</Text>;
+        if (line.k === 'h3')   return <Text key={i} bold>{line.t}</Text>;
+        if (line.k === 'li')   return (
+          <Box key={i}>
+            <Text color={theme.muted}>{line.prefix}</Text>
+            <InlineMd text={line.t} color={color} />
+          </Box>
+        );
+        return <Box key={i}><InlineMd text={line.t} color={color} /></Box>;
+      })}
+    </Box>
+  );
+}
+
 // ── Single message renderer ───────────────────────────────────────────
 
 const MessageRow = React.memo(function MessageRow({ msg, cols, verbose }: {
@@ -223,7 +301,7 @@ const MessageRow = React.memo(function MessageRow({ msg, cols, verbose }: {
           <RoleGutter color={theme.inkSoft} />
           <Box flexDirection="column" flexGrow={1}>
             <RoleLabel label="mimo" color={theme.inkSoft} />
-            <Text color={theme.ink}>{msg.text}</Text>
+            <MarkdownBlock text={msg.text} color={theme.ink} />
           </Box>
         </Box>
       );
@@ -407,7 +485,7 @@ export const ChatStream = React.memo(function ChatStream({
               <RoleGutter color={theme.inkSoft} />
               <Box flexDirection="column" flexGrow={1}>
                 <RoleLabel label="mimo" color={theme.inkSoft} />
-                <Text color={theme.inkSoft}>{streamViewport}</Text>
+                <MarkdownBlock text={streamViewport} color={theme.inkSoft} />
                 <Text color={theme.muted}>▍</Text>
               </Box>
             </Box>

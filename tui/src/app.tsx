@@ -309,6 +309,17 @@ export function App({
     dispatch({ type: 'chips.push', chips });
   }, [runner, dispatch]);
 
+  const allowPermissionAlways = useCallback(() => {
+    const perm = activePermRef.current;
+    if (!perm) return;
+    runner.resolvePermission?.(perm.id, { approved: true, reason: 'user approved always' });
+    runner.setApprovalMode?.('full-auto');
+    setActivePerm(null);
+    dispatch({ type: 'pending.clear' });
+    dispatch({ type: 'approval.change', mode: 'full-auto' });
+    dispatch({ type: 'system.push', text: `Always allowing — switched to full-auto.`, tone: 'ok' });
+  }, [runner, dispatch]);
+
   const applyFix = useCallback(() => {
     dispatch({ type: 'pending.clear' });
     dispatch({ type: 'edits.clear' });
@@ -603,6 +614,7 @@ export function App({
             hasEdits={sHasEdits}
             onSubmit={handleSubmit}
             onPermAllow={allowPermission}
+            onPermAlwaysAllow={allowPermissionAlways}
             onPermDeny={dismissPending}
             onApplyFix={applyFix}
             dispatch={dispatch}
