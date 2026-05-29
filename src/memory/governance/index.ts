@@ -15,6 +15,19 @@ export {
 	type TaskType,
 } from "./MemoryLoader.js";
 export {
+	applyFinalize,
+	compileFinalize,
+	renderEntry,
+	upsertSection,
+	upsertSectionInFile,
+	type AppliedDecision,
+	type ApplyOptions,
+	type Finalize,
+	type FinalizeCompileResult,
+	type FinalizeReport,
+	type PatchMergeEntry,
+} from "./MemoryGovernor.js";
+export {
 	canonicalPath,
 	defaultManifest,
 	getOrInitManifest,
