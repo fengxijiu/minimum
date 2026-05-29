@@ -31,6 +31,7 @@ export function createInitialState(cwd: string): AppState {
     turnInProgress: false,
     verbose: false,
     streaming: null,
+    reasoning: null,
     activeTool: null,
     toasts: [],
     usage: { promptTokens: 0, completionTokens: 0, sessionCost: 0, lastTurnCost: 0, cacheHit: 0 },

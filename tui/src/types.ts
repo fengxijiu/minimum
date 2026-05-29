@@ -6,6 +6,8 @@ export type ToolCall = {
   args: string;
   meta?: string;
   status?: 'ok' | 'err';
+  /** Captured result output lines (success or failure). Shown folded; expanded in verbose. */
+  output?: string[];
 };
 
 export type Diff = {
@@ -38,7 +40,9 @@ export type Message =
   | { id: string; type: 'diff'; diff: Diff }
   | { id: string; type: 'chips'; chips: Chip[] }
   | { id: string; type: 'permission'; perm: Permission }
-  | { id: string; type: 'error'; error: ErrorReport };
+  | { id: string; type: 'error'; error: ErrorReport }
+  /** End-of-turn summary line: "7 tools · 1.2k tok · $0.03". Rendered as an informative divider. */
+  | { id: string; type: 'turnmeta'; summary: string };
 
 export type SessionState = 'agent' | 'mimo' | 'orchestrate' | 'paused' | 'error';
 
@@ -119,6 +123,8 @@ export type AppState = {
   verbose: boolean;
   /** Streaming text accumulator — non-null while assistant is generating. */
   streaming: string | null;
+  /** Live reasoning/thinking accumulator — non-null while the model is thinking. Cleared at turn end. */
+  reasoning: string | null;
   /** Currently executing tool — shown in the live activity area. */
   activeTool: ToolProgress | null;
   /** Toast notifications with auto-dismiss. */

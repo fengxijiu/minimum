@@ -20,7 +20,9 @@ const KIND_COLOR: Record<ToolKind, string> = {
   find: theme.inkSoft,
 };
 
-export const ToolLine = React.memo(function ToolLine({ tool, compact }: { tool: ToolCall; compact?: boolean }) {
+const OUTPUT_PREVIEW = 12; // lines of tool output shown when expanded
+
+export const ToolLine = React.memo(function ToolLine({ tool, compact, verbose }: { tool: ToolCall; compact?: boolean; verbose?: boolean }) {
   const icon  = KIND_ICON[tool.kind] ?? '◇';
   const color =
     tool.status === 'err' ? theme.danger :
@@ -28,11 +30,29 @@ export const ToolLine = React.memo(function ToolLine({ tool, compact }: { tool: 
     KIND_COLOR[tool.kind];
   const metaColor = tool.status === 'ok' ? theme.plus : tool.status === 'err' ? theme.danger : theme.muted;
 
+  // Expand captured output only in verbose mode (default-folded interaction model).
+  const out = verbose ? (tool.output ?? []) : [];
+  const shown = out.slice(0, OUTPUT_PREVIEW);
+  const hidden = out.length - shown.length;
+  const pad = compact ? 2 : 4;
+
   return (
-    <Box paddingLeft={compact ? 2 : 4}>
-      <Text color={color}>{icon} </Text>
-      <Text color={theme.inkSoft}>{tool.args}</Text>
-      {tool.meta ? <Text color={metaColor}>  {tool.meta}</Text> : null}
+    <Box flexDirection="column">
+      <Box paddingLeft={pad}>
+        <Text color={color}>{icon} </Text>
+        <Text color={theme.inkSoft}>{tool.args}</Text>
+        {tool.meta ? <Text color={metaColor}>  {tool.meta}</Text> : null}
+      </Box>
+      {shown.map((l, i) => (
+        <Box key={i} paddingLeft={pad + 2}>
+          <Text color={theme.muted}>{l.slice(0, 100)}</Text>
+        </Box>
+      ))}
+      {hidden > 0 && (
+        <Box paddingLeft={pad + 2}>
+          <Text color={theme.muted}>⋯ {hidden} more line{hidden > 1 ? 's' : ''}</Text>
+        </Box>
+      )}
     </Box>
   );
 });

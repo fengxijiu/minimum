@@ -27,7 +27,7 @@ function RoleLabel({ label, color }: { label: string; color: string }) {
 
 type ToolMsg = Message & { type: 'tool' };
 
-function ToolGroupRow({ tools }: { tools: ToolMsg[] }) {
+function ToolGroupRow({ tools, verbose }: { tools: ToolMsg[]; verbose?: boolean }) {
   const edits  = tools.filter(t => t.tool.kind === 'edit').length;
   const runs   = tools.filter(t => t.tool.kind === 'run').length;
   const reads  = tools.filter(t => t.tool.kind === 'read').length;
@@ -51,7 +51,7 @@ function ToolGroupRow({ tools }: { tools: ToolMsg[] }) {
           </Text>
         </Text>
       </Box>
-      {tools.map(t => <ToolLine key={t.id} tool={t.tool} compact />)}
+      {tools.map(t => <ToolLine key={t.id} tool={t.tool} compact verbose={verbose} />)}
     </Box>
   );
 }
@@ -63,6 +63,40 @@ function TurnDivider({ cols }: { cols: number }) {
   return (
     <Box marginTop={1}>
       <Text color={theme.line}>{'─'.repeat(w)}</Text>
+    </Box>
+  );
+}
+
+/** Informative end-of-turn rule: ──── 4 steps · 7 tools · 1.2k tok · $0.03 ──── */
+function TurnMetaRule({ summary, cols }: { summary: string; cols: number }) {
+  const label = ` ${summary} `;
+  const rest = Math.max(2, cols - 4 - label.length);
+  const left = Math.floor(rest / 2);
+  const right = rest - left;
+  return (
+    <Box marginTop={1}>
+      <Text color={theme.line}>{'─'.repeat(left)}</Text>
+      <Text color={theme.muted}>{label}</Text>
+      <Text color={theme.line}>{'─'.repeat(right)}</Text>
+    </Box>
+  );
+}
+
+/** Folded reasoning indicator shown in the live frame while the model thinks. */
+function ReasoningRow({ text, verbose }: { text: string; verbose?: boolean }) {
+  const lines = text.split('\n').filter(l => l.trim() !== '');
+  const tail = verbose ? lines.slice(-6) : lines.slice(-1);
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Box paddingLeft={2}>
+        <Text color={theme.accent2}>◇ </Text>
+        <Text color={theme.muted}>thinking · {lines.length} line{lines.length === 1 ? '' : 's'}{verbose ? '' : '  (verbose to expand)'}</Text>
+      </Box>
+      {tail.map((l, i) => (
+        <Box key={i} paddingLeft={4}>
+          <Text color={theme.muted} dimColor>{l.slice(0, 100)}</Text>
+        </Box>
+      ))}
     </Box>
   );
 }
@@ -97,7 +131,10 @@ function buildRenderItems(msgs: Message[]): RenderItem[] {
     }
     flushTools();
     if (msg.type === 'user' && i > 0) {
-      items.push({ id: `div:${msg.id}`, kind: 'divider' });
+      // A turnmeta rule already serves as the boundary — don't stack a plain divider on it.
+      const prev = items[items.length - 1];
+      const prevIsMeta = prev?.kind === 'msg' && prev.msg.type === 'turnmeta';
+      if (!prevIsMeta) items.push({ id: `div:${msg.id}`, kind: 'divider' });
     }
     items.push({ id: msg.id, kind: 'msg', msg });
   }
@@ -107,7 +144,7 @@ function buildRenderItems(msgs: Message[]): RenderItem[] {
 
 // ── Single message renderer ───────────────────────────────────────────
 
-const MessageRow = React.memo(function MessageRow({ msg, cols }: { msg: Message; cols: number }) {
+const MessageRow = React.memo(function MessageRow({ msg, cols, verbose }: { msg: Message; cols: number; verbose?: boolean }) {
   switch (msg.type) {
     case 'user':
       return (
@@ -144,7 +181,10 @@ const MessageRow = React.memo(function MessageRow({ msg, cols }: { msg: Message;
     }
 
     case 'tool':
-      return <ToolLine tool={msg.tool} />;
+      return <ToolLine tool={msg.tool} verbose={verbose} />;
+
+    case 'turnmeta':
+      return <TurnMetaRule summary={msg.summary} cols={cols} />;
 
     case 'diff':
       return <DiffBlock diff={msg.diff} />;
@@ -173,10 +213,10 @@ const MessageRow = React.memo(function MessageRow({ msg, cols }: { msg: Message;
 
 // ── Render item dispatcher ────────────────────────────────────────────
 
-function RenderItemRow({ item, cols }: { item: RenderItem; cols: number }) {
+function RenderItemRow({ item, cols, verbose }: { item: RenderItem; cols: number; verbose?: boolean }) {
   if (item.kind === 'divider') return <TurnDivider cols={cols} />;
-  if (item.kind === 'toolgroup') return <ToolGroupRow tools={item.tools} />;
-  return <MessageRow msg={item.msg} cols={cols} />;
+  if (item.kind === 'toolgroup') return <ToolGroupRow tools={item.tools} verbose={verbose} />;
+  return <MessageRow msg={item.msg} cols={cols} verbose={verbose} />;
 }
 
 // ── ChatStream ────────────────────────────────────────────────────────
@@ -186,11 +226,15 @@ export const ChatStream = React.memo(function ChatStream({
   messages,
   committedCount,
   streaming,
+  reasoning,
+  verbose,
 }: {
   stepLabel?: string;
   messages: Message[];
   committedCount: number;
   streaming?: string | null;
+  reasoning?: string | null;
+  verbose?: boolean;
 }) {
   const { stdout } = useStdout();
   const rows = stdout?.rows ?? 40;
@@ -225,7 +269,7 @@ export const ChatStream = React.memo(function ChatStream({
     <>
       {/* Phase 2: committed messages rendered once, never redrawn. */}
       <Static items={committedItems}>
-        {(item) => <RenderItemRow key={item.id} item={item} cols={cols} />}
+        {(item) => <RenderItemRow key={item.id} item={item} cols={cols} verbose={verbose} />}
       </Static>
 
       {/* Active frame: current-turn live messages + streaming cursor. */}
@@ -251,8 +295,10 @@ export const ChatStream = React.memo(function ChatStream({
         )}
 
         {liveItems.map(item => (
-          <RenderItemRow key={item.id} item={item} cols={cols} />
+          <RenderItemRow key={item.id} item={item} cols={cols} verbose={verbose} />
         ))}
+
+        {reasoning ? <ReasoningRow text={reasoning} verbose={verbose} /> : null}
 
         {streamViewport ? (
           <Box marginTop={1}>

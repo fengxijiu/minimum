@@ -79,13 +79,24 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
         ...state,
         messages: state.messages.map(m =>
           m.id === event.id && m.type === 'tool'
-            ? { ...m, tool: { ...m.tool, status: event.ok ? 'ok' : 'err', meta: event.meta ?? m.tool.meta } }
+            ? { ...m, tool: { ...m.tool, status: event.ok ? 'ok' : 'err', meta: event.meta ?? m.tool.meta, output: event.output ?? m.tool.output } }
             : m
         ),
         activeTool: state.activeTool?.id === event.id
           ? { ...state.activeTool, status: event.ok ? 'ok' : 'err', meta: event.meta }
           : state.activeTool,
       };
+
+    case 'reasoning.chunk':
+      return { ...state, reasoning: (state.reasoning ?? '') + event.text };
+
+    case 'reasoning.clear':
+      return { ...state, reasoning: null };
+
+    case 'turnmeta.push':
+      return pushMessage(state, {
+        id: mid('tm'), type: 'turnmeta', summary: event.summary,
+      });
 
     case 'system.push':
       return pushMessage(state, {
@@ -126,6 +137,7 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
         plan: { title: '(no plan yet)', steps: [] },
         currentStepLabel: '',
         streaming: null,
+        reasoning: null,
         pending: null,
         activeTool: null,
       };
@@ -139,6 +151,7 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
         plan: { title: '(no plan yet)', steps: [] },
         currentStepLabel: '',
         streaming: null,
+        reasoning: null,
         pending: null,
         activeTool: null,
         ctx: { used: 0, max: state.ctx.max },
@@ -158,6 +171,7 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
         messages: [],
         committedCount: 0,
         streaming: null,
+        reasoning: null,
         pending: null,
       };
 
@@ -234,13 +248,14 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
 
     // ── turn lifecycle ────────────────────────────────────────────
     case 'turn.start':
-      return { ...state, turnInProgress: true, streaming: '' };
+      return { ...state, turnInProgress: true, streaming: '', reasoning: null };
 
     case 'turn.end':
       return {
         ...state,
         turnInProgress: false,
         streaming: null,
+        reasoning: null,
         activeTool: null,
       };
 

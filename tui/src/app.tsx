@@ -79,10 +79,10 @@ const ContextZone = React.memo(function ContextZone({ files, edits, mode }: {
 });
 
 /** ChatStream zone — only re-renders on messages/stepLabel/activeTool/streaming/committedCount changes. */
-const ChatZone = React.memo(function ChatZone({ messages, committedCount, path, engineInfo, stepLabel, activeTool, helpOpen, streaming }: {
+const ChatZone = React.memo(function ChatZone({ messages, committedCount, path, engineInfo, stepLabel, activeTool, helpOpen, streaming, reasoning, verbose }: {
   messages: Message[]; committedCount: number; path: string; engineInfo: EngineInfo;
   stepLabel: string; activeTool: AppState['activeTool']; helpOpen: boolean;
-  streaming?: string | null;
+  streaming?: string | null; reasoning?: string | null; verbose?: boolean;
 }) {
   const hasConversation = messages.some(m => m.type !== 'system');
   const showWelcome = !hasConversation && !helpOpen;
@@ -90,7 +90,7 @@ const ChatZone = React.memo(function ChatZone({ messages, committedCount, path, 
     <>
       {showWelcome
         ? <WelcomeScreen path={path} engine={engineInfo} />
-        : <ChatStream stepLabel={stepLabel} messages={messages} committedCount={committedCount} streaming={streaming} />}
+        : <ChatStream stepLabel={stepLabel} messages={messages} committedCount={committedCount} streaming={streaming} reasoning={reasoning} verbose={verbose} />}
       {activeTool ? <ToolProgress tool={activeTool} /> : null}
     </>
   );
@@ -137,13 +137,22 @@ export function App({
   // Tracks the last-started tool message id so tool_result can close it out.
   const lastToolIdRef = useRef<string | null>(null);
 
-  // ── Streaming chunk buffer (50ms flush) ─────────────────────────────
+  // ── Per-turn telemetry (reset on turn.start, drained into turnmeta) ──
+  const turnToolCountRef = useRef(0);
+  const turnUsageRef = useRef<{ totalTokens: number; toolCalls: number; steps: number; totalCostUsd: number } | null>(null);
+
+  // ── Streaming chunk buffer (100ms flush — covers answer + reasoning) ─
   const chunkBufferRef = useRef('');
+  const reasoningBufferRef = useRef('');
   const chunkFlushTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const flushChunks = useCallback(() => {
     if (chunkBufferRef.current) {
       dispatch({ type: 'assistant.chunk', text: chunkBufferRef.current });
       chunkBufferRef.current = '';
+    }
+    if (reasoningBufferRef.current) {
+      dispatch({ type: 'reasoning.chunk', text: reasoningBufferRef.current });
+      reasoningBufferRef.current = '';
     }
   }, [dispatch]);
   const startChunkFlusher = useCallback(() => {
@@ -276,6 +285,8 @@ export function App({
   const runTurn = useCallback((activeRunner: Runner, trimmed: string, isPipeline: boolean) => {
     void (async () => {
       startChunkFlusher();
+      turnToolCountRef.current = 0;
+      turnUsageRef.current = null;
       if (isPipeline) dispatch({ type: 'pipeline.start' });
       try {
         for await (const ev of activeRunner.send(trimmed)) {
@@ -306,6 +317,7 @@ export function App({
             if (fname) {
               dispatch({ type: 'files.set', files: touch(stateRef.current.files, { name: fname, meta: ev.name }) });
             }
+            turnToolCountRef.current += 1;
             const toolId = tid();
             lastToolIdRef.current = toolId;
             dispatch({ type: 'tool.start', id: toolId, name: ev.name, args: summarizeTool(ev.name, ev.args) });
@@ -314,7 +326,11 @@ export function App({
           if (ev.kind === 'tool_result') {
             if (lastToolIdRef.current) {
               const meta = summarizeToolResult(ev.ok, ev.content);
-              dispatch({ type: 'tool.end', id: lastToolIdRef.current, ok: ev.ok, meta: meta || undefined });
+              // Capture output lines (capped) so the result can be expanded in verbose mode.
+              const output = ev.content
+                ? ev.content.split('\n').filter(l => l.trim() !== '').slice(0, 40)
+                : undefined;
+              dispatch({ type: 'tool.end', id: lastToolIdRef.current, ok: ev.ok, meta: meta || undefined, output });
               lastToolIdRef.current = null;
             }
             if (!ev.ok) {
@@ -322,7 +338,17 @@ export function App({
             }
             continue;
           }
+          if (ev.kind === 'streaming_reasoning') {
+            reasoningBufferRef.current += ev.text;
+            continue;
+          }
           if (ev.kind === 'usage') {
+            turnUsageRef.current = {
+              totalTokens: ev.totalTokens,
+              toolCalls: ev.toolCalls,
+              steps: ev.steps,
+              totalCostUsd: ev.totalCostUsd,
+            };
             dispatch({ type: 'ctx.update', used: Number((ev.totalTokens / 1000).toFixed(1)) });
             continue;
           }
@@ -360,6 +386,18 @@ export function App({
         stopChunkFlusher();
         if (isPipeline) dispatch({ type: 'pipeline.end' });
         dispatch({ type: 'turn.end', success: true });
+        // End-of-turn telemetry summary, rendered as an informative divider.
+        const u = turnUsageRef.current;
+        const tools = turnToolCountRef.current;
+        if (u || tools > 0) {
+          const parts: string[] = [];
+          const steps = u?.steps ?? 0;
+          if (steps > 0) parts.push(`${steps} step${steps > 1 ? 's' : ''}`);
+          if (tools > 0) parts.push(`${tools} tool${tools > 1 ? 's' : ''}`);
+          if (u && u.totalTokens > 0) parts.push(`${(u.totalTokens / 1000).toFixed(1)}k tok`);
+          if (u && u.totalCostUsd > 0) parts.push(`$${u.totalCostUsd.toFixed(2)}`);
+          if (parts.length) dispatch({ type: 'turnmeta.push', summary: parts.join(' · ') });
+        }
         // Phase 2: commit all messages from this turn into the Static scrollback layer.
         dispatch({ type: 'messages.commit' });
       }
@@ -426,6 +464,7 @@ export function App({
   const sStepLabel = useSlice(state, s => s.currentStepLabel);
   const sActiveTool = useSlice(state, s => s.activeTool);
   const sStreaming = useSlice(state, s => s.streaming);
+  const sReasoning = useSlice(state, s => s.reasoning);
   const sApprovalMode = useSlice(state, s => s.approvalMode);
   const sEditMode = useSlice(state, s => s.editMode);
   const sCtxUsed = useSlice(state, s => s.ctx.used);
@@ -468,6 +507,8 @@ export function App({
             activeTool={sActiveTool}
             helpOpen={sHelpOpen}
             streaming={sStreaming}
+            reasoning={sReasoning}
+            verbose={sVerbose}
           />
 
           <ToastBar toasts={sToasts} onDismiss={handleToastDismiss} />

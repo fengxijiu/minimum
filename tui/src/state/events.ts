@@ -11,7 +11,10 @@ export type AgentEvent =
   | { type: 'assistant.final'; text: string }
   | { type: 'tool.start'; id: string; name: string; args: string }
   | { type: 'tool.output'; id: string; text: string }
-  | { type: 'tool.end'; id: string; ok: boolean; meta?: string }
+  | { type: 'tool.end'; id: string; ok: boolean; meta?: string; output?: string[] }
+  | { type: 'reasoning.chunk'; text: string }
+  | { type: 'reasoning.clear' }
+  | { type: 'turnmeta.push'; summary: string }
   | { type: 'system.push'; text: string; tone?: 'info' | 'warn' | 'ok' }
   | { type: 'error.push'; title: string; lines: string[] }
   | { type: 'diff.push'; file: string; added: number; removed: number; lines: string[] }
