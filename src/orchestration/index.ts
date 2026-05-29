@@ -27,3 +27,16 @@ export type {
 	TaskInputs,
 	TaskPathPolicy,
 } from "./TaskContract.js";
+export {
+	extractXmlBlock,
+	runTask,
+	type TaskResult,
+	type TaskRunnerOptions,
+	type TaskStatus,
+	type WorkerExecutor,
+} from "./TaskRunner.js";
+export {
+	schedule,
+	type ScheduleOptions,
+	type WaveEvent,
+} from "./WaveScheduler.js";
