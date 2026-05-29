@@ -266,6 +266,12 @@ export const ChatStream = React.memo(function ChatStream({
   const streamText = streaming ?? '';
   const streamViewport = streamText.split('\n').slice(-STREAM_MAX_LINES).join('\n');
 
+  // The active frame is rendered ONLY when the current turn has something live.
+  // When idle (typing between turns), the dynamic region collapses to nothing so
+  // Ink repaints only a handful of lines per keystroke — no full-height redraw,
+  // no flicker. (See: flexGrow full-height boxes force whole-screen repaints.)
+  const hasLive = !!stepLabel || clippedLive > 0 || liveItems.length > 0 || !!reasoning || !!streamViewport;
+
   return (
     <>
       {/* Phase 2: committed messages rendered once, never redrawn. */}
@@ -273,45 +279,47 @@ export const ChatStream = React.memo(function ChatStream({
         {(item) => <RenderItemRow key={item.id} item={item} cols={cols} verbose={verbose} />}
       </Static>
 
-      {/* Active frame: current-turn live messages + streaming cursor. */}
-      <Box
-        flexDirection="column"
-        flexGrow={1}
-        borderStyle="single"
-        borderColor={theme.line}
-        paddingX={1}
-      >
-        {stepLabel ? (
-          <Box marginBottom={1}>
-            <Text color={theme.muted}>{stepLabel}</Text>
-          </Box>
-        ) : null}
-
-        {clippedLive > 0 && (
-          <Box paddingLeft={1}>
-            <Text color={theme.muted}>
-              · {clippedLive} earlier message{clippedLive === 1 ? '' : 's'} hidden
-            </Text>
-          </Box>
-        )}
-
-        {liveItems.map(item => (
-          <RenderItemRow key={item.id} item={item} cols={cols} verbose={verbose} />
-        ))}
-
-        {reasoning ? <ReasoningRow text={reasoning} verbose={verbose} /> : null}
-
-        {streamViewport ? (
-          <Box marginTop={1}>
-            <RoleGutter color={theme.inkSoft} />
-            <Box flexDirection="column" flexGrow={1}>
-              <RoleLabel label="mimo" color={theme.inkSoft} />
-              <Text color={theme.inkSoft}>{streamViewport}</Text>
-              <Text color={theme.muted}>▍</Text>
+      {/* Active frame: current-turn live messages + streaming cursor.
+          Content-sized (no flexGrow) so its height tracks actual content. */}
+      {hasLive ? (
+        <Box
+          flexDirection="column"
+          borderStyle="single"
+          borderColor={theme.line}
+          paddingX={1}
+        >
+          {stepLabel ? (
+            <Box marginBottom={1}>
+              <Text color={theme.muted}>{stepLabel}</Text>
             </Box>
-          </Box>
-        ) : null}
-      </Box>
+          ) : null}
+
+          {clippedLive > 0 && (
+            <Box paddingLeft={1}>
+              <Text color={theme.muted}>
+                · {clippedLive} earlier message{clippedLive === 1 ? '' : 's'} hidden
+              </Text>
+            </Box>
+          )}
+
+          {liveItems.map(item => (
+            <RenderItemRow key={item.id} item={item} cols={cols} verbose={verbose} />
+          ))}
+
+          {reasoning ? <ReasoningRow text={reasoning} verbose={verbose} /> : null}
+
+          {streamViewport ? (
+            <Box marginTop={1}>
+              <RoleGutter color={theme.inkSoft} />
+              <Box flexDirection="column" flexGrow={1}>
+                <RoleLabel label="mimo" color={theme.inkSoft} />
+                <Text color={theme.inkSoft}>{streamViewport}</Text>
+                <Text color={theme.muted}>▍</Text>
+              </Box>
+            </Box>
+          ) : null}
+        </Box>
+      ) : null}
     </>
   );
 });

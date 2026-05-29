@@ -507,7 +507,7 @@ export function App({
       <TitleZone path={sPath} branch={sBranch} mode={titleMode} />
       <PlanZone title={sPlanTitle} steps={sPlanSteps} />
       <PipelineZone phases={sPipeline} />
-      <Box flexDirection="row" flexGrow={1}>
+      <Box flexDirection="row">
         <ContextZone files={sFiles} edits={sEdits} mode={sMode} />
         <Box flexDirection="column" flexGrow={1}>
           <ChatZone
