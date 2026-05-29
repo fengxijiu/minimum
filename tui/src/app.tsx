@@ -143,19 +143,28 @@ export function App({
   const turnToolCountRef = useRef(0);
   const turnUsageRef = useRef<{ totalTokens: number; toolCalls: number; steps: number; totalCostUsd: number } | null>(null);
 
-  // ── Streaming chunk buffer (100ms flush — covers answer + reasoning) ─
+  // ── Streaming chunk buffer (adaptive ~120ms coalescing flush) ────────
+  // Buffers both answer text and reasoning text, draining them together on an
+  // adaptive cadence so high-frequency token streams don't trigger a render per
+  // token. A single timer covers both streams.
   const chunkBufferRef = useRef('');
   const reasoningBufferRef = useRef('');
-  const chunkFlushTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const chunkFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const chunkLastFlushRef = useRef(0);
   const flushChunks = useCallback(() => {
     if (chunkFlushTimerRef.current) {
       clearTimeout(chunkFlushTimerRef.current);
       chunkFlushTimerRef.current = null;
     }
+    if (chunkBufferRef.current) {
+      dispatch({ type: 'assistant.chunk', text: chunkBufferRef.current });
+      chunkBufferRef.current = '';
+    }
     if (reasoningBufferRef.current) {
       dispatch({ type: 'reasoning.chunk', text: reasoningBufferRef.current });
       reasoningBufferRef.current = '';
     }
+    chunkLastFlushRef.current = Date.now();
   }, [dispatch]);
   const scheduleChunkFlush = useCallback(() => {
     if (chunkFlushTimerRef.current) return;
@@ -163,6 +172,9 @@ export function App({
     const delay = Math.max(0, 120 - elapsed);
     chunkFlushTimerRef.current = setTimeout(flushChunks, delay);
   }, [flushChunks]);
+  const startChunkFlusher = useCallback(() => {
+    chunkLastFlushRef.current = Date.now();
+  }, []);
   const stopChunkFlusher = useCallback(() => {
     flushChunks();
   }, [flushChunks]);
@@ -351,6 +363,7 @@ export function App({
           }
           if (ev.kind === 'streaming_reasoning') {
             reasoningBufferRef.current += ev.text;
+            scheduleChunkFlush();
             continue;
           }
           if (ev.kind === 'usage') {
@@ -414,7 +427,7 @@ export function App({
         dispatch({ type: 'messages.commit' });
       }
     })();
-  }, [dispatch, scheduleChunkFlush, stopChunkFlusher, W_PHASES]);
+  }, [dispatch, startChunkFlusher, scheduleChunkFlush, stopChunkFlusher, W_PHASES]);
 
   const handleSubmit = useCallback((text: string) => {
     const st = stateRef.current;
@@ -507,7 +520,7 @@ export function App({
       <TitleZone path={sPath} branch={sBranch} mode={titleMode} />
       <PlanZone title={sPlanTitle} steps={sPlanSteps} />
       <PipelineZone phases={sPipeline} />
-      <Box flexDirection="row" flexGrow={1}>
+      <Box flexDirection="row">
         <ContextZone files={sFiles} edits={sEdits} mode={sMode} />
         <Box flexDirection="column" flexGrow={1}>
           <ChatZone

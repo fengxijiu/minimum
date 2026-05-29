@@ -16,6 +16,10 @@ function truncate(s: string, n: number) {
   return s.length > n ? s.slice(0, n - 1) + '…' : s;
 }
 
+// Cap the file list so the rail stays a bounded height — it lives in the live
+// (repainted-every-frame) region, so an unbounded list would reintroduce flicker.
+const MAX_FILES = 8;
+
 export const ContextRail = React.memo(function ContextRail({ files, edits, mode }: {
   files: FileEntry[];
   edits: StagedEdit[];
@@ -31,7 +35,7 @@ export const ContextRail = React.memo(function ContextRail({ files, edits, mode 
       paddingX={1}
     >
       <Text color={theme.muted}>① CONTEXT · {files.length}</Text>
-      {files.map((f, i) => (
+      {files.slice(0, MAX_FILES).map((f, i) => (
         <Box key={i}>
           <Text color={f.staged ? theme.accent : theme.muted}>
             {f.staged ? '●' : '○'}{' '}
@@ -40,6 +44,9 @@ export const ContextRail = React.memo(function ContextRail({ files, edits, mode 
           <Text color={theme.muted}>  {truncate(f.meta, 6)}</Text>
         </Box>
       ))}
+      {files.length > MAX_FILES && (
+        <Text color={theme.muted}>  +{files.length - MAX_FILES} more</Text>
+      )}
 
       <Text> </Text>
       <Text color={theme.muted}>② EDITS</Text>
