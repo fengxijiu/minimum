@@ -5,6 +5,14 @@ export {
 	type ValidationResult,
 } from "./ContractValidator.js";
 export {
+	collectText,
+	createPlannerBridge,
+	createWorkerExecutor,
+	type CompletionClient,
+	type PlannerBridgeOptions,
+	type WorkerExecutorOptions,
+} from "./ClientAdapters.js";
+export {
 	PERCEPTION_PERSONAS,
 	runPipeline,
 	type PipelineEvent,
