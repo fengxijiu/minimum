@@ -145,6 +145,22 @@ export function App({
     return () => { process.stdout.off('resize', onResize); };
   }, []);
 
+  // ── Mouse wheel scroll (SGR format: ESC [ < btn ; col ; row M) ───────
+  useEffect(() => {
+    const onData = (chunk: Buffer) => {
+      const s = chunk.toString('binary');
+      const re = /\x1b\[<(\d+);\d+;\d+M/g;
+      let m: RegExpMatchArray | null;
+      while ((m = re.exec(s)) !== null) {
+        const btn = parseInt(m[1]!, 10);
+        if (btn === 64) setScrollOffset(p => p + 3);       // wheel up
+        else if (btn === 65) setScrollOffset(p => Math.max(0, p - 3)); // wheel down
+      }
+    };
+    process.stdin.on('data', onData);
+    return () => { process.stdin.off('data', onData); };
+  }, []);
+
   const [state, dispatch] = useAgentStore(() => createInitialState(process.cwd()));
   const [activePerm, setActivePerm] = useState<ActivePermission | null>(null);
   // Mutable refs so callbacks that close over these stay stable
@@ -531,13 +547,14 @@ export function App({
   // ── Chat area height / width estimates (for virtual scroll) ─────────
   // These estimates tell ChatStream how many lines the viewport has.
   // Exact value doesn't matter — a few rows off is fine.
-  const planH = sPlanSteps.length === 0 ? 0 : sPlanSteps.length > 4 ? 1 : 4;
+  // PlanStrip: 0 when empty · 2 (header+steps-row) when 1-4 steps · 1 compact when >4
+  const planH = sPlanSteps.length === 0 ? 0 : sPlanSteps.length > 4 ? 1 : 2;
   const pipeH = sPipeline && sPipeline.length > 0 ? 4 : 0;
   const toastH = sToasts.length > 0 ? 1 : 0;
-  // overhead = titlebar(1) + plan + pipe + statusbar(1) + prompt(3) + toast + safety(1)
-  const chatH  = Math.max(8, termRows - 1 - planH - pipeH - 1 - 3 - toastH - 1);
-  // contextRail is 28 cols wide (includes its own border); leave some padding
-  const chatCols = Math.max(40, termCols - 32);
+  // overhead = titlebar(1) + plan + pipe + statusbar(1) + prompt(1) + toast + safety(1)
+  const chatH  = Math.max(8, termRows - 1 - planH - pipeH - 1 - 1 - toastH - 1);
+  // ContextRail is exactly 28 cols wide (fixed); leave 2 cols right margin
+  const chatCols = Math.max(40, termCols - 30);
 
   const titleMode =
     sPending === 'permission' ? 'agent · paused'
