@@ -138,6 +138,122 @@ export MIMO_BASE_URL=https://token-plan-ams.xiaomimimo.com/v1  # 欧洲
   "approvalMode": "auto-edit"
 }
 ```
+> /new
+> 创建一个 Express.js REST API 项目，包含用户 CRUD 操作
+  [Minimum 自动创建项目结构、安装依赖、编写代码...]
+
+> @src/routes/users.ts 添加输入验证
+  [Minimum 分析现有代码并添加验证逻辑...]
+
+> /steer 使用 Joi 库进行验证
+  [中途调整方向，指定使用特定库...]
+
+> 运行测试确保所有接口正常工作
+  [Minimum 执行测试并报告结果...]
+```
+
+## 开发指南
+
+### 项目结构
+
+```
+minimum/
+├── src/
+│   ├── index/          # TUI 入口和主界面组件
+│   ├── loop/           # Agent 循环引擎
+│   ├── tools/          # 内置工具实现
+│   │   ├── filesystem/ # 文件系统操作
+│   │   ├── git/        # Git 命令封装
+│   │   ├── shell/      # Shell 命令执行
+│   │   ├── search/     # 代码搜索
+│   │   └── web/        # 网页抓取
+│   ├── validators/     # 代码验证器
+│   ├── session/        # 会话管理
+│   ├── mcp/            # MCP 协议客户端
+│   ├── lsp/            # LSP 协议集成
+│   ├── approval/       # 权限审批
+│   ├── capacity/       # 容量控制
+│   ├── telemetry/      # 遥测数据
+│   ├── subagent/       # 子代理系统
+│   ├── skills/         # 技能注册
+│   ├── memory/         # 记忆系统
+│   ├── repair/         # 代码修复
+│   ├── config/         # 配置管理
+│   ├── context/        # 上下文管理
+│   ├── hooks/          # 生命周期钩子
+│   ├── bridge/         # 桥接层
+│   ├── clients/        # API 客户端
+│   ├── commands/       # 命令处理
+│   ├── completeness/   # 完整性检查
+│   ├── iteration/      # 迭代控制
+│   ├── transcript/     # 转录处理
+│   ├── tasks/          # 任务管理
+│   ├── mocks/          # Mock 实现
+│   ├── types/          # TypeScript 类型定义
+│   └── utils/          # 工具函数
+├── tests/              # 测试文件
+├── bin/                # 可执行入口
+└── dist/               # 构建输出
+```
+
+### 开发命令
+
+```bash
+# 运行测试
+npm test
+
+# 监听模式运行测试
+npm run test:watch
+
+# 生成测试覆盖率报告
+npm run test:coverage
+
+# 代码检查
+npm run lint
+
+# 自动修复代码风格
+npm run lint:fix
+
+# 格式化代码
+npm run format
+
+# 类型检查
+npm run typecheck
+```
+
+### 添加新工具
+
+1. 在 `src/tools/` 下创建新的工具目录
+2. 实现工具接口，定义名称、描述、参数和执行逻辑
+3. 在工具注册中心注册新工具
+4. 编写单元测试验证功能
+
+### 添加新技能
+
+1. 在 `src/skills/` 下创建技能定义文件
+2. 实现技能触发条件和执行逻辑
+3. 在技能注册中心注册
+
+## 配置选项
+
+### 环境变量
+
+| 变量名 | 说明 | 默认值 |
+|--------|------|--------|
+| `MIMO_API_KEY` | MiMo API 认证密钥 | 未设置（Mock 模式） |
+| `MIMO_BASE_URL` | API 端点地址 | `https://api.xiaomimimo.com/v1` |
+| `MINIMUM_ENABLE_SHELL` | 启用 Shell 工具执行 | `0`（禁用） |
+| `MINIMUM_TELEMETRY` | 启用遥测数据收集 | `1`（启用） |
+
+### 配置文件
+
+项目配置存储在 `.minimum/` 目录下：
+
+- `sessions/` - 会话历史记录
+- `checkpoints/` - 检查点数据
+- `config.json` - 运行时配置
+
+## 许可证
 
 **启用 Shell 工具**（默认关闭）
 
@@ -203,3 +319,13 @@ npx vitest run
 ```
 
 798 个单元测试，覆盖工具、权限策略、记忆治理、编排器、TUI 状态机等核心模块。
+MIT License
+
+## 贡献
+
+欢迎提交 Issue 和 Pull Request。请确保：
+
+1. 代码通过所有测试 (`npm test`)
+2. 符合项目代码风格 (`npm run lint`)
+3. TypeScript 类型检查通过 (`npm run typecheck`)
+4. 新功能包含相应的测试用例
