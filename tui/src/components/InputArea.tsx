@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import { useInput, useApp } from 'ink';
 import { CommandPalette } from './CommandPalette.js';
 import { FilePicker } from './FilePicker.js';
@@ -22,6 +22,7 @@ export interface InputAreaProps {
   hasEdits: boolean;
   onSubmit: (text: string) => void;
   onPermAllow: () => void;
+  onPermAlwaysAllow: () => void;
   onPermDeny: (note: string) => void;
   onApplyFix: () => void;
   dispatch: Dispatch;
@@ -33,16 +34,23 @@ export interface InputAreaProps {
 
 export const InputArea = React.memo(function InputArea({
   files, helpOpen, pending, hasMessages, mode, editMode, verbose, hasEdits,
-  onSubmit, onPermAllow, onPermDeny, onApplyFix, dispatch, cmdCtx,
+  onSubmit, onPermAllow, onPermAlwaysAllow, onPermDeny, onApplyFix, dispatch, cmdCtx,
   chatHeight, onScrollUp, onScrollDown,
 }: InputAreaProps) {
   const { exit } = useApp();
   const [inputValue, setInputValue] = useState('');
   const [sel, setSel] = useState(0);
+  const [permSel, setPermSel] = useState(0); // 0=allow once  1=always  2=deny
   const [histIdx, setHistIdx] = useState(-1);
   const [savedDraft, setSavedDraft] = useState('');
   const [stash, setStash] = useState('');
   const [history] = useState<string[]>(() => loadHistory().map(h => h.text));
+  const prevPermPendingRef = useRef(false);
+  useEffect(() => {
+    const isPermNow = pending === 'permission';
+    if (!prevPermPendingRef.current && isPermNow) setPermSel(0);
+    prevPermPendingRef.current = isPermNow;
+  }, [pending]);
   const promptHistoryRef = useRef<string[]>([]);
   const historyIdxRef = useRef(-1);
   const inputRef = useRef('');
@@ -115,7 +123,12 @@ export const InputArea = React.memo(function InputArea({
   // Stable submit handler — deps are only the props/callbacks passed in
   const handleEnter = useCallback((text: string) => {
     if (helpOpen) return;
-    if (!text.trim() && pending === 'permission') { onPermAllow(); return; }
+    if (!text.trim() && pending === 'permission') {
+      if (permSel === 1) { onPermAlwaysAllow(); }
+      else if (permSel === 2) { onPermDeny('Permission denied.'); }
+      else { onPermAllow(); }
+      return;
+    }
     if (!text.trim() && pending === 'error') { onApplyFix(); return; }
 
     if (overlay === 'cmd') {
@@ -138,7 +151,7 @@ export const InputArea = React.memo(function InputArea({
 
     appendHistory(trimmed);
     onSubmit(trimmed);
-  }, [helpOpen, pending, overlay, cmdItems, clampedSel, onPermAllow, onApplyFix, completeFile, setInput, onSubmit]);
+  }, [helpOpen, pending, permSel, overlay, cmdItems, clampedSel, onPermAllow, onPermAlwaysAllow, onPermDeny, onApplyFix, completeFile, setInput, onSubmit]);
 
   useInput((input, key) => {
     if (helpOpen) {
@@ -209,6 +222,11 @@ export const InputArea = React.memo(function InputArea({
       return;
     }
 
+    if (pending === 'permission' && !inputRef.current) {
+      if (key.leftArrow)  { setPermSel(s => (s - 1 + 3) % 3); return; }
+      if (key.rightArrow) { setPermSel(s => (s + 1) % 3); return; }
+    }
+
     if (key.escape) {
       if (pending) { onPermDeny(pending === 'permission' ? 'Permission denied.' : 'Left as-is.'); return; }
       if (inputRef.current.length) { setInput(''); return; }
@@ -234,8 +252,11 @@ export const InputArea = React.memo(function InputArea({
     }
   });
 
+  const PERM_OPTS = ['allow once', 'always', 'deny'] as const;
+  const permPlaceholder = PERM_OPTS.map((o, i) => i === permSel ? `[${o}]` : o).join(' | ') + '  ← →  ⏎';
+
   const placeholder =
-    pending === 'permission' ? 'agent paused — ⏎ to allow, or type to redirect'
+    pending === 'permission' ? permPlaceholder
     : pending === 'error'    ? 'redirect, or ⏎ to accept the fix'
     : overlay === 'cmd'      ? 'filter commands…'
     : overlay === 'file'     ? 'filter files…'
