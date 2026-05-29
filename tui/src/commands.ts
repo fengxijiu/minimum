@@ -36,7 +36,7 @@ export const COMMANDS: TuiCommand[] = [
   // view
   { name: 'diff',   desc: 'Toggle inline diff blocks',      category: 'view' },
   { name: 'plan',   desc: 'Jump to the plan strip',         category: 'view' },
-  { name: 'mode',   desc: 'Switch agent / chat mode',       category: 'view', usage: '/mode <agent|chat>' },
+  { name: 'mode',   desc: 'Switch mode: agent / chat / orchestrate', category: 'view', usage: '/mode <agent|chat|orchestrate>' },
   { name: 'orchestrate', desc: 'Run a request through the W0–W4 pipeline', category: 'view', usage: '/orchestrate <request>', aliases: ['pipeline', 'orch'] },
   { name: 'clear',  desc: 'Clear the chat stream',          category: 'view', aliases: ['cls'] },
   { name: 'verbose', desc: 'Toggle verbose mode',           category: 'view', aliases: ['v'] },
@@ -203,9 +203,11 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
       };
 
     case 'mode': {
-      const target = args[0] === 'chat' || args[0] === 'agent'
-        ? args[0]
-        : state.mode === 'agent' ? 'chat' : 'agent';
+      const MODES = ['agent', 'chat', 'orchestrate'] as const;
+      type M = typeof MODES[number];
+      const target: M = (MODES as readonly string[]).includes(args[0] ?? '')
+        ? (args[0] as M)
+        : MODES[(MODES.indexOf(state.mode as M) + 1) % MODES.length]!;
       return { kind: 'patch', patch: { mode: target }, note: `Mode → ${target}.`, tone: 'ok' };
     }
 

@@ -373,6 +373,16 @@ export function App({
     if (!trimmed) return;
     if (st.pending) dispatch({ type: 'pending.clear' });
 
+    if (st.mode === 'orchestrate') {
+      if (!pipelineRunner) {
+        dispatch({ type: 'system.push', text: 'Pipeline runner unavailable (engine not built or no API key).', tone: 'warn' });
+        return;
+      }
+      dispatch({ type: 'user.submit', text: trimmed });
+      runTurn(pipelineRunner, trimmed, true);
+      return;
+    }
+
     dispatch({ type: 'user.submit', text: trimmed });
     runTurn(runner, trimmed, false);
   }, [runner, pipelineRunner, dispatch, allowPermission, applyFix, applyOutcome, cmdCtx, runTurn]);
@@ -417,6 +427,7 @@ export function App({
   const statusState: SessionState =
     sPending === 'permission' ? 'paused'
     : sPending === 'error' ? 'error'
+    : sMode === 'orchestrate' ? 'orchestrate'
     : sMode === 'agent' ? 'agent' : 'mimo';
 
   // ── Render: zone-based layout ───────────────────────────────────────

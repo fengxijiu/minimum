@@ -214,7 +214,9 @@ export const InputArea = React.memo(function InputArea({
     if (key.tab) {
       if (overlay === 'cmd' && cmdItems.length) { completeCommand(); return; }
       if (overlay === 'file' && fileItems.length) { completeFile(); return; }
-      dispatch({ type: 'mode.change', mode: mode === 'agent' ? 'chat' : 'agent' });
+      const MODES = ['agent', 'chat', 'orchestrate'] as const;
+      const next = MODES[(MODES.indexOf(mode as typeof MODES[number]) + 1) % MODES.length] ?? 'agent';
+      dispatch({ type: 'mode.change', mode: next });
       return;
     }
   });
@@ -224,6 +226,7 @@ export const InputArea = React.memo(function InputArea({
     : pending === 'error'    ? 'redirect, or ⏎ to accept the fix'
     : overlay === 'cmd'      ? 'filter commands…'
     : overlay === 'file'     ? 'filter files…'
+    : mode === 'orchestrate' ? 'describe task for W0–W4 pipeline…'
     : liveInput === '' && !hasMessages ? 'how can I help?'
     : 'ask, steer, /cmd, @file…  (? for help)';
 

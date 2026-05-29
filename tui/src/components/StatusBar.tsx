@@ -5,10 +5,11 @@ import { TokenMeter } from './atoms.js';
 import type { ApprovalMode, EditMode, SessionState, UsageInfo } from '../types.js';
 
 const PILL: Record<SessionState, { label: string; color: string }> = {
-  agent:  { label: 'agent',  color: theme.accent },
-  mimo:   { label: 'mimo',   color: theme.accent },
-  paused: { label: 'paused', color: theme.warn },
-  error:  { label: 'error',  color: theme.danger },
+  agent:       { label: 'agent',       color: theme.accent },
+  mimo:        { label: 'mimo',        color: theme.accent },
+  orchestrate: { label: 'orchestrate', color: theme.accent2 },
+  paused:      { label: 'paused',      color: theme.warn },
+  error:       { label: 'error',       color: theme.danger },
 };
 
 const MODE_BADGE: Record<ApprovalMode, { label: string; color: string }> = {

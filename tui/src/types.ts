@@ -1,4 +1,4 @@
-export type Mode = 'chat' | 'agent';
+export type Mode = 'chat' | 'agent' | 'orchestrate';
 
 export type ToolKind = 'read' | 'edit' | 'run' | 'find';
 export type ToolCall = {
@@ -40,7 +40,7 @@ export type Message =
   | { id: string; type: 'permission'; perm: Permission }
   | { id: string; type: 'error'; error: ErrorReport };
 
-export type SessionState = 'agent' | 'mimo' | 'paused' | 'error';
+export type SessionState = 'agent' | 'mimo' | 'orchestrate' | 'paused' | 'error';
 
 export type ApprovalMode = 'read-only' | 'auto-edit' | 'full-auto';
 
