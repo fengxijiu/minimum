@@ -1,4 +1,4 @@
-import React, { useMemo, type ReactNode } from 'react';
+import React, { useMemo, useState, useEffect, type ReactNode } from 'react';
 import { Box, Static, Text } from 'ink';
 import { theme } from '../theme.js';
 import type { Message, ToolProgress as ToolProgressType } from '../types.js';
@@ -131,19 +131,30 @@ function parseSepAligns(line: string): TableAlign[] {
   });
 }
 
-function buildTableData(tableLines: string[]): TableData | null {
+function buildTableData(tableLines: string[], availCols?: number): TableData | null {
   if (tableLines.length < 2) return null;
   if (!isSepRow(tableLines[1]!)) return null;
   const headers = splitTableRow(tableLines[0]!).slice(0, MAX_TABLE_COLS);
   const aligns  = parseSepAligns(tableLines[1]!).slice(0, headers.length);
   const rows    = tableLines.slice(2).map(l => splitTableRow(l).slice(0, headers.length));
-  const colWidths = headers.map((h, ci) => {
+  let colWidths = headers.map((h, ci) => {
     const hLen = stripMd(h).length;
     const maxD = rows.reduce((mx, row) => Math.max(mx, stripMd(row[ci] ?? '').length), 0);
     return Math.min(MAX_COL_WIDTH, Math.max(hLen, maxD, 1));
   });
   // Pad aligns to match column count
   while (aligns.length < headers.length) aligns.push('l');
+  // Scale down proportionally if total table width exceeds available terminal columns.
+  if (availCols && availCols > 0) {
+    const totalWidth = colWidths.reduce((s, w) => s + w + 3, 1);
+    if (totalWidth > availCols) {
+      const budget = Math.max(colWidths.length * 3, availCols - 1 - colWidths.length * 3);
+      const sum = colWidths.reduce((s, w) => s + w, 0);
+      if (sum > 0) {
+        colWidths = colWidths.map(w => Math.max(3, Math.floor(w * budget / sum)));
+      }
+    }
+  }
   return { headers, aligns, rows, colWidths };
 }
 
@@ -202,7 +213,7 @@ function MdTable({ data, color }: { data: TableData; color?: string }) {
   );
 }
 
-function parseBlocks(raw: string): MdBlock[] {
+function parseBlocks(raw: string, cols?: number): MdBlock[] {
   const out: MdBlock[] = [];
   const lines = raw.split('\n');
   let i = 0;
@@ -244,7 +255,7 @@ function parseBlocks(raw: string): MdBlock[] {
         tableLines.push(lines[i]!);
         i++;
       }
-      const data = buildTableData(tableLines);
+      const data = buildTableData(tableLines, cols);
       if (data) { out.push({ k: 'table', data }); continue; }
       i = start; // backtrack if parse failed
     }
@@ -256,8 +267,8 @@ function parseBlocks(raw: string): MdBlock[] {
   return out;
 }
 
-function MarkdownBlock({ text, color }: { text: string; color?: string }) {
-  const blocks = useMemo(() => parseBlocks(text), [text]);
+function MarkdownBlock({ text, color, cols }: { text: string; color?: string; cols?: number }) {
+  const blocks = useMemo(() => parseBlocks(text, cols), [text, cols]);
   return (
     <Box flexDirection="column">
       {blocks.map((b, i) => {
@@ -377,14 +388,24 @@ function TurnMetaRule({ summary, cols }: { summary: string; cols: number }) {
   );
 }
 
-function ReasoningRow({ text, verbose }: { text: string; verbose?: boolean }) {
+const SPINNER = '⠋⠙⠹⠸⠼⠴⠦⠧';
+
+function ReasoningRow({ text, verbose, spinning }: { text: string; verbose?: boolean; spinning?: boolean }) {
+  const [frame, setFrame] = useState(0);
+  useEffect(() => {
+    if (!spinning) return;
+    const timer = setInterval(() => setFrame(f => (f + 1) % SPINNER.length), 80);
+    return () => clearInterval(timer);
+  }, [spinning]);
+
   const lines = text.split('\n').filter(l => l.trim() !== '');
   const tail = verbose ? lines.slice(-6) : lines.slice(-1);
+  const icon = spinning ? (SPINNER[frame % SPINNER.length] ?? '◇') : '◇';
   return (
     <Box flexDirection="column" marginTop={1}>
       <Box paddingLeft={2}>
-        <Text color={theme.accent2}>◇ </Text>
-        <Text color={theme.muted}>thinking · {lines.length} line{lines.length === 1 ? '' : 's'}{verbose ? '' : '  (verbose to expand)'}</Text>
+        <Text color={theme.accent2}>{icon} </Text>
+        <Text color={theme.muted}>thinking · {lines.length} line{lines.length === 1 ? '' : 's'}{verbose ? '' : '  (ctrl+r to expand)'}</Text>
       </Box>
       {tail.map((l, i) => (
         <Box key={i} paddingLeft={4}>
@@ -462,7 +483,7 @@ const MessageRow = React.memo(function MessageRow({ msg, cols, verbose }: {
           <RoleGutter role="mimo" />
           <Box flexDirection="column" flexGrow={1}>
             <RoleLabel role="mimo" />
-            <MarkdownBlock text={msg.text} color={theme.ink} />
+            <MarkdownBlock text={msg.text} color={theme.ink} cols={cols} />
           </Box>
         </Box>
       );
@@ -470,6 +491,7 @@ const MessageRow = React.memo(function MessageRow({ msg, cols, verbose }: {
     case 'system': {
       const c = msg.tone === 'warn' ? theme.warn
               : msg.tone === 'ok'   ? theme.plus
+              : msg.tone === 'info' ? theme.accent
               : theme.muted;
       return (
         <Box marginTop={1} paddingLeft={3}>
@@ -605,45 +627,40 @@ export const ChatStream = React.memo(function ChatStream({
 
       {/* ── live streaming frame ────────────────────────────────────── */}
       {hasLive ? (
-        <Box
-          flexDirection="column"
-          borderStyle="single"
-          borderColor={theme.line}
-          paddingX={1}
-          marginTop={1}
-        >
-          {stepLabel ? (
-            <Box marginBottom={1}>
+        <Box flexDirection="row" marginTop={1}>
+          <Text color={theme.line}>▎ </Text>
+          <Box flexDirection="column" flexGrow={1}>
+            {stepLabel ? (
               <Text color={theme.muted}>{stepLabel}</Text>
-            </Box>
-          ) : null}
+            ) : null}
 
-          {activeTool ? (
-            <Box paddingLeft={1}>
-              <Text color={
-                activeTool.status === 'err' ? theme.danger
-                : activeTool.status === 'ok' ? theme.plus
-                : theme.accent
-              }>
-                {activeTool.status === 'running' ? '⟳' : activeTool.status === 'ok' ? '✓' : '✗'}{' '}
-              </Text>
-              <Text color={theme.ink} bold>{activeTool.name} </Text>
-              <Text color={theme.inkSoft}>{activeTool.args}</Text>
-            </Box>
-          ) : null}
-
-          {reasoning ? <ReasoningRow text={reasoning} verbose={verbose} /> : null}
-
-          {streamViewport ? (
-            <Box marginTop={1}>
-              <RoleGutter role="mimo" />
-              <Box flexDirection="column" flexGrow={1}>
-                <RoleLabel role="mimo" />
-                <MarkdownBlock text={streamViewport} color={theme.inkSoft} />
-                <Text color={theme.muted}>▍</Text>
+            {activeTool ? (
+              <Box>
+                <Text color={
+                  activeTool.status === 'err' ? theme.danger
+                  : activeTool.status === 'ok' ? theme.plus
+                  : theme.accent
+                }>
+                  {activeTool.status === 'running' ? '⟳' : activeTool.status === 'ok' ? '✓' : '✗'}{' '}
+                </Text>
+                <Text color={theme.ink} bold>{activeTool.name} </Text>
+                <Text color={theme.inkSoft}>{activeTool.args}</Text>
               </Box>
-            </Box>
-          ) : null}
+            ) : null}
+
+            {reasoning ? <ReasoningRow text={reasoning} verbose={verbose} spinning={!!streamText} /> : null}
+
+            {streamViewport ? (
+              <Box marginTop={(activeTool || reasoning) ? 1 : 0}>
+                <RoleGutter role="mimo" />
+                <Box flexDirection="column" flexGrow={1}>
+                  <RoleLabel role="mimo" />
+                  <MarkdownBlock text={streamViewport} color={theme.inkSoft} cols={cols} />
+                  <Text color={theme.muted}>▍</Text>
+                </Box>
+              </Box>
+            ) : null}
+          </Box>
         </Box>
       ) : null}
     </Box>

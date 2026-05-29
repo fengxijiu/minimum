@@ -131,6 +131,8 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
         activeTool: activeMatches
           ? { ...state.activeTool!, status, meta: event.meta }
           : state.activeTool,
+        // Advance the settled prefix now that this tool's status is set.
+        committedCount: settledPrefix(messages, state.committedCount),
       };
     }
 

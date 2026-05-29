@@ -160,11 +160,13 @@ export function App({
   const reasoningBufferRef = useRef('');
   const chunkFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chunkLastFlushRef = useRef(0);
+  const chunkCountRef = useRef(0);
   const flushChunks = useCallback(() => {
     if (chunkFlushTimerRef.current) {
       clearTimeout(chunkFlushTimerRef.current);
       chunkFlushTimerRef.current = null;
     }
+    chunkCountRef.current = 0;
     if (chunkBufferRef.current) {
       dispatch({ type: 'assistant.chunk', text: chunkBufferRef.current });
       chunkBufferRef.current = '';
@@ -178,7 +180,7 @@ export function App({
   const scheduleChunkFlush = useCallback(() => {
     if (chunkFlushTimerRef.current) return;
     const elapsed = Date.now() - chunkLastFlushRef.current;
-    const delay = Math.max(0, 120 - elapsed);
+    const delay = Math.max(0, 40 - elapsed);
     chunkFlushTimerRef.current = setTimeout(flushChunks, delay);
   }, [flushChunks]);
   const startChunkFlusher = useCallback(() => {
@@ -414,7 +416,12 @@ export function App({
           }
           if (ev.kind === 'streaming') {
             chunkBufferRef.current += ev.text;
-            scheduleChunkFlush();
+            chunkCountRef.current++;
+            if (chunkCountRef.current >= 8) {
+              flushChunks();
+            } else {
+              scheduleChunkFlush();
+            }
             continue;
           }
           const msgs = uiEventToMessages(ev);
@@ -594,7 +601,7 @@ export function App({
         header={
           <Box flexDirection="column">
             <TitleZone path={sPath} branch={sBranch} mode={titleMode} />
-            <WelcomeScreen path={sPath} engine={engineInfo} />
+            {!sHasMessages && <WelcomeScreen path={sPath} engine={engineInfo} />}
           </Box>
         }
       />
