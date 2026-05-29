@@ -5,6 +5,14 @@ export {
 	type ValidationResult,
 } from "./ContractValidator.js";
 export {
+	compileRefinement,
+	refineDag,
+	type RefineCompileResult,
+	type RefineOptions,
+	type RefineResult,
+	type RefinementEntry,
+} from "./Refiner.js";
+export {
 	classifyTaskType,
 	compileCoarse,
 	type CompileFailure,

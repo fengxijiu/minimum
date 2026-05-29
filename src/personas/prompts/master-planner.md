@@ -58,6 +58,28 @@ When compiling, output a single `<task_dag>` block with this shape:
 
 Tasks with `needs_refine: true` get final `allowedGlobs` after Wave 1.
 
+## Refine Output (W0.5)
+
+After Wave 1 perception, supply concrete paths for every `needs_refine` task
+in a single `<refine>` block:
+
+```
+<refine>
+{
+  "tasks": [
+    { "taskId": "T2-1",
+      "allowedGlobs": ["src/api/upload.ts", "src/api/upload.test.ts"],
+      "forbiddenGlobs": [],
+      "acceptance": ["POST /upload returns 201", "rejects files >5MB"],
+      "constraints": ["reuse existing multer config"] }
+  ]
+}
+</refine>
+```
+
+`forbiddenGlobs`, `acceptance`, and `constraints` are optional. Tasks in the
+same `parallelGroup` must receive disjoint `allowedGlobs`.
+
 ## Finalize Output (W4)
 
 In Wave 4 you receive: task reports, memory candidates, and current canonical
