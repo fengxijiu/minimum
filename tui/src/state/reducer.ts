@@ -91,18 +91,23 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
       return changed ? { ...state, messages } : state;
     }
 
-    case 'tool.end':
+    case 'tool.end': {
+      let changed = false;
+      const messages = state.messages.map(m => {
+        if (m.id !== event.id || m.type !== 'tool') return m;
+        changed = true;
+        return { ...m, tool: { ...m.tool, status: event.ok ? 'ok' : 'err', meta: event.meta ?? m.tool.meta, output: event.output ?? m.tool.output } };
+      });
+      const activeMatches = state.activeTool?.id === event.id;
+      if (!changed && !activeMatches) return state;
       return {
         ...state,
-        messages: state.messages.map(m =>
-          m.id === event.id && m.type === 'tool'
-            ? { ...m, tool: { ...m.tool, status: event.ok ? 'ok' : 'err', meta: event.meta ?? m.tool.meta, output: event.output ?? m.tool.output } }
-            : m
-        ),
-        activeTool: state.activeTool?.id === event.id
-          ? { ...state.activeTool, status: event.ok ? 'ok' : 'err', meta: event.meta }
+        messages,
+        activeTool: activeMatches
+          ? { ...state.activeTool!, status: event.ok ? 'ok' : 'err', meta: event.meta }
           : state.activeTool,
       };
+    }
 
     case 'reasoning.chunk':
       return { ...state, reasoning: (state.reasoning ?? '') + event.text };
@@ -278,7 +283,7 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
       return { ...state, turnInProgress: true, streaming: '', reasoning: null };
 
     case 'turn.end':
-      if (!state.turnInProgress && state.streaming === null && state.activeTool === null) return state;
+      if (!state.turnInProgress && state.streaming === null && state.reasoning === null && state.activeTool === null) return state;
       return {
         ...state,
         turnInProgress: false,
