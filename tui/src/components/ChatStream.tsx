@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Box, Text, useStdout } from 'ink';
 import { theme } from '../theme.js';
 import type { Message } from '../types.js';
 import { ToolLine, DiffBlock, ChipsRow, PermissionCard, ErrorBlock } from './atoms.js';
+import { MarkdownText } from './MarkdownText.js';
 
 /** Memoized single message renderer — avoids re-rendering unchanged messages. */
 const MessageRow = React.memo(function MessageRow({ msg }: { msg: Message }) {
@@ -16,9 +17,9 @@ const MessageRow = React.memo(function MessageRow({ msg }: { msg: Message }) {
       );
     case 'assistant':
       return (
-        <Box marginTop={1}>
+        <Box marginTop={1} flexDirection="row">
           <Text color={theme.ink} bold>◆  </Text>
-          <Text color={theme.ink}>{msg.text}</Text>
+          <MarkdownText text={msg.text} />
         </Box>
       );
     case 'system': {
@@ -57,7 +58,10 @@ export const ChatStream = React.memo(function ChatStream({ stepLabel, messages, 
   const rows = stdout?.rows ?? 40;
   const maxVisible = Math.max(6, rows - 14);
   const clipped = Math.max(0, messages.length - maxVisible);
-  const visible = clipped > 0 ? messages.slice(-maxVisible) : messages;
+  const visible = useMemo(
+    () => (clipped > 0 ? messages.slice(-maxVisible) : messages),
+    [clipped, maxVisible, messages],
+  );
 
   return (
     <Box
@@ -81,9 +85,9 @@ export const ChatStream = React.memo(function ChatStream({ stepLabel, messages, 
       {visible.map(m => <MessageRow key={m.id} msg={m} />)}
 
       {streaming ? (
-        <Box marginTop={1}>
+        <Box marginTop={1} flexDirection="row">
           <Text color={theme.ink} bold>◆  </Text>
-          <Text color={theme.inkSoft}>{streaming}</Text>
+          <MarkdownText text={streaming} soft />
           <Text color={theme.muted}>▍</Text>
         </Box>
       ) : null}
