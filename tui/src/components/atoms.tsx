@@ -125,3 +125,31 @@ export const TokenMeter = React.memo(function TokenMeter({ used, max }: { used: 
     </Text>
   );
 });
+
+/** Render text with certain character positions highlighted (bold + matchColor). */
+export const HighlightText = React.memo(function HighlightText({
+  text, positions, color, matchColor,
+}: {
+  text: string;
+  positions: number[];
+  color: string;
+  matchColor: string;
+}) {
+  if (!positions.length) return <Text color={color}>{text}</Text>;
+  const posSet = new Set(positions);
+  type Seg = { t: string; hi: boolean };
+  const segs: Seg[] = [];
+  for (let i = 0; i < text.length; i++) {
+    const hi = posSet.has(i);
+    const last = segs[segs.length - 1];
+    if (last && last.hi === hi) last.t += text[i];
+    else segs.push({ t: text[i]!, hi });
+  }
+  return (
+    <Text>
+      {segs.map((s, i) => (
+        <Text key={i} color={s.hi ? matchColor : color} bold={s.hi}>{s.t}</Text>
+      ))}
+    </Text>
+  );
+});

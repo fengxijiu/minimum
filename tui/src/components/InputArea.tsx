@@ -4,7 +4,7 @@ import { CommandPalette } from './CommandPalette.js';
 import { FilePicker } from './FilePicker.js';
 import { HelpOverlay } from './HelpOverlay.js';
 import { Prompt } from './Prompt.js';
-import { filterCommands, type CommandContext } from '../commands.js';
+import { filterCommands, filterFiles, type CommandContext, type CmdMatch, type FileMatch } from '../commands.js';
 import { loadHistory, appendHistory } from '../inputHistory.js';
 import type { FileEntry, PendingState, Mode, EditMode } from '../types.js';
 import type { Dispatch } from '../state/store.js';
@@ -56,26 +56,25 @@ export const InputArea = React.memo(function InputArea({
   }, [liveInput]);
   const overlay: Overlay = liveInput.startsWith('/') ? 'cmd' : atToken !== null ? 'file' : 'none';
 
-  const cmdItems = useMemo(
+  const cmdItems = useMemo<CmdMatch[]>(
     () => (overlay === 'cmd' ? filterCommands(liveInput) : []),
     [overlay, liveInput],
   );
-  const fileItems = useMemo<FileEntry[]>(() => {
-    if (overlay !== 'file') return [];
-    const q = (atToken ?? '').toLowerCase();
-    return files.filter(f => f.name.toLowerCase().includes(q));
-  }, [overlay, atToken, files]);
+  const fileItems = useMemo<FileMatch[]>(
+    () => (overlay === 'file' ? filterFiles(files, atToken ?? '') : []),
+    [overlay, atToken, files],
+  );
 
   const itemCount = overlay === 'cmd' ? cmdItems.length : overlay === 'file' ? fileItems.length : 0;
   const clampedSel = itemCount ? Math.min(sel, itemCount - 1) : 0;
 
   const completeCommand = useCallback(() => {
-    const c = cmdItems[clampedSel];
+    const c = cmdItems[clampedSel]?.cmd;
     if (c) setInput('/' + c.name + ' ');
   }, [cmdItems, clampedSel, setInput]);
 
   const completeFile = useCallback(() => {
-    const f = fileItems[clampedSel];
+    const f = fileItems[clampedSel]?.file;
     if (!f) return;
     const next = inputRef.current.replace(/(?:^|\s)@[^\s]*$/, (m) =>
       (m.startsWith(' ') ? ' ' : '') + '@' + f.name + ' ');
@@ -116,7 +115,7 @@ export const InputArea = React.memo(function InputArea({
     if (!text.trim() && pending === 'error') { onApplyFix(); return; }
 
     if (overlay === 'cmd') {
-      const c = cmdItems[clampedSel];
+      const c = cmdItems[clampedSel]?.cmd;
       const resolved = c ? '/' + c.name + ' ' + text.replace(/^\/\S*\s*/, '') : text;
       setInput('');
       onSubmit(resolved);

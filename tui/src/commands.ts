@@ -1,4 +1,4 @@
-import type { AppState, ApprovalMode, Message, PlanStep, Permission } from './types.js';
+import type { AppState, ApprovalMode, Message, PlanStep, Permission, FileEntry } from './types.js';
 
 export interface CommandContext {
   model?: string;
@@ -60,18 +60,97 @@ for (const c of COMMANDS) {
   for (const a of c.aliases ?? []) NAME_INDEX.set(a, c);
 }
 
-/** Fuzzy-ish prefix filter for the palette. Empty query → all commands. */
-export function filterCommands(query: string): TuiCommand[] {
-  const q = query.replace(/^\//, '').trim().toLowerCase();
-  if (!q) return COMMANDS;
-  const starts: TuiCommand[] = [];
-  const contains: TuiCommand[] = [];
-  for (const c of COMMANDS) {
-    const hay = [c.name, ...(c.aliases ?? [])];
-    if (hay.some(h => h.startsWith(q))) starts.push(c);
-    else if (c.name.includes(q) || c.desc.toLowerCase().includes(q)) contains.push(c);
+// ── Fuzzy matching ────────────────────────────────────────────────────
+
+function fuzzyMatch(text: string, query: string): { score: number; positions: number[] } | null {
+  if (!query) return { score: 0, positions: [] };
+  const t = text.toLowerCase();
+  const q = query.toLowerCase();
+
+  if (t === q) return { score: 100, positions: Array.from({ length: t.length }, (_, i) => i) };
+  if (t.startsWith(q)) return { score: 90, positions: Array.from({ length: q.length }, (_, i) => i) };
+
+  const ci = t.indexOf(q);
+  if (ci >= 0) return { score: 70, positions: Array.from({ length: q.length }, (_, i) => ci + i) };
+
+  // subsequence
+  const positions: number[] = [];
+  let qi = 0;
+  for (let ti = 0; ti < t.length && qi < q.length; ti++) {
+    if (t[ti] === q[qi]) { positions.push(ti); qi++; }
   }
-  return [...starts, ...contains];
+  return qi === q.length ? { score: 40 + q.length, positions } : null;
+}
+
+export interface CmdMatch {
+  cmd: TuiCommand;
+  nameMatches: number[];
+  descMatches: number[];
+}
+
+export interface FileMatch {
+  file: FileEntry;
+  nameMatches: number[];
+}
+
+/** Fuzzy filter for the command palette. Empty query → all commands. */
+export function filterCommands(query: string): CmdMatch[] {
+  const q = query.replace(/^\//, '').trim().toLowerCase();
+  if (!q) return COMMANDS.map(cmd => ({ cmd, nameMatches: [], descMatches: [] }));
+
+  const results: Array<{ match: CmdMatch; score: number }> = [];
+  for (const cmd of COMMANDS) {
+    const nm = fuzzyMatch(cmd.name, q);
+    if (nm) {
+      results.push({ match: { cmd, nameMatches: nm.positions, descMatches: [] }, score: nm.score });
+      continue;
+    }
+    // try aliases
+    let aliasScore = 0;
+    for (const a of cmd.aliases ?? []) {
+      const am = fuzzyMatch(a, q);
+      if (am && am.score > aliasScore) aliasScore = am.score;
+    }
+    if (aliasScore > 0) {
+      results.push({ match: { cmd, nameMatches: [], descMatches: [] }, score: aliasScore - 5 });
+      continue;
+    }
+    // fall back to description
+    const dm = fuzzyMatch(cmd.desc, q);
+    if (dm) {
+      results.push({ match: { cmd, nameMatches: [], descMatches: dm.positions }, score: dm.score - 20 });
+    }
+  }
+  results.sort((a, b) => b.score - a.score);
+  return results.map(r => r.match);
+}
+
+/** Fuzzy filter for the file picker. Prioritises basename over full path. */
+export function filterFiles(files: FileEntry[], query: string): FileMatch[] {
+  if (!query) return files.map(file => ({ file, nameMatches: [] }));
+  const q = query.toLowerCase();
+  const results: Array<{ match: FileMatch; score: number }> = [];
+
+  for (const file of files) {
+    const slashIdx = file.name.lastIndexOf('/');
+    const baseName = slashIdx >= 0 ? file.name.slice(slashIdx + 1) : file.name;
+    const offset = slashIdx + 1; // 0 when no slash
+
+    const bm = fuzzyMatch(baseName.toLowerCase(), q);
+    if (bm) {
+      results.push({
+        match: { file, nameMatches: bm.positions.map(p => p + offset) },
+        score: bm.score + 10,
+      });
+      continue;
+    }
+    const fm = fuzzyMatch(file.name.toLowerCase(), q);
+    if (fm) {
+      results.push({ match: { file, nameMatches: fm.positions }, score: fm.score });
+    }
+  }
+  results.sort((a, b) => b.score - a.score);
+  return results.map(r => r.match);
 }
 
 export type CommandOutcome =
