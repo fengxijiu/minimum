@@ -145,7 +145,7 @@ function estimateItemHeight(item: RenderItem, cols: number): number {
         acc + Math.max(1, Math.ceil(l.length / w)), 0);
       return 2 + lines;
     }
-    case 'system':     return 1;
+    case 'system':     return 2; // <Box marginTop={1}> + 1 content row
     case 'tool':       return 1;
     case 'turnmeta':   return 2;
     case 'error':      return 3 + Math.min(6, msg.error.lines?.length ?? 0);
