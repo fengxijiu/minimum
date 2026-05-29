@@ -133,7 +133,13 @@ export async function createEngineRunner(
     // 凭证优先级：env > 项目配置 > ~/.minimum/config.json
     const userConfig = await eng.loadMiMoConfig(workingDirectory);
     const apiKey = process.env.MIMO_API_KEY || userConfig.apiKey;
-    const baseUrl = process.env.MIMO_BASE_URL || userConfig.baseUrl;
+    // Explicit URL (env or config) wins; otherwise auto-select by key prefix:
+    // "tp-" → Token Plan CN endpoint, "sk-" → standard pay-as-you-go endpoint.
+    const explicitBaseUrl = process.env.MIMO_BASE_URL || userConfig.baseUrl;
+    const baseUrl: string = explicitBaseUrl
+      || (apiKey?.startsWith('tp-')
+          ? 'https://token-plan-cn.xiaomimimo.com/v1'
+          : 'https://api.xiaomimimo.com/v1');
     const configPath = eng.getGlobalConfigPath?.() ?? path.join(process.env.HOME ?? os.homedir() ?? '~', '.minimum', 'config.json');
     if (!apiKey) {
       return { runner: mockRunner, info: { ...fallbackInfo('no-api-key'), configPath } };

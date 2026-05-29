@@ -13,7 +13,7 @@ export * from "./iteration/index.js";
 export * from "./loop/index.js";
 
 // Clients
-export { MiMoClient } from "./clients/MiMoClient.js";
+export { MiMoClient, resolveBaseUrl } from "./clients/MiMoClient.js";
 export type {
 	MiMoClientOptions,
 	ChatOptions,

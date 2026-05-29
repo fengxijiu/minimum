@@ -115,11 +115,17 @@ node bin/minimum.js
 export MIMO_API_KEY=your_key_here
 ```
 
-Token Plan 用户：
+Token Plan 用户（`tp-` 开头的 key 会自动选择 Token Plan 端点，无需额外设置）：
 
 ```bash
 export MIMO_API_KEY=tp-your_key_here
-export MIMO_BASE_URL=https://token-plan-cn.xiaomimimo.com/v1
+```
+
+如需指定其他区域（新加坡 / 欧洲）：
+
+```bash
+export MIMO_BASE_URL=https://token-plan-sgp.xiaomimimo.com/v1  # 新加坡
+export MIMO_BASE_URL=https://token-plan-ams.xiaomimimo.com/v1  # 欧洲
 ```
 
 也可写入项目配置 `opencode.json` 或全局配置 `~/.minimum/config.json`：

@@ -51,6 +51,12 @@ function fromOpenCode(raw: any): MiMoConfig {
 	if (min.defaultModel) cfg.defaultModel = String(min.defaultModel);
 	if (min.approval?.mode) cfg.approvalMode = min.approval.mode;
 
+	// When apiType is "token-plan" and no explicit baseUrl was found above,
+	// auto-select the Token Plan CN endpoint so users don't need MIMO_BASE_URL.
+	if (min.apiType === "token-plan" && !cfg.baseUrl) {
+		cfg.baseUrl = "https://token-plan-cn.xiaomimimo.com/v1";
+	}
+
 	const opt = min.optimization ?? {};
 	if (opt.validation !== undefined)
 		cfg.validation = { enabled: !!opt.validation };

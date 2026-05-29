@@ -1,4 +1,4 @@
-export { MiMoClient } from "./MiMoClient.js";
+export { MiMoClient, resolveBaseUrl } from "./MiMoClient.js";
 export type {
 	MiMoClientOptions,
 	ChatOptions,
