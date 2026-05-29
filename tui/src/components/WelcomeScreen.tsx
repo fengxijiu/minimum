@@ -25,7 +25,6 @@ export const WelcomeScreen = React.memo(function WelcomeScreen({ path = '~', eng
   return (
     <Box
       flexDirection="column"
-      flexGrow={1}
       borderStyle="single"
       borderColor={theme.line}
       paddingX={2}

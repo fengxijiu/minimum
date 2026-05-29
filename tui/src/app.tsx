@@ -71,29 +71,27 @@ const PipelineZone = React.memo(function PipelineZone({ phases }: {
 
 /** ChatStream zone — only re-renders on messages/stepLabel/activeTool/streaming changes. */
 const ChatZone = React.memo(function ChatZone({
-  messages, committedCount, path, engineInfo, stepLabel, activeTool, helpOpen,
+  messages, committedCount, stepLabel, activeTool,
   streaming, reasoning, verbose, cols, header,
 }: {
-  messages: Message[]; committedCount: number; path: string; engineInfo: EngineInfo;
-  stepLabel: string; activeTool: AppState['activeTool']; helpOpen: boolean;
+  messages: Message[]; committedCount: number;
+  stepLabel: string; activeTool: AppState['activeTool'];
   streaming?: string | null; reasoning?: string | null; verbose?: boolean;
   cols: number; header: React.ReactNode;
 }) {
-  const hasConversation = messages.some(m => m.type !== 'system');
-  const showWelcome = !hasConversation && !helpOpen;
-  return showWelcome
-    ? <WelcomeScreen path={path} engine={engineInfo} />
-    : <ChatStream
-        stepLabel={stepLabel}
-        messages={messages}
-        committedCount={committedCount}
-        streaming={streaming}
-        reasoning={reasoning}
-        activeTool={activeTool}
-        verbose={verbose}
-        cols={cols}
-        header={header}
-      />;
+  return (
+    <ChatStream
+      stepLabel={stepLabel}
+      messages={messages}
+      committedCount={committedCount}
+      streaming={streaming}
+      reasoning={reasoning}
+      activeTool={activeTool}
+      verbose={verbose}
+      cols={cols}
+      header={header}
+    />
+  );
 });
 
 /** StatusBar zone — only re-renders on status/usage changes. */
@@ -521,6 +519,19 @@ export function App({
     [sMessages],
   );
 
+  // ── Keep the live (repainting) region minimal ───────────────────────
+  // Commit settled messages into the <Static> scrollback as soon as the
+  // turn is idle. Without this the dynamic region can grow tall enough
+  // that Ink falls back to clearing + reprinting the whole screen on every
+  // render — visible as the top of the transcript re-rendering on each
+  // keystroke. Gating on streaming/reasoning/activeTool guarantees we never
+  // freeze a still-mutating tool row into Static (tool.end mutates by id).
+  useEffect(() => {
+    if (!sStreaming && !sReasoning && !sActiveTool && !sPending && sCommittedCount < sMessages.length) {
+      dispatch({ type: 'messages.commit' });
+    }
+  }, [sStreaming, sReasoning, sActiveTool, sPending, sCommittedCount, sMessages, dispatch]);
+
   // ── Text-wrap width for dividers / turn-meta rules ──────────────────
   // No sidebar any more: the chat uses (nearly) the full terminal width.
   const chatCols = Math.max(40, termCols - 2);
@@ -544,16 +555,18 @@ export function App({
       <ChatZone
         messages={sMessages}
         committedCount={sCommittedCount}
-        path={sPath}
-        engineInfo={engineInfo}
         stepLabel={sStepLabel}
         activeTool={sActiveTool}
-        helpOpen={sHelpOpen}
         streaming={sStreaming}
         reasoning={sReasoning}
         verbose={sVerbose}
         cols={chatCols}
-        header={<TitleZone path={sPath} branch={sBranch} mode={titleMode} />}
+        header={
+          <Box flexDirection="column">
+            <TitleZone path={sPath} branch={sBranch} mode={titleMode} />
+            <WelcomeScreen path={sPath} engine={engineInfo} />
+          </Box>
+        }
       />
 
       <PlanZone title={sPlanTitle} steps={sPlanSteps} />
