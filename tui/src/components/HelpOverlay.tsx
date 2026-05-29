@@ -6,7 +6,7 @@ import { COMMANDS, type CommandCategory } from '../commands.js';
 const KEYS: Array<[string, string]> = [
   ['/', 'command palette'],
   ['@', 'file picker'],
-  ['tab', 'toggle agent / chat'],
+  ['tab', 'cycle mode (agent/chat/orch)'],
   ['↑ ↓', 'navigate palette'],
   ['⏎', 'run / send'],
   ['esc', 'close overlay / quit'],

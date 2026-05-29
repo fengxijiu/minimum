@@ -14,7 +14,7 @@ import { createInitialState } from './seed.js';
 import {
   runCommand, type CommandOutcome, type CommandContext,
 } from './commands.js';
-import { mockRunner, uiEventToMessages, type Runner, type EngineInfo, type UiPlanStatus } from './engine.js';
+import { mockRunner, uiEventToMessages, summarizeTool, summarizeToolResult, describePermissionArgs, type Runner, type EngineInfo, type UiPlanStatus } from './engine.js';
 import { scanFiles, readBranch, touch } from './files.js';
 import { useAgentStore, useSlice, type Dispatch } from './state/store.js';
 import type { AppState, Message, FileEntry, SessionState, Chip, PlanStep, PendingState, ApprovalMode, EditMode, UsageInfo, Mode, StagedEdit } from './types.js';
@@ -78,11 +78,11 @@ const ContextZone = React.memo(function ContextZone({ files, edits, mode }: {
   return <ContextRail files={files} edits={edits} mode={mode} />;
 });
 
-/** ChatStream zone — only re-renders on messages/stepLabel/activeTool/streaming changes. */
-const ChatZone = React.memo(function ChatZone({ messages, path, engineInfo, stepLabel, activeTool, helpOpen, streaming }: {
-  messages: Message[]; path: string; engineInfo: EngineInfo;
+/** ChatStream zone — only re-renders on messages/stepLabel/activeTool/streaming/committedCount changes. */
+const ChatZone = React.memo(function ChatZone({ messages, committedCount, path, engineInfo, stepLabel, activeTool, helpOpen, streaming, reasoning, verbose }: {
+  messages: Message[]; committedCount: number; path: string; engineInfo: EngineInfo;
   stepLabel: string; activeTool: AppState['activeTool']; helpOpen: boolean;
-  streaming?: string | null;
+  streaming?: string | null; reasoning?: string | null; verbose?: boolean;
 }) {
   const hasConversation = messages.some(m => m.type !== 'system');
   const showWelcome = !hasConversation && !helpOpen;
@@ -90,7 +90,7 @@ const ChatZone = React.memo(function ChatZone({ messages, path, engineInfo, step
     <>
       {showWelcome
         ? <WelcomeScreen path={path} engine={engineInfo} />
-        : <ChatStream stepLabel={stepLabel} messages={messages} streaming={streaming} />}
+        : <ChatStream stepLabel={stepLabel} messages={messages} committedCount={committedCount} streaming={streaming} reasoning={reasoning} verbose={verbose} />}
       {activeTool ? <ToolProgress tool={activeTool} /> : null}
     </>
   );
@@ -134,20 +134,28 @@ export function App({
   stateRef.current = state;
   const activePermRef = useRef(activePerm);
   activePermRef.current = activePerm;
+  // Tracks the last-started tool message id so tool_result can close it out.
+  const lastToolIdRef = useRef<string | null>(null);
+  // Remembers the active tool's name + display args so a failure can attribute itself.
+  const lastToolDescRef = useRef<string | null>(null);
 
-  // ── Streaming chunk buffer (adaptive flush) ────────────────────────
+  // ── Per-turn telemetry (reset on turn.start, drained into turnmeta) ──
+  const turnToolCountRef = useRef(0);
+  const turnUsageRef = useRef<{ totalTokens: number; toolCalls: number; steps: number; totalCostUsd: number } | null>(null);
+
+  // ── Streaming chunk buffer (100ms flush — covers answer + reasoning) ─
   const chunkBufferRef = useRef('');
-  const chunkFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const chunkLastFlushRef = useRef(0);
+  const reasoningBufferRef = useRef('');
+  const chunkFlushTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const flushChunks = useCallback(() => {
     if (chunkFlushTimerRef.current) {
       clearTimeout(chunkFlushTimerRef.current);
       chunkFlushTimerRef.current = null;
     }
-    if (!chunkBufferRef.current) return;
-    dispatch({ type: 'assistant.chunk', text: chunkBufferRef.current });
-    chunkBufferRef.current = '';
-    chunkLastFlushRef.current = Date.now();
+    if (reasoningBufferRef.current) {
+      dispatch({ type: 'reasoning.chunk', text: reasoningBufferRef.current });
+      reasoningBufferRef.current = '';
+    }
   }, [dispatch]);
   const scheduleChunkFlush = useCallback(() => {
     if (chunkFlushTimerRef.current) return;
@@ -276,7 +284,9 @@ export function App({
   const W_PHASES = useMemo(() => new Set(['W0', 'W1', 'W0.5', 'W2/3', 'W4']), []);
   const runTurn = useCallback((activeRunner: Runner, trimmed: string, isPipeline: boolean) => {
     void (async () => {
-      dispatch({ type: 'turn.start' });
+      startChunkFlusher();
+      turnToolCountRef.current = 0;
+      turnUsageRef.current = null;
       if (isPipeline) dispatch({ type: 'pipeline.start' });
       try {
         for await (const ev of activeRunner.send(trimmed)) {
@@ -297,7 +307,9 @@ export function App({
                 tool: ev.tool,
                 cmd: `$ ${cmd}`,
                 cwd: stateRef.current.path,
-                note: `${ev.description} · risk ${ev.risk} — ⏎ allow · esc deny`,
+                note: `${ev.description} — ⏎ allow · esc deny`,
+                details: describePermissionArgs(args),
+                risk: ev.risk,
               },
             });
             continue;
@@ -307,8 +319,47 @@ export function App({
             if (fname) {
               dispatch({ type: 'files.set', files: touch(stateRef.current.files, { name: fname, meta: ev.name }) });
             }
+            turnToolCountRef.current += 1;
+            const toolId = tid();
+            const displayArgs = summarizeTool(ev.name, ev.args);
+            lastToolIdRef.current = toolId;
+            lastToolDescRef.current = `${ev.name} · ${displayArgs}`;
+            dispatch({ type: 'tool.start', id: toolId, name: ev.name, args: displayArgs });
+            continue;
+          }
+          if (ev.kind === 'tool_result') {
+            if (lastToolIdRef.current) {
+              const meta = summarizeToolResult(ev.ok, ev.content);
+              // Capture output lines (capped) so the result can be expanded in verbose mode.
+              const output = ev.content
+                ? ev.content.split('\n').filter(l => l.trim() !== '').slice(0, 40)
+                : undefined;
+              dispatch({ type: 'tool.end', id: lastToolIdRef.current, ok: ev.ok, meta: meta || undefined, output });
+              lastToolIdRef.current = null;
+            }
+            if (!ev.ok) {
+              dispatch({
+                type: 'error.push',
+                title: `${ev.name} failed`,
+                lines: ev.content.split('\n').filter(l => l.trim() !== '').slice(0, 6),
+                context: lastToolDescRef.current ?? undefined,
+                hint: 'ctrl+r expand full output · u undo last edit',
+              });
+            }
+            lastToolDescRef.current = null;
+            continue;
+          }
+          if (ev.kind === 'streaming_reasoning') {
+            reasoningBufferRef.current += ev.text;
+            continue;
           }
           if (ev.kind === 'usage') {
+            turnUsageRef.current = {
+              totalTokens: ev.totalTokens,
+              toolCalls: ev.toolCalls,
+              steps: ev.steps,
+              totalCostUsd: ev.totalCostUsd,
+            };
             dispatch({ type: 'ctx.update', used: Number((ev.totalTokens / 1000).toFixed(1)) });
             continue;
           }
@@ -347,6 +398,20 @@ export function App({
         stopChunkFlusher();
         if (isPipeline) dispatch({ type: 'pipeline.end' });
         dispatch({ type: 'turn.end', success: true });
+        // End-of-turn telemetry summary, rendered as an informative divider.
+        const u = turnUsageRef.current;
+        const tools = turnToolCountRef.current;
+        if (u || tools > 0) {
+          const parts: string[] = [];
+          const steps = u?.steps ?? 0;
+          if (steps > 0) parts.push(`${steps} step${steps > 1 ? 's' : ''}`);
+          if (tools > 0) parts.push(`${tools} tool${tools > 1 ? 's' : ''}`);
+          if (u && u.totalTokens > 0) parts.push(`${(u.totalTokens / 1000).toFixed(1)}k tok`);
+          if (u && u.totalCostUsd > 0) parts.push(`$${u.totalCostUsd.toFixed(2)}`);
+          if (parts.length) dispatch({ type: 'turnmeta.push', summary: parts.join(' · ') });
+        }
+        // Phase 2: commit all messages from this turn into the Static scrollback layer.
+        dispatch({ type: 'messages.commit' });
       }
     })();
   }, [dispatch, scheduleChunkFlush, stopChunkFlusher, W_PHASES]);
@@ -377,6 +442,16 @@ export function App({
     if (!trimmed) return;
     if (st.pending) dispatch({ type: 'pending.clear' });
 
+    if (st.mode === 'orchestrate') {
+      if (!pipelineRunner) {
+        dispatch({ type: 'system.push', text: 'Pipeline runner unavailable (engine not built or no API key).', tone: 'warn' });
+        return;
+      }
+      dispatch({ type: 'user.submit', text: trimmed });
+      runTurn(pipelineRunner, trimmed, true);
+      return;
+    }
+
     dispatch({ type: 'user.submit', text: trimmed });
     runTurn(runner, trimmed, false);
   }, [runner, pipelineRunner, dispatch, allowPermission, applyFix, applyOutcome, cmdCtx, runTurn]);
@@ -395,11 +470,13 @@ export function App({
   const sPipeline = useSlice(state, s => s.pipeline);
   const sFiles = useSlice(state, s => s.files);
   const sEdits = useSlice(state, s => s.edits);
-  const sMessages = useSlice(state, s => s.messages);
+  const sMessages        = useSlice(state, s => s.messages);
+  const sCommittedCount  = useSlice(state, s => s.committedCount);
   const sHelpOpen = useSlice(state, s => s.helpOpen);
   const sStepLabel = useSlice(state, s => s.currentStepLabel);
   const sActiveTool = useSlice(state, s => s.activeTool);
   const sStreaming = useSlice(state, s => s.streaming);
+  const sReasoning = useSlice(state, s => s.reasoning);
   const sApprovalMode = useSlice(state, s => s.approvalMode);
   const sEditMode = useSlice(state, s => s.editMode);
   const sCtxUsed = useSlice(state, s => s.ctx.used);
@@ -421,11 +498,12 @@ export function App({
   const statusState: SessionState =
     sPending === 'permission' ? 'paused'
     : sPending === 'error' ? 'error'
+    : sMode === 'orchestrate' ? 'orchestrate'
     : sMode === 'agent' ? 'agent' : 'mimo';
 
   // ── Render: zone-based layout ───────────────────────────────────────
   return (
-    <Box flexDirection="column" height={termRows}>
+    <Box flexDirection="column" maxHeight={termRows - 1}>
       <TitleZone path={sPath} branch={sBranch} mode={titleMode} />
       <PlanZone title={sPlanTitle} steps={sPlanSteps} />
       <PipelineZone phases={sPipeline} />
@@ -434,12 +512,15 @@ export function App({
         <Box flexDirection="column" flexGrow={1}>
           <ChatZone
             messages={sMessages}
+            committedCount={sCommittedCount}
             path={sPath}
             engineInfo={engineInfo}
             stepLabel={sStepLabel}
             activeTool={sActiveTool}
             helpOpen={sHelpOpen}
             streaming={sStreaming}
+            reasoning={sReasoning}
+            verbose={sVerbose}
           />
 
           <ToastBar toasts={sToasts} onDismiss={handleToastDismiss} />

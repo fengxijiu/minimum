@@ -1,5 +1,13 @@
-import type { AppState, Message, PipelinePhase, Toast, ToolCall } from '../types.js';
+import type { AppState, Message, PipelinePhase, Toast, ToolKind } from '../types.js';
 import type { AgentEvent } from './events.js';
+
+const TOOL_KIND: Record<string, ToolKind> = {
+  read_file: 'read', read: 'read', list_directory: 'read',
+  git_status: 'read', git_diff: 'read', git_log: 'read',
+  write_file: 'edit', edit_file: 'edit', edit: 'edit', apply_patch: 'edit',
+  exec_shell: 'run', run: 'run', git: 'run',
+  grep: 'find', glob: 'find', find: 'find', search: 'find', web_fetch: 'find',
+};
 
 let seq = 0;
 const mid = (p: string) => p + Date.now() + '_' + seq++;
@@ -61,7 +69,7 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
       return {
         ...pushMessage(state, {
           id: event.id, type: 'tool',
-          tool: { kind: 'read', args: event.name + ' ' + event.args },
+          tool: { kind: TOOL_KIND[event.name] ?? 'read', args: event.args },
         }),
         activeTool: {
           id: event.id,
@@ -83,26 +91,29 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
       return changed ? { ...state, messages } : state;
     }
 
-    case 'tool.end': {
-      let changed = false;
-      const nextStatus: NonNullable<ToolCall['status']> = event.ok ? 'ok' : 'err';
-      const messages = state.messages.map(m => {
-        if (m.id !== event.id || m.type !== 'tool') return m;
-        const nextMeta = event.meta ?? m.tool.meta;
-        if (m.tool.status === nextStatus && m.tool.meta === nextMeta) return m;
-        changed = true;
-        return { ...m, tool: { ...m.tool, status: nextStatus, meta: nextMeta } };
+    case 'tool.end':
+      return {
+        ...state,
+        messages: state.messages.map(m =>
+          m.id === event.id && m.type === 'tool'
+            ? { ...m, tool: { ...m.tool, status: event.ok ? 'ok' : 'err', meta: event.meta ?? m.tool.meta, output: event.output ?? m.tool.output } }
+            : m
+        ),
+        activeTool: state.activeTool?.id === event.id
+          ? { ...state.activeTool, status: event.ok ? 'ok' : 'err', meta: event.meta }
+          : state.activeTool,
+      };
+
+    case 'reasoning.chunk':
+      return { ...state, reasoning: (state.reasoning ?? '') + event.text };
+
+    case 'reasoning.clear':
+      return { ...state, reasoning: null };
+
+    case 'turnmeta.push':
+      return pushMessage(state, {
+        id: mid('tm'), type: 'turnmeta', summary: event.summary,
       });
-      let activeTool = state.activeTool;
-      if (state.activeTool?.id === event.id) {
-        const nextMeta = event.meta ?? state.activeTool.meta;
-        if (state.activeTool.status !== nextStatus || state.activeTool.meta !== nextMeta) {
-          activeTool = { ...state.activeTool, status: nextStatus, meta: nextMeta };
-        }
-      }
-      if (!changed && activeTool === state.activeTool) return state;
-      return { ...state, messages, activeTool };
-    }
 
     case 'system.push':
       return pushMessage(state, {
@@ -111,7 +122,8 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
 
     case 'error.push':
       return pushMessage(state, {
-        id: mid('e'), type: 'error', error: { title: event.title, lines: event.lines },
+        id: mid('e'), type: 'error',
+        error: { title: event.title, lines: event.lines, context: event.context, hint: event.hint },
       });
 
     case 'diff.push':
@@ -138,10 +150,12 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
       return {
         ...state,
         messages: [],
+        committedCount: 0,
         edits: [],
         plan: { title: '(no plan yet)', steps: [] },
         currentStepLabel: '',
         streaming: null,
+        reasoning: null,
         pending: null,
         activeTool: null,
       };
@@ -150,10 +164,12 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
       return {
         ...state,
         messages: [],
+        committedCount: 0,
         edits: [],
         plan: { title: '(no plan yet)', steps: [] },
         currentStepLabel: '',
         streaming: null,
+        reasoning: null,
         pending: null,
         activeTool: null,
         ctx: { used: 0, max: state.ctx.max },
@@ -161,14 +177,19 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
       };
 
     case 'messages.clear':
-      return state.messages.length ? { ...state, messages: [] } : state;
+      return { ...state, messages: [], committedCount: 0 };
+
+    case 'messages.commit':
+      return { ...state, committedCount: state.messages.length };
 
     case 'session.load':
       return {
         ...state,
         sessionName: event.name,
         messages: [],
+        committedCount: 0,
         streaming: null,
+        reasoning: null,
         pending: null,
       };
 
@@ -254,7 +275,7 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
 
     // ── turn lifecycle ────────────────────────────────────────────
     case 'turn.start':
-      return state.turnInProgress && state.streaming === '' ? state : { ...state, turnInProgress: true, streaming: '' };
+      return { ...state, turnInProgress: true, streaming: '', reasoning: null };
 
     case 'turn.end':
       if (!state.turnInProgress && state.streaming === null && state.activeTool === null) return state;
@@ -262,6 +283,7 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
         ...state,
         turnInProgress: false,
         streaming: null,
+        reasoning: null,
         activeTool: null,
       };
 

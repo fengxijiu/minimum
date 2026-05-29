@@ -16,12 +16,14 @@ const base: AppState = {
 	plan: { title: "", steps: [] },
 	currentStepLabel: "",
 	messages: [],
+	committedCount: 0,
 	input: "",
 	pending: null,
 	helpOpen: false,
 	turnInProgress: false,
 	verbose: false,
 	streaming: null,
+	reasoning: null,
 	activeTool: null,
 	toasts: [],
 	usage: {
@@ -431,5 +433,110 @@ describe("TUI reducer", () => {
 	it("init.run is a no-op in reducer", () => {
 		const s = reduce(base, { type: "init.run", cwd: "/proj" });
 		expect(s).toBe(base); // same reference — no state change
+	});
+
+	// ── Phase 2: Static double-buffer commit ─────────────────────────
+	it("messages.commit advances committedCount to current message length", () => {
+		let s = reduce(base, { type: "user.submit", text: "hello" });
+		s = reduce(s, { type: "assistant.final", text: "hi" });
+		expect(s.committedCount).toBe(0); // not committed yet
+		s = reduce(s, { type: "messages.commit" });
+		expect(s.committedCount).toBe(2); // user + assistant
+		expect(s.messages).toHaveLength(2); // messages still present for history
+	});
+
+	it("messages.commit is idempotent when called twice", () => {
+		let s = reduce(base, { type: "user.submit", text: "hello" });
+		s = reduce(s, { type: "messages.commit" });
+		const count = s.committedCount;
+		s = reduce(s, { type: "messages.commit" });
+		expect(s.committedCount).toBe(count);
+	});
+
+	it("messages.clear resets committedCount to 0", () => {
+		let s = reduce(base, { type: "user.submit", text: "hi" });
+		s = reduce(s, { type: "messages.commit" });
+		s = reduce(s, { type: "messages.clear" });
+		expect(s.messages).toHaveLength(0);
+		expect(s.committedCount).toBe(0);
+	});
+
+	it("session.clear resets committedCount", () => {
+		let s = reduce(base, { type: "user.submit", text: "hi" });
+		s = reduce(s, { type: "messages.commit" });
+		s = reduce(s, { type: "session.clear" });
+		expect(s.committedCount).toBe(0);
+	});
+
+	it("session.reset resets committedCount", () => {
+		let s = reduce(base, { type: "user.submit", text: "hi" });
+		s = reduce(s, { type: "messages.commit" });
+		s = reduce(s, { type: "session.reset" });
+		expect(s.committedCount).toBe(0);
+	});
+
+	it("new messages after commit appear in live tail (index >= committedCount)", () => {
+		let s = reduce(base, { type: "user.submit", text: "turn 1" });
+		s = reduce(s, { type: "assistant.final", text: "reply 1" });
+		s = reduce(s, { type: "messages.commit" }); // committedCount = 2
+		s = reduce(s, { type: "user.submit", text: "turn 2" });
+		expect(s.committedCount).toBe(2);
+		expect(s.messages).toHaveLength(3);
+		// live tail = messages.slice(2) = [turn 2 message]
+		expect(s.messages.slice(s.committedCount)).toHaveLength(1);
+		expect(s.messages[2]).toMatchObject({ type: "user", text: "turn 2" });
+	});
+
+	// ── Tier 1: reasoning / tool output / turn telemetry ──────────────
+	it("reasoning.chunk accumulates and reasoning.clear resets", () => {
+		let s = reduce(base, { type: "reasoning.chunk", text: "think " });
+		s = reduce(s, { type: "reasoning.chunk", text: "more" });
+		expect(s.reasoning).toBe("think more");
+		s = reduce(s, { type: "reasoning.clear" });
+		expect(s.reasoning).toBeNull();
+	});
+
+	it("turn.start and turn.end clear reasoning", () => {
+		let s = reduce({ ...base, reasoning: "stale" }, { type: "turn.start" });
+		expect(s.reasoning).toBeNull();
+		s = reduce({ ...base, reasoning: "stale" }, { type: "turn.end", success: true });
+		expect(s.reasoning).toBeNull();
+	});
+
+	it("tool.end stores captured output lines", () => {
+		let s = reduce(base, { type: "tool.start", id: "t1", name: "exec_shell", args: "ls" });
+		s = reduce(s, { type: "tool.end", id: "t1", ok: true, meta: "3 ln", output: ["a", "b", "c"] });
+		expect(s.messages[0]).toMatchObject({ type: "tool", tool: { output: ["a", "b", "c"] } });
+	});
+
+	it("turnmeta.push appends an informative divider message", () => {
+		const s = reduce(base, { type: "turnmeta.push", summary: "3 tools · 1.2k tok" });
+		expect(s.messages[0]).toMatchObject({ type: "turnmeta", summary: "3 tools · 1.2k tok" });
+	});
+
+	// ── Tier 2: permission detail / error attribution ─────────────────
+	it("permission.show carries details and risk", () => {
+		const s = reduce(base, {
+			type: "permission.show",
+			perm: {
+				tool: "exec_shell", cmd: "$ rm -rf x", cwd: "/proj", note: "n",
+				details: ["command: rm -rf x"], risk: "high",
+			},
+		});
+		expect(s.messages[0]).toMatchObject({
+			type: "permission",
+			perm: { risk: "high", details: ["command: rm -rf x"] },
+		});
+	});
+
+	it("error.push stores context and hint", () => {
+		const s = reduce(base, {
+			type: "error.push", title: "exec_shell failed", lines: ["boom"],
+			context: "exec_shell · pytest -q", hint: "u undo",
+		});
+		expect(s.messages[0]).toMatchObject({
+			type: "error",
+			error: { context: "exec_shell · pytest -q", hint: "u undo" },
+		});
 	});
 });

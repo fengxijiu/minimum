@@ -1,4 +1,4 @@
-export type Mode = 'chat' | 'agent';
+export type Mode = 'chat' | 'agent' | 'orchestrate';
 
 export type ToolKind = 'read' | 'edit' | 'run' | 'find';
 export type ToolCall = {
@@ -6,6 +6,8 @@ export type ToolCall = {
   args: string;
   meta?: string;
   status?: 'ok' | 'err';
+  /** Captured result output lines (success or failure). Shown folded; expanded in verbose. */
+  output?: string[];
 };
 
 export type Diff = {
@@ -23,11 +25,18 @@ export type Permission = {
   cmd: string;         // e.g. '$ pytest -q'
   cwd: string;
   note: string;
+  /** Full per-parameter breakdown of what's being approved. */
+  details?: string[];
+  risk?: 'low' | 'medium' | 'high';
 };
 
 export type ErrorReport = {
   title: string;       // e.g. 'STDERR · 1 FAILURE'
   lines: string[];
+  /** What was being attempted when this failed, e.g. 'run · pytest -q'. */
+  context?: string;
+  /** Truthful, always-available next-step hint shown in the footer. */
+  hint?: string;
 };
 
 export type Message =
@@ -38,9 +47,11 @@ export type Message =
   | { id: string; type: 'diff'; diff: Diff }
   | { id: string; type: 'chips'; chips: Chip[] }
   | { id: string; type: 'permission'; perm: Permission }
-  | { id: string; type: 'error'; error: ErrorReport };
+  | { id: string; type: 'error'; error: ErrorReport }
+  /** End-of-turn summary line: "7 tools · 1.2k tok · $0.03". Rendered as an informative divider. */
+  | { id: string; type: 'turnmeta'; summary: string };
 
-export type SessionState = 'agent' | 'mimo' | 'paused' | 'error';
+export type SessionState = 'agent' | 'mimo' | 'orchestrate' | 'paused' | 'error';
 
 export type ApprovalMode = 'read-only' | 'auto-edit' | 'full-auto';
 
@@ -105,6 +116,13 @@ export type AppState = {
   plan: { title: string; steps: PlanStep[] };
   currentStepLabel: string;
   messages: Message[];
+  /**
+   * How many messages from the start of `messages[]` have been committed to the
+   * Static scrollback layer.  Messages in [0, committedCount) are rendered once
+   * via <Static> and never re-drawn; messages in [committedCount, …) are the
+   * live tail rendered in the active frame.
+   */
+  committedCount: number;
   input: string;
   pending: PendingState;
   helpOpen: boolean;
@@ -112,6 +130,8 @@ export type AppState = {
   verbose: boolean;
   /** Streaming text accumulator — non-null while assistant is generating. */
   streaming: string | null;
+  /** Live reasoning/thinking accumulator — non-null while the model is thinking. Cleared at turn end. */
+  reasoning: string | null;
   /** Currently executing tool — shown in the live activity area. */
   activeTool: ToolProgress | null;
   /** Toast notifications with auto-dismiss. */
