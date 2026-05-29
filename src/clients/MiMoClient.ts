@@ -1,5 +1,13 @@
 import type { ChatMessage, ToolDefinition } from "../types/common.js";
 
+/** Token Plan API keys begin with "tp-"; pay-as-you-go keys begin with "sk-". */
+export function resolveBaseUrl(apiKey: string, explicit?: string): string {
+	if (explicit) return explicit;
+	return apiKey.startsWith("tp-")
+		? "https://token-plan-cn.xiaomimimo.com/v1"
+		: "https://api.xiaomimimo.com/v1";
+}
+
 export interface MiMoClientOptions {
 	apiKey?: string;
 	baseUrl?: string;
@@ -87,10 +95,10 @@ export class MiMoClient {
 
 	constructor(options: MiMoClientOptions = {}) {
 		this.apiKey = options.apiKey || process.env.MIMO_API_KEY || "";
-		this.baseUrl =
-			options.baseUrl ||
-			process.env.MIMO_BASE_URL ||
-			"https://api.xiaomimimo.com/v1";
+		this.baseUrl = resolveBaseUrl(
+			this.apiKey,
+			options.baseUrl || process.env.MIMO_BASE_URL,
+		);
 		this.model = options.model || "mimo-v2.5-pro";
 		this.maxTokens = options.maxTokens || 131072;
 		this.temperature = options.temperature ?? 1.0;

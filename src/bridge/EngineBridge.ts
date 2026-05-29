@@ -42,6 +42,13 @@ export type UiEvent =
 			risk: "low" | "medium" | "high";
 			description: string;
 	  }
+	| {
+			/** Pipeline (orchestrator) phase transition for the W0–W4 panel. */
+			kind: "pipeline";
+			phase: string;
+			label: string;
+			detail?: string;
+	  }
 	| { kind: "done"; success: boolean };
 
 /** Parse TodoWriteTool's formatted result back into structured plan steps. */

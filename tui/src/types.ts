@@ -56,6 +56,16 @@ export type PendingState = null | 'permission' | 'error';
 
 export type EditMode = 'review' | 'auto' | 'yolo';
 
+/** One W0–W4 phase in the orchestrator pipeline panel. */
+export type PipelinePhase = {
+  phase: string;     // 'W0' | 'W1' | 'W0.5' | 'W2/3' | 'W4'
+  label: string;
+  status: 'pending' | 'active' | 'done' | 'err';
+  startedAt?: number;
+  endedAt?: number;
+  detail?: string;
+};
+
 export type ToolProgress = {
   id: string;
   name: string;
@@ -112,4 +122,6 @@ export type AppState = {
   mcpLoading: { ready: number; total: number } | null;
   /** Active session name — null for ephemeral sessions. */
   sessionName: string | null;
+  /** Orchestrator pipeline phases — null when not running the pipeline. */
+  pipeline: PipelinePhase[] | null;
 };

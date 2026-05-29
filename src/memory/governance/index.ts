@@ -1,0 +1,68 @@
+export {
+	buildContextPack,
+	contextPackPath,
+	rankCandidates,
+	writeContextPack,
+	type CanonicalSection,
+	type ContextPack,
+	type ContextPackInput,
+} from "./ContextPackBuilder.js";
+export {
+	loadCanonicalMemory,
+	resolveLoadKeys,
+	type LoadOptions,
+	type LoadedMemory,
+	type TaskType,
+} from "./MemoryLoader.js";
+export {
+	applyFinalize,
+	compileFinalize,
+	renderEntry,
+	upsertSection,
+	upsertSectionInFile,
+	type AppliedDecision,
+	type ApplyOptions,
+	type Finalize,
+	type FinalizeCompileResult,
+	type FinalizeReport,
+	type PatchMergeEntry,
+} from "./MemoryGovernor.js";
+export {
+	inspectCanonical,
+	inspectStaging,
+	renderMemoryReport,
+	type CanonicalFileInfo,
+	type StagingInfo,
+} from "./MemoryInspector.js";
+export {
+	canonicalPath,
+	defaultManifest,
+	getOrInitManifest,
+	parseYaml,
+	writeManifest,
+} from "./MemoryManifest.js";
+export {
+	score,
+	shouldPersist,
+	shouldRequireSecondReview,
+} from "./MemoryScorer.js";
+export {
+	candidateFilename,
+	clearForEpic,
+	deleteCandidate,
+	ensureStagingDir,
+	listCandidates,
+	parseCandidate,
+	serializeCandidate,
+	stagingPath,
+	writeCandidate,
+} from "./MemoryStaging.js";
+export type {
+	Manifest,
+	ManifestRules,
+	MemoryCandidate,
+	MemoryConfidence,
+	MemoryScore,
+	MergeAction,
+	MergeDecision,
+} from "./types.js";

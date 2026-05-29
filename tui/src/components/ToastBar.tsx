@@ -29,7 +29,7 @@ export const ToastBar = React.memo(function ToastBar({ toasts, onDismiss }: {
     return () => clearTimeout(timer);
   }, [toasts, onDismiss]);
 
-  if (!toasts.length) return <Box />;
+  if (!toasts.length) return null;
 
   return (
     <Box flexDirection="column">

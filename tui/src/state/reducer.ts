@@ -1,4 +1,4 @@
-import type { AppState, Message, Toast } from '../types.js';
+import type { AppState, Message, PipelinePhase, Toast } from '../types.js';
 import type { AgentEvent } from './events.js';
 
 let seq = 0;
@@ -287,6 +287,40 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
     // ── verbose ───────────────────────────────────────────────────
     case 'verbose.toggle':
       return { ...state, verbose: !state.verbose };
+
+    // ── pipeline (orchestrator) ──────────────────────────────────
+    case 'pipeline.start':
+      return { ...state, pipeline: [] };
+
+    case 'pipeline.phase': {
+      // Mark every prior phase done (record endedAt); activate the incoming one.
+      const now = Date.now();
+      const prior: PipelinePhase[] = (state.pipeline ?? []).map(p => ({
+        ...p,
+        status: 'done' as const,
+        endedAt: p.status === 'active' ? now : p.endedAt,
+      }));
+      const existing = prior.findIndex(p => p.phase === event.phase);
+      const newPhase: PipelinePhase = {
+        phase: event.phase, label: event.label, status: 'active',
+        startedAt: now, detail: event.detail,
+      };
+      if (existing >= 0) {
+        prior[existing] = newPhase;
+        return { ...state, pipeline: prior };
+      }
+      return { ...state, pipeline: [...prior, newPhase] };
+    }
+
+    case 'pipeline.end': {
+      const now = Date.now();
+      const done = (state.pipeline ?? []).map(p => ({
+        ...p,
+        status: 'done' as const,
+        endedAt: p.status === 'active' ? now : p.endedAt,
+      }));
+      return { ...state, pipeline: done.length ? done : null };
+    }
 
     // ── init ─────────────────────────────────────────────────────
     case 'init.run':
