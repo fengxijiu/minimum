@@ -28,6 +28,7 @@
 - [运行模式](#运行模式)
   - [单 Agent 模式](#单-agent-模式)
   - [W0–W4 流水线模式](#w0w4-流水线模式)
+  - [记忆系统](#记忆系统)
 - [内置工具](#内置工具)
 - [TUI 命令参考](#tui-命令参考)
 - [架构设计](#架构设计)
@@ -39,10 +40,6 @@
 - [许可证](#许可证)
 
 ---
-
-## 站在巨人的肩膀上
-
-https://github.com/nicepkg/aide
 
 ## 简介
 
@@ -56,34 +53,6 @@ https://github.com/nicepkg/aide
 - 🧠 **记忆治理** — 项目级记忆系统，跨会话持久化知识，fence-aware 合并
 - 🛡️ **三级审批** — read-only / auto-edit / full-auto，安全可控
 - 📊 **实时可观测** — Token 用量、费用估算、工具进度、Plan 步骤可视化
-
----
-
-## 截图
-
-```
-┌─ Minimum ──────────────────────────────────────────────────────── main ─┐
-│                                                                         │
-│  ● Agent                     ── Plan ────────────────────────────────── │
-│                                                                         │
-│  I'll help you set up the Express.js project with user CRUD.           │
-│  Let me start by initializing the project structure.                    │
-│                                                                         │
-│  ┌─ Tool ─────────────────────────────────────────────────────────────┐ │
-│  │ ▶ run  npm init -y                          0.3s  ✓               │ │
-│  │ ▶ run  npm install express                  2.1s  ✓               │ │
-│  │ ▶ read src/routes/users.ts                  0.1s  ✓               │ │
-│  └────────────────────────────────────────────────────────────────────┘ │
-│                                                                         │
-│  Created 4 files, modified 1 file.                                      │
-│                                                                         │
-│  ── Context ──────────  ── Status ──────────────────────────────────── │
-│  📄 src/index.ts        mimo-v2.5-pro │ 1,234 tok │ $0.003 │ auto-edit │
-│  📄 src/routes/         ↑↓ history   Tab mode   / commands  Ctrl+R verb │
-│                                                                         │
-│  ▸ Type a message or / for commands...                                  │
-└─────────────────────────────────────────────────────────────────────────┘
-```
 
 ---
 
@@ -252,6 +221,8 @@ TUI 采用 **Zone 隔离渲染** 架构，各区域独立刷新：
 
 ## 运行模式
 
+Minimum 提供三种核心能力：**单 Agent 对话**处理日常编码任务，**W0–W4 流水线**编排复杂多角色协作，**记忆系统**实现跨会话知识持久化。三者相互独立又紧密协作——流水线的 W4 阶段会自动将成果写入记忆，记忆又为后续对话和流水线提供上下文。
+
 ### 单 Agent 模式
 
 默认模式。适合交互式对话、小规模代码修改、快速问答。
@@ -263,6 +234,15 @@ TUI 采用 **Zone 隔离渲染** 架构，各区域独立刷新：
 3. 引擎执行工具（受审批策略控制）
 4. 工具结果回传给模型，继续推理
 5. 循环直到模型输出最终回复
+
+**核心机制：**
+
+- **流式输出** — 100ms 缓冲刷新，实时看到模型推理过程
+- **并行工具执行** — 只读工具批量并发（默认最多 3 个），加速信息收集
+- **工具结果截断** — 单个工具结果上限 32K 字符，防止上下文溢出
+- **消息历史修复** — 自动检测并修复不完整的消息序列（healing）
+- **编辑快照** — 每次文件编辑自动创建快照，支持 `/undo` 回滚
+- **Plan 可视化** — 模型输出的步骤计划实时渲染为进度条
 
 **审批模式：**
 
@@ -284,37 +264,192 @@ TUI 采用 **Zone 隔离渲染** 架构，各区域独立刷新：
 
 通过 `/orchestrate <需求>` 启动。适合复杂特性开发、多文件重构、需要多角色协作的任务。
 
-**流水线阶段：**
+与单 Agent 模式不同，流水线将一个大任务拆解为多个子任务，分配给不同 Persona 并发执行，通过依赖图保证执行顺序，最终由 master_planner 汇总结果。整个过程在 TUI 的 `PipelinePanel` 中实时展示各阶段的进度和耗时。
+
+#### 流水线阶段
 
 ```
-W0   TaskCompiler  ── 需求分析 → 生成带依赖图的任务 DAG
-W0.5 Refiner       ── 二次精化 → 校验合约完整性
-W1   感知波         ── 并发执行 read-only 任务（vision / repo_scout / context_builder）
-W2/3 实现+校验波    ── 并发执行写入/测试任务（code_executor / test_writer / test_runner）
-W4   Finalize      ── 汇总结果 → 记忆治理 → 清理 staging
+用户需求
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ W0   TaskCompiler                                               │
+│      master_planner 读取项目记忆，分析需求，生成粗粒度任务            │
+│      输出：TaskContract[]（含依赖关系、Persona 分配、验收标准）       │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ W0.5 Refiner                                                    │
+│      master_planner 二次精化合约：补全缺失字段、校验路径策略          │
+│      ContractValidator 检查完整性，不通过则要求重编译                │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ W1   感知波（并发）                                               │
+│      vision         — 需求理解、UI/UX 设计分析                     │
+│      repo_scout     — 仓库结构扫描、依赖图谱、代码风格识别            │
+│      context_builder — 聚合前两者产出，构建 ContextPack             │
+│      以上三个 Persona 均为只读，并发执行无文件冲突                    │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ W2/3 实现+校验波（并发，可多轮）                                    │
+│      code_executor  — 根据 ContextPack 实现代码修改               │
+│      test_writer    — 编写测试用例                                │
+│      test_runner    — 执行测试并报告结果                           │
+│      runtime_debug  — 运行时调试、错误诊断                         │
+│      reviewer       — 代码审查、质量检查                           │
+│      docs           — 文档编写、注释补充                           │
+│      TaskGraph 保证同一 Wave 内并发任务的文件路径不冲突               │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ W4   Finalize                                                   │
+│      master_planner 汇总所有 TaskResult                          │
+│      MemoryGovernor 执行记忆治理（详见「记忆系统」）                 │
+│      清理 staging 暂存区                                         │
+│      输出：FinalizeReport（成功/失败/记忆变更摘要）                  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-**10 个 Persona 角色：**
+#### 10 个 Persona 角色
 
-| 角色 | 类型 | 职责 | 可写 |
-|------|------|------|------|
-| `master_planner` | master | 任务编排、合约生成、结果终结 | — |
-| `vision` | worker | 需求分析、UI/UX 设计建议 | ✗ |
-| `repo_scout` | worker | 仓库结构扫描、依赖分析 | ✗ |
-| `context_builder` | worker | 上下文包构建、信息聚合 | ✗ |
-| `code_executor` | worker | 代码实现、文件修改 | ✓ |
-| `test_writer` | worker | 测试用例编写 | ✓ |
-| `test_runner` | worker | 测试执行与结果分析 | ✗ |
-| `runtime_debug` | worker | 运行时调试、错误诊断 | ✓ |
-| `reviewer` | worker | 代码审查、质量检查 | ✗ |
-| `docs` | worker | 文档编写、注释补充 | ✓ |
+每个 Persona 有独立的模型选择、工具白名单、路径策略和输出 Schema：
 
-**并发调度：**
+| 角色 | 类型 | 职责 | 可写 | 独占 Wave | 最大并发 |
+|------|------|------|------|-----------|---------|
+| `master_planner` | master | 任务编排、合约生成、结果终结 | — | — | 1 |
+| `vision` | worker | 需求分析、UI/UX 设计建议 | ✗ | 否 | 1 |
+| `repo_scout` | worker | 仓库结构扫描、依赖分析 | ✗ | 否 | 1 |
+| `context_builder` | worker | 上下文包构建、信息聚合 | ✗ | 否 | 1 |
+| `code_executor` | worker | 代码实现、文件修改 | ✓ | 否 | 3 |
+| `test_writer` | worker | 测试用例编写 | ✓ | 否 | 2 |
+| `test_runner` | worker | 测试执行与结果分析 | ✗ | 否 | 1 |
+| `runtime_debug` | worker | 运行时调试、错误诊断 | ✓ | 是 | 1 |
+| `reviewer` | worker | 代码审查、质量检查 | ✗ | 否 | 1 |
+| `docs` | worker | 文档编写、注释补充 | ✓ | 否 | 1 |
+
+**路径安全策略：**
+
+- `canWrite: false` 的 Persona（vision / repo_scout / reviewer）被 `PathPolicyEnforcer` 全局禁止写入
+- `alwaysAllowedGlobs` — 每个 Persona 只能写入自己的 `_staging/<taskId>/` 目录
+- `forbiddenGlobs` — 禁止任何 Persona 修改 `.minimum/memory.md` 等核心文件（由 MemoryGovernor 专管）
+
+#### 并发调度机制
+
+`WaveScheduler` 基于 DAG 拓扑排序将任务划分为多个 Wave：
 
 - 同一 `parallelGroup` 内的任务并发执行
 - `TaskGraph` 保证并发任务的 `allowedGlobs` 不相交（无文件冲突）
-- `soloPerWave` 标记的任务独占整个 Wave
+- `soloPerWave` 标记的任务（如 `runtime_debug`）独占整个 Wave，其他任务等它完成后再启动
 - `maxConcurrent` 限制单个 Wave 内的最大并发数
+- 上游任务全部完成后，下游任务才会被调度
+
+#### TaskContract 合约
+
+每个任务在执行前必须有完整的 `TaskContract`，由 `ContractValidator` 校验：
+
+```typescript
+interface TaskContract {
+  taskId: string;           // 全局唯一，如 "T-C1-2"
+  phase: string;            // 所属阶段，如 "P3-frontend"
+  epicId: string;           // 所属 Epic
+  personaId: PersonaId;     // 执行者角色
+  objective: string;        // 人类可读的任务目标
+  inputs: TaskInputs;       // 用户目标 + 上下文包 + 上游产物
+  pathPolicy: TaskPathPolicy; // 路径访问控制
+  acceptance: string[];     // 验收标准列表
+  outputSchema: OutputSchema; // 期望输出格式
+  parallelGroup: string;    // 并发分组标识
+  dependsOn: string[];      // 上游任务 ID 列表
+  abortOnConflict: boolean; // 路径冲突时是否中止
+}
+```
+
+### 记忆系统
+
+记忆系统是 Minimum 的核心差异化能力。它让 Agent 能够跨会话积累项目知识，避免每次对话都从零开始理解代码库。
+
+#### 三层记忆架构
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                   项目记忆 (ProjectMemory)                   │
+│    .minimum/memory.md — 跨会话持久化的项目知识库                │
+│    由 MemoryGovernor 管理，fence-aware 合并，不破坏代码块       │
+├─────────────────────────────────────────────────────────────┤
+│                   会话记忆 (SessionMemory)                   │
+│    当前会话内的对话历史和上下文                                 │
+│    会话结束时可选择性沉淀到项目记忆                              │
+├─────────────────────────────────────────────────────────────┤
+│                   运行时记忆 (RuntimeMemory)                  │
+│    内存中的临时状态：工具执行结果、编辑快照等                       │
+│    会话结束后清除                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### 记忆治理流程（W4 阶段）
+
+流水线的 W4 Finalize 阶段会自动执行记忆治理：
+
+```
+所有 TaskResult
+  │
+  ▼
+MemoryGovernor 收集 MemoryCandidate[]
+  │
+  ▼
+master_planner 对每个候选做出决策：
+  ├── merge   → 追加到 .minimum/memory.md（带来源标记）
+  ├── archive → 移动到 _archive/ 目录
+  └── reject  → 丢弃
+  │
+  ▼
+MemoryStaging 清理暂存区
+```
+
+**关键设计：**
+
+- **Fence-aware 合并** — 写入记忆时不会破坏已有的代码块围栏（` ``` `），精确插入到正确位置
+- **来源追溯** — 每条记忆条目携带 `source_task`、`persona`、`related_files` 元数据
+- **Token 预算加载** — `MemoryLoader` 按 token 预算加载记忆，W0 编排时不会超出上下文窗口
+- **相关性排序** — `ContextPackBuilder` 为每个 Worker 按相关性排序注入上下文，确保关键信息优先
+- **评分淘汰** — `MemoryScorer` 对记忆条目评分，低分条目在后续合并中被淘汰
+
+#### 记忆文件格式
+
+`.minimum/memory.md` 示例：
+
+```markdown
+## 项目架构
+
+- 使用 Express.js + TypeScript 构建 REST API
+- 数据库：PostgreSQL，通过 Prisma ORM 访问
+<!-- source: T-C1-2, persona: repo_scout, files: [prisma/schema.prisma] -->
+
+## 编码规范
+
+- 错误处理统一使用 AppError 类（src/errors.ts）
+- 所有路由需添加 Joi 输入验证
+<!-- source: T-C2-1, persona: reviewer, files: [src/routes/*.ts] -->
+
+## 已知问题
+
+- JWT token 过期逻辑需要 refresh token 支持
+<!-- source: T-C3-1, persona: runtime_debug, files: [src/auth/jwt.ts] -->
+```
+
+#### 记忆命令
+
+| 命令 | 说明 |
+|------|------|
+| `/memory` | 显示项目记忆文件路径和大小 |
+| `/compact` | 查看上下文压缩状态，了解记忆占用 |
+| `/init` | 初始化项目时自动创建 `.minimum/` 目录结构 |
 
 ---
 
@@ -543,26 +678,11 @@ minimum/
 - 工具结果截断保护（32K 字符上限）
 - 消息历史自动修复（healing）
 
-**MiMoPipeline** — W0–W4 流水线编排：
+**MiMoPipeline** — W0–W4 流水线编排的核心：
 
-```
-用户需求
-  │
-  ▼
-W0: TaskCompiler → 粗粒度 DAG
-  │
-  ▼
-W0.5: Refiner → 精化合约
-  │
-  ▼
-W1: 感知波 (vision + repo_scout + context_builder)
-  │
-  ▼
-W2/3: 实现+校验波 (code_executor + test_writer + test_runner)
-  │
-  ▼
-W4: Finalize → 记忆治理 → 清理 staging
-```
+- `PlannerBridge` 注入 master_planner 的三次 LLM 触点（compile / refine / finalize）
+- `WorkerExecutor` 注入 worker 的执行逻辑，便于单元测试 stub
+- `PipelineEvent` 事件流驱动 TUI 的 `PipelinePanel` 实时渲染
 
 #### Bridge 层 (`src/bridge/`)
 
@@ -587,16 +707,6 @@ type UiEvent =
   | { kind: 'streaming_end' };
 ```
 
-#### 记忆治理 (`src/memory/governance/`)
-
-跨会话知识持久化系统：
-
-- **MemoryGovernor** — W4 将候选片段 merge 到 `.minimum/memory.md`（fence-aware，不破坏代码块）
-- **MemoryLoader** — 按 token 预算加载记忆，供 W0 使用
-- **ContextPackBuilder** — 为每个 Worker 按相关性排序注入上下文
-- **MemoryScorer** — 记忆条目评分，决定保留/归档/丢弃
-- **MemoryStaging** — 暂存区管理，W4 后清理
-
 ### 数据流
 
 ```
@@ -614,8 +724,8 @@ type UiEvent =
                 │                               │
                 ▼                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                    MiMo API Client                           │
-│  流式 Chat Completion · 工具调用 · Token 统计                 │
+│                    MiMo API Client                          │
+│  流式 Chat Completion · 工具调用 · Token 统计                  │
 └─────────────────────────────────────────────────────────────┘
 ```
 

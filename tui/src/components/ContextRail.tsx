@@ -75,6 +75,13 @@ export const ContextRail = React.memo(function ContextRail({ files, edits, mode 
         <Text color={theme.ink} bold={mode === 'chat'}>chat</Text>
         <Text color={theme.muted}>  step</Text>
       </Box>
+      <Box>
+        <Text color={mode === 'orchestrate' ? theme.accent : theme.muted}>
+          {mode === 'orchestrate' ? '●' : '○'}{' '}
+        </Text>
+        <Text color={theme.ink} bold={mode === 'orchestrate'}>orchestrate</Text>
+        <Text color={theme.muted}>  pipeline</Text>
+      </Box>
 
       <Text> </Text>
       <Text color={theme.muted}>TOOLS</Text>
