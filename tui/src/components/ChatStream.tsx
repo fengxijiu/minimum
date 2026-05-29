@@ -70,8 +70,126 @@ type MdBlock =
   | { k: 'quote'; text: string }
   | { k: 'hr' }
   | { k: 'li'; indent: number; marker: string; text: string }
+  | { k: 'table'; data: TableData }
   | { k: 'p'; text: string }
   | { k: 'blank' };
+
+// ── Table support ─────────────────────────────────────────────────────
+
+const MAX_COL_WIDTH = 28;
+const MAX_TABLE_COLS = 10;
+
+type TableAlign = 'l' | 'c' | 'r';
+type TableData = {
+  headers: string[];
+  aligns: TableAlign[];
+  rows: string[][];
+  colWidths: number[];
+};
+
+// Strip inline-markdown markers to get visual character count for column sizing.
+function stripMd(text: string): string {
+  return text
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/_([^_]+)_/g, '$1')
+    .replace(/~~([^~]+)~~/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+}
+
+function splitTableRow(line: string): string[] {
+  const s = line.trim();
+  const inner = s.startsWith('|') ? s.slice(1) : s;
+  const trimmed = inner.endsWith('|') ? inner.slice(0, -1) : inner;
+  return trimmed.split('|').map(c => c.trim());
+}
+
+function isSepRow(line: string): boolean {
+  if (!line.includes('|') && !line.includes('-')) return false;
+  const cells = splitTableRow(line);
+  return cells.length > 0 && cells.every(c => /^\s*:?-+:?\s*$/.test(c));
+}
+
+function parseSepAligns(line: string): TableAlign[] {
+  return splitTableRow(line).map(c => {
+    const t = c.trim();
+    if (t.startsWith(':') && t.endsWith(':')) return 'c';
+    if (t.endsWith(':')) return 'r';
+    return 'l';
+  });
+}
+
+function buildTableData(tableLines: string[]): TableData | null {
+  if (tableLines.length < 2) return null;
+  if (!isSepRow(tableLines[1]!)) return null;
+  const headers = splitTableRow(tableLines[0]!).slice(0, MAX_TABLE_COLS);
+  const aligns  = parseSepAligns(tableLines[1]!).slice(0, headers.length);
+  const rows    = tableLines.slice(2).map(l => splitTableRow(l).slice(0, headers.length));
+  const colWidths = headers.map((h, ci) => {
+    const hLen = stripMd(h).length;
+    const maxD = rows.reduce((mx, row) => Math.max(mx, stripMd(row[ci] ?? '').length), 0);
+    return Math.min(MAX_COL_WIDTH, Math.max(hLen, maxD, 1));
+  });
+  // Pad aligns to match column count
+  while (aligns.length < headers.length) aligns.push('l');
+  return { headers, aligns, rows, colWidths };
+}
+
+function tableBorderLine(colWidths: number[], edge: 'top' | 'mid' | 'bot'): string {
+  const [l, j, r] = edge === 'top' ? ['┌', '┬', '┐']
+    : edge === 'mid' ? ['├', '┼', '┤']
+    : ['└', '┴', '┘'];
+  return l + colWidths.map(w => '─'.repeat(w + 2)).join(j) + r;
+}
+
+function TableDataRow({ cells, colWidths, aligns, isHeader, color }: {
+  cells: string[];
+  colWidths: number[];
+  aligns: TableAlign[];
+  isHeader?: boolean;
+  color?: string;
+}) {
+  const fg = isHeader ? theme.inkSoft : color;
+  return (
+    <Box flexDirection="row">
+      <Text color={theme.line}>│</Text>
+      {colWidths.map((cw, ci) => {
+        const raw  = cells[ci] ?? '';
+        const vis  = Math.min(stripMd(raw).length, cw);
+        const align = aligns[ci] ?? 'l';
+        const excess = Math.max(0, cw - vis);
+        const preN  = align === 'r' ? excess + 1 : align === 'c' ? Math.floor(excess / 2) + 1 : 1;
+        const postN = align === 'r' ? 1 : align === 'c' ? (excess - Math.floor(excess / 2)) + 1 : excess + 1;
+        return (
+          <React.Fragment key={ci}>
+            <Text color={fg}>{' '.repeat(preN)}</Text>
+            {isHeader
+              ? <Text bold color={fg}>{raw.slice(0, cw)}</Text>
+              : <InlineMd text={raw.slice(0, cw)} color={fg} />}
+            <Text color={fg}>{' '.repeat(postN)}</Text>
+            <Text color={theme.line}>│</Text>
+          </React.Fragment>
+        );
+      })}
+    </Box>
+  );
+}
+
+function MdTable({ data, color }: { data: TableData; color?: string }) {
+  const { headers, aligns, rows, colWidths } = data;
+  return (
+    <Box flexDirection="column">
+      <Text color={theme.line}>{tableBorderLine(colWidths, 'top')}</Text>
+      <TableDataRow cells={headers} colWidths={colWidths} aligns={aligns} isHeader color={color} />
+      <Text color={theme.line}>{tableBorderLine(colWidths, 'mid')}</Text>
+      {rows.map((row, ri) => (
+        <TableDataRow key={ri} cells={row} colWidths={colWidths} aligns={aligns} color={color} />
+      ))}
+      <Text color={theme.line}>{tableBorderLine(colWidths, 'bot')}</Text>
+    </Box>
+  );
+}
 
 function parseBlocks(raw: string): MdBlock[] {
   const out: MdBlock[] = [];
@@ -105,6 +223,19 @@ function parseBlocks(raw: string): MdBlock[] {
       const marker = /\d/.test(li[2]!) ? li[2]!.replace(/[.)]/, '.') + ' ' : '• ';
       out.push({ k: 'li', indent, marker, text: li[3]! });
       i++; continue;
+    }
+
+    // Table: header starts with | and the very next line is a separator row
+    if (line.trimStart().startsWith('|') && i + 1 < lines.length && isSepRow(lines[i + 1]!)) {
+      const start = i;
+      const tableLines: string[] = [];
+      while (i < lines.length && lines[i]!.trimStart().startsWith('|')) {
+        tableLines.push(lines[i]!);
+        i++;
+      }
+      const data = buildTableData(tableLines);
+      if (data) { out.push({ k: 'table', data }); continue; }
+      i = start; // backtrack if parse failed
     }
 
     if (line.trim() === '') { out.push({ k: 'blank' }); i++; continue; }
@@ -154,6 +285,8 @@ function MarkdownBlock({ text, color }: { text: string; color?: string }) {
             );
           case 'hr':
             return <Text key={i} color={theme.line}>{'─'.repeat(24)}</Text>;
+          case 'table':
+            return <MdTable key={i} data={b.data} color={color} />;
           case 'li':
             return (
               <Box key={i} paddingLeft={b.indent * 2}>
