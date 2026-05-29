@@ -1,5 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { extractJsonBlock, isObj } from "../../utils/guards.js";
 import { clearForEpic } from "./MemoryStaging.js";
 import type { MemoryCandidate, MergeAction, MergeDecision } from "./types.js";
 
@@ -46,20 +47,9 @@ const VALID_ACTIONS: MergeAction[] = ["merge", "update", "archive", "reject"];
 
 /** Extract and parse the master's <finalize> block. */
 export function compileFinalize(text: string): FinalizeCompileResult {
-	const m = text.match(/<finalize>\s*([\s\S]*?)\s*<\/finalize>/);
-	if (!m) return { ok: false, error: "missing <finalize> block" };
-	const raw = m[1]!;
-
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(raw);
-	} catch (e) {
-		return {
-			ok: false,
-			error: `invalid JSON in <finalize>: ${String((e as Error).message)}`,
-			raw,
-		};
-	}
+	const block = extractJsonBlock(text, "finalize");
+	if (!block.ok) return { ok: false, error: block.error, ...(block.raw && { raw: block.raw }) };
+	const { value: parsed, raw } = block;
 	if (!isObj(parsed)) return { ok: false, error: "finalize must be an object", raw };
 
 	const planRaw = parsed.patch_merge_plan ?? parsed.patchMergePlan ?? [];
@@ -329,8 +319,4 @@ function trimBlankEdges(lines: string[]): string[] {
 
 function escapeRegex(s: string): string {
 	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function isObj(v: unknown): v is Record<string, unknown> {
-	return typeof v === "object" && v !== null && !Array.isArray(v);
 }

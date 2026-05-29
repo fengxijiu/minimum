@@ -1,6 +1,7 @@
 export {
 	checkWrite,
 	matchGlob,
+	normalizeRelPath,
 	type PathDecision,
 	type PathDenyCode,
 	type PolicyContext,

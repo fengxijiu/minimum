@@ -112,6 +112,28 @@ describe("MemoryStaging", () => {
 			const text = `---\nsource_task: T-1\nconfidence: high\n---\n\nbody\n`;
 			expect(parseCandidate(text)).toBeNull();
 		});
+
+		it("rejects an empty required value (would yield malformed candidateId)", () => {
+			const text = `---\nsource_task: \npersona: vision\nscope: x\nconfidence: high\nrelated_files: []\n---\n\nbody\n`;
+			expect(parseCandidate(text)).toBeNull();
+		});
+
+		it("parses frontmatter written with CRLF line endings", () => {
+			const original = mkCandidate({ relatedFiles: ["a.ts"] });
+			const crlf = serializeCandidate(original).replace(/\n/g, "\r\n");
+			const parsed = parseCandidate(crlf)!;
+			expect(parsed).not.toBeNull();
+			expect(parsed.sourceTask).toBe(original.sourceTask);
+			expect(parsed.relatedFiles).toEqual(["a.ts"]);
+		});
+	});
+
+	it("clearForEpic does not delete a sibling task that shares an id prefix", async () => {
+		await writeCandidate(dir, mkCandidate({ sourceTask: "T-1", persona: "vision" }));
+		await writeCandidate(dir, mkCandidate({ sourceTask: "T-1.2", persona: "vision" }));
+		await clearForEpic(dir, ["T-1"]);
+		const remaining = await listCandidates(dir);
+		expect(remaining.map((c) => c.sourceTask)).toEqual(["T-1.2"]);
 	});
 });
 

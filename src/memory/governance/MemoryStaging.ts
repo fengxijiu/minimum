@@ -81,17 +81,19 @@ export async function clearForEpic(
 	memoryRoot = ".minimum",
 ): Promise<void> {
 	const dir = stagingPath(projectRoot, memoryRoot);
-	for (const tid of taskIds) {
-		try {
-			const entries = await fs.readdir(dir);
-			for (const name of entries) {
-				if (name.startsWith(`${tid}.`) && name.endsWith(".memory.md")) {
-					await fs.rm(path.join(dir, name), { force: true });
-				}
-			}
-		} catch {
-			// dir missing — nothing to do
-		}
+	let entries: string[];
+	try {
+		entries = await fs.readdir(dir);
+	} catch {
+		return; // dir missing — nothing to do
+	}
+	const ids = new Set(taskIds);
+	for (const name of entries) {
+		if (!name.endsWith(".memory.md")) continue;
+		// filename is `<taskId>.<persona>.memory.md`; taskId is everything before
+		// the persona+suffix.
+		const taskId = name.slice(0, name.indexOf(".memory.md")).split(".").slice(0, -1).join(".");
+		if (ids.has(taskId)) await fs.rm(path.join(dir, name), { force: true });
 	}
 }
 
@@ -116,7 +118,10 @@ export function serializeCandidate(c: MemoryCandidate): string {
 }
 
 /** Parse a candidate file's text; returns null if frontmatter is malformed. */
-export function parseCandidate(text: string): Omit<MemoryCandidate, "sourcePath"> | null {
+export function parseCandidate(rawText: string): Omit<MemoryCandidate, "sourcePath"> | null {
+	// Normalize CRLF so files written/edited on Windows still parse (parseYaml
+	// already tolerates \r\n; keep this parser consistent).
+	const text = rawText.replace(/\r\n/g, "\n");
 	const m = text.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
 	if (!m) return null;
 	const front = m[1]!;
@@ -150,7 +155,10 @@ export function parseCandidate(text: string): Omit<MemoryCandidate, "sourcePath"
 
 	const required = ["source_task", "persona", "scope", "confidence"];
 	for (const k of required) {
-		if (!(k in fm)) return null;
+		const v = fm[k];
+		// Required keys must be present and non-empty strings (an empty
+		// source_task would otherwise yield a malformed ".persona" candidateId).
+		if (typeof v !== "string" || v.trim() === "") return null;
 	}
 
 	const confidence = fm.confidence as MemoryConfidence;

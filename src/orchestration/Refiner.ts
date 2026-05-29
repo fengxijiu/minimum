@@ -1,4 +1,5 @@
 import { getPersona } from "../personas/PersonaRegistry.js";
+import { extractJsonBlock, isObj } from "../utils/guards.js";
 import { findGlobConflicts, validateContract } from "./ContractValidator.js";
 import type {
 	CoarseDag,
@@ -41,20 +42,9 @@ export type RefineCompileResult = RefineCompileSuccess | RefineCompileFailure;
 
 /** Extract and parse the master's <refine> block. */
 export function compileRefinement(text: string): RefineCompileResult {
-	const m = text.match(/<refine>\s*([\s\S]*?)\s*<\/refine>/);
-	if (!m) return { ok: false, error: "missing <refine> block" };
-
-	const raw = m[1]!;
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(raw);
-	} catch (e) {
-		return {
-			ok: false,
-			error: `invalid JSON in <refine>: ${String((e as Error).message)}`,
-			raw,
-		};
-	}
+	const block = extractJsonBlock(text, "refine");
+	if (!block.ok) return { ok: false, error: block.error, ...(block.raw && { raw: block.raw }) };
+	const { value: parsed, raw } = block;
 
 	if (!isObj(parsed) || !Array.isArray(parsed.tasks))
 		return { ok: false, error: "refine.tasks must be an array", raw };
@@ -229,8 +219,4 @@ function safeOutputSchema(
 		// Unknown persona — validateContract will flag it; pick a safe default.
 		return { outputSchema: "task_report", readOnly: false };
 	}
-}
-
-function isObj(v: unknown): v is Record<string, unknown> {
-	return typeof v === "object" && v !== null && !Array.isArray(v);
 }

@@ -132,13 +132,14 @@ export function findGlobConflicts(
 	const byGroup = groupBy(contracts, (c) => c.parallelGroup);
 
 	for (const group of byGroup.values()) {
+		// Precompute one glob Set per task so each task's globs are hashed once.
+		const sets = group.map((g) => new Set(g.pathPolicy.allowedGlobs));
 		for (let i = 0; i < group.length; i++) {
 			for (let j = i + 1; j < group.length; j++) {
 				const a = group[i]!;
 				const b = group[j]!;
-				const bGlobs = new Set(b.pathPolicy.allowedGlobs);
-				for (const glob of a.pathPolicy.allowedGlobs) {
-					if (bGlobs.has(glob)) {
+				for (const glob of sets[i]!) {
+					if (sets[j]!.has(glob)) {
 						conflicts.push({ taskA: a.taskId, taskB: b.taskId, glob });
 					}
 				}

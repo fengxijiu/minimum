@@ -2,7 +2,8 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { PersonaId } from "../../personas/Persona.js";
 import type { TaskContract } from "../../orchestration/TaskContract.js";
-import { matchGlob } from "../../tools/policy/PathPolicyEnforcer.js";
+import { matchGlob, normalizeRelPath } from "../../tools/policy/PathPolicyEnforcer.js";
+import { CharBudget } from "../../utils/tokenBudget.js";
 import type { MemoryCandidate, MemoryConfidence } from "./types.js";
 
 /**
@@ -20,8 +21,6 @@ import type { MemoryCandidate, MemoryConfidence } from "./types.js";
  * ContextPack, never the raw canonical memory.
  */
 
-/** 1 token ≈ 4 chars (English heuristic), matching MemoryLoader. */
-const CHARS_PER_TOKEN = 4;
 const DEFAULT_MAX_TOKENS = 4_000;
 
 const CONFIDENCE_WEIGHT: Record<MemoryConfidence, number> = {
@@ -68,76 +67,47 @@ export interface ContextPack {
  */
 export function buildContextPack(input: ContextPackInput): ContextPack {
 	const { contract } = input;
-	const maxTokens = input.maxTokens ?? DEFAULT_MAX_TOKENS;
-	const charBudget = maxTokens * CHARS_PER_TOKEN;
-
-	const sections: string[] = [];
-	let chars = 0;
-	let truncated = false;
+	const budget = new CharBudget(input.maxTokens ?? DEFAULT_MAX_TOKENS);
 
 	// --- Always-included header (objective + acceptance + constraints) ---
-	const head = renderHead(contract);
-	sections.push(head);
-	chars += head.length;
+	budget.pushAlways(renderHead(contract));
 
 	// --- Canonical memory sections (already task-type filtered upstream) ---
 	const includedSections: string[] = [];
 	const canonical = input.canonicalSections ?? [];
-	if (canonical.length > 0) {
-		const intro = "\n## Project Memory\n";
-		if (chars + intro.length <= charBudget) {
-			sections.push(intro);
-			chars += intro.length;
-			for (const sec of canonical) {
-				const body = sec.body.trim();
-				if (!body) continue;
-				const block = `\n### ${sec.key} (\`${sec.path}\`)\n\n${body}\n`;
-				if (chars + block.length > charBudget) {
-					truncated = true;
-					break;
-				}
-				sections.push(block);
-				chars += block.length;
-				includedSections.push(sec.key);
-			}
-		} else {
-			truncated = true;
+	if (canonical.length > 0 && budget.tryPush("\n## Project Memory\n")) {
+		for (const sec of canonical) {
+			const body = sec.body.trim();
+			if (!body) continue;
+			const block = `\n### ${sec.key} (\`${sec.path}\`)\n\n${body}\n`;
+			if (!budget.tryPush(block)) break;
+			includedSections.push(sec.key);
 		}
 	}
 
 	// --- Perception findings (ranked by relevance to this task) ---
 	const ranked = rankCandidates(input.candidates, contract);
 	const includedCandidates: string[] = [];
-	if (ranked.length > 0) {
-		const intro =
-			"\n## Perception Findings\n\n> Upstream W1 findings filtered to files this task touches.\n";
-		if (chars + intro.length <= charBudget) {
-			sections.push(intro);
-			chars += intro.length;
-			for (const c of ranked) {
-				const block = renderCandidate(c);
-				if (chars + block.length > charBudget) {
-					truncated = true;
-					break;
-				}
-				sections.push(block);
-				chars += block.length;
-				includedCandidates.push(`${c.sourceTask}.${c.persona}`);
-			}
-		} else {
-			truncated = true;
+	if (
+		ranked.length > 0 &&
+		budget.tryPush(
+			"\n## Perception Findings\n\n> Upstream W1 findings filtered to files this task touches.\n",
+		)
+	) {
+		for (const c of ranked) {
+			if (!budget.tryPush(renderCandidate(c))) break;
+			includedCandidates.push(`${c.sourceTask}.${c.persona}`);
 		}
 	}
 
-	const text = sections.join("");
 	return {
 		taskId: contract.taskId,
 		personaId: contract.personaId,
-		text,
+		text: budget.text,
 		includedCandidates,
 		includedSections,
-		approxTokens: Math.ceil(chars / CHARS_PER_TOKEN),
-		truncated,
+		approxTokens: budget.approxTokens,
+		truncated: budget.truncated,
 	};
 }
 
@@ -195,9 +165,9 @@ export function rankCandidates(
 function relevanceScore(c: MemoryCandidate, allowedGlobs: string[]): number {
 	let overlap = 0;
 	for (const file of c.relatedFiles) {
-		// Normalize the same way PathPolicyEnforcer.checkWrite does, so ranking
-		// agrees with the policy gate for "./"-prefixed or backslash paths.
-		const norm = path.posix.normalize(file.replace(/\\/g, "/"));
+		// Normalize the same way the write-policy gate does, so ranking agrees
+		// with it for "./"-prefixed or backslash paths.
+		const norm = normalizeRelPath(file);
 		if (allowedGlobs.some((g) => matchGlob(norm, g))) overlap++;
 	}
 	return overlap * 10 + CONFIDENCE_WEIGHT[c.confidence];

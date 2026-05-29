@@ -1,4 +1,6 @@
 import type { PersonaId } from "../personas/Persona.js";
+import { listPersonaIds } from "../personas/PersonaRegistry.js";
+import { extractJsonBlock, isObj } from "../utils/guards.js";
 import type { CoarseDag, CoarsePhase, CoarseTask } from "./TaskContract.js";
 
 /**
@@ -25,38 +27,16 @@ export interface CompileFailure {
 
 export type CompileResult = CompileSuccess | CompileFailure;
 
-const VALID_PERSONA_IDS: PersonaId[] = [
-	"master_planner",
-	"vision",
-	"repo_scout",
-	"context_builder",
-	"code_executor",
-	"test_writer",
-	"test_runner",
-	"runtime_debug",
-	"reviewer",
-	"docs",
-];
+/** Single source of truth for valid persona ids — derived from the registry. */
+const VALID_PERSONA_IDS = new Set<PersonaId>(listPersonaIds());
 
 /** Extract and parse the <task_dag> block from master_planner output. */
 export function compileCoarse(text: string): CompileResult {
-	const m = text.match(/<task_dag>\s*([\s\S]*?)\s*<\/task_dag>/);
-	if (!m) return { ok: false, error: "missing <task_dag> block" };
+	const block = extractJsonBlock(text, "task_dag");
+	if (!block.ok) return { ok: false, error: block.error, ...(block.raw && { raw: block.raw }) };
 
-	const raw = m[1]!;
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(raw);
-	} catch (e) {
-		return {
-			ok: false,
-			error: `invalid JSON in <task_dag>: ${String((e as Error).message)}`,
-			raw,
-		};
-	}
-
-	const r = validateCoarseDag(parsed);
-	if (!r.ok) return { ok: false, error: r.error, raw };
+	const r = validateCoarseDag(block.value);
+	if (!r.ok) return { ok: false, error: r.error, raw: block.raw };
 	return { ok: true, dag: r.dag };
 }
 
@@ -125,8 +105,8 @@ function validateTask(
 
 	if (typeof id !== "string" || !id)
 		return { ok: false, error: `${prefix}.id required` };
-	if (typeof persona !== "string" || !VALID_PERSONA_IDS.includes(persona as PersonaId))
-		return { ok: false, error: `${prefix}.persona must be one of ${VALID_PERSONA_IDS.join(",")}` };
+	if (typeof persona !== "string" || !VALID_PERSONA_IDS.has(persona as PersonaId))
+		return { ok: false, error: `${prefix}.persona must be one of ${[...VALID_PERSONA_IDS].join(",")}` };
 	if (typeof objective !== "string" || objective.trim().length < 4)
 		return { ok: false, error: `${prefix}.objective must be a non-empty string` };
 	if (typeof parallelGroup !== "string" || !parallelGroup)
@@ -148,10 +128,6 @@ function validateTask(
 			allowedGlobs: allowedGlobs as string[] | undefined,
 		},
 	};
-}
-
-function isObj(v: unknown): v is Record<string, unknown> {
-	return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 /** Classify a user request into a taskType used by MemoryLoader. */

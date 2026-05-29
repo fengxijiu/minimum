@@ -36,6 +36,14 @@ export interface PolicyContext {
 	projectRoot: string;
 }
 
+/**
+ * Normalize a path to a forward-slash, posix-normalized relative form. Shared
+ * with ContextPackBuilder so memory ranking matches the write-policy gate.
+ */
+export function normalizeRelPath(p: string): string {
+	return path.posix.normalize(p.replace(/\\/g, "/"));
+}
+
 export function checkWrite(
 	targetPath: string,
 	ctx: PolicyContext,
@@ -61,7 +69,7 @@ export function checkWrite(
 	}
 
 	// Normalize and reject parent traversal.
-	const normalized = path.posix.normalize(targetPath.replace(/\\/g, "/"));
+	const normalized = normalizeRelPath(targetPath);
 	if (normalized.startsWith("..") || normalized.includes("/../")) {
 		return deny(
 			"PATH_TRAVERSAL",

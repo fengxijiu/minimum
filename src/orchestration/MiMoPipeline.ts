@@ -10,7 +10,7 @@ import type { PersonaId } from "../personas/Persona.js";
 import { compileCoarse, classifyTaskType } from "./TaskCompiler.js";
 import { buildWaves } from "./TaskGraph.js";
 import type { CoarseDag, TaskContract, TaskInputs } from "./TaskContract.js";
-import { compileRefinement, refineDag } from "./Refiner.js";
+import { compileRefinement, refineDag, type RefinementEntry } from "./Refiner.js";
 import { schedule, type WaveEvent } from "./WaveScheduler.js";
 import type { TaskResult, WorkerExecutor } from "./TaskRunner.js";
 
@@ -128,7 +128,7 @@ export async function runPipeline(
 
 	// ── W0.5: refine ──────────────────────────────────────────────────────────
 	emit({ type: "phase_start", phase: "W0.5", label: "refine" });
-	let refinement = new Map();
+	let refinement: Map<string, RefinementEntry> = new Map();
 	try {
 		const refineText = await opts.planner.refine(dag, allResults);
 		const parsed = compileRefinement(refineText);
