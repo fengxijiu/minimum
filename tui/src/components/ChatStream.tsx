@@ -1,5 +1,5 @@
-import React, { useMemo } from 'react';
-import { Box, Text } from 'ink';
+import React, { useMemo, type ReactNode } from 'react';
+import { Box, Static, Text } from 'ink';
 import { theme } from '../theme.js';
 import type { Message, ToolProgress as ToolProgressType } from '../types.js';
 import { ToolLine, DiffBlock, ChipsRow, PermissionCard, ErrorBlock } from './atoms.js';
@@ -14,6 +14,165 @@ function RoleGutter({ color }: { color: string }) {
 
 function RoleLabel({ label, color }: { label: string; color: string }) {
   return <Text color={color} bold>{label}  </Text>;
+}
+
+// ── Markdown rendering ────────────────────────────────────────────────
+//
+// A small, dependency-free Markdown renderer. Block-level parsing handles
+// fenced code, headings, blockquotes, horizontal rules and (nested) lists;
+// inline parsing handles bold, italic, code, strikethrough and links.
+
+type MdSpan =
+  | { k: 't' | 'b' | 'i' | 'c' | 's'; v: string }
+  | { k: 'a'; v: string; href: string };
+
+function parseInlineMd(text: string): MdSpan[] {
+  const spans: MdSpan[] = [];
+  // bold ** **  ·  italic * *  ·  italic _ _  ·  strike ~~ ~~  ·  code ` `  ·  link [t](u)
+  const re = /\*\*([^*]+)\*\*|\*([^*]+)\*|_([^_]+)_|~~([^~]+)~~|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\)/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) spans.push({ k: 't', v: text.slice(last, m.index) });
+    if (m[1] !== undefined) spans.push({ k: 'b', v: m[1] });
+    else if (m[2] !== undefined) spans.push({ k: 'i', v: m[2] });
+    else if (m[3] !== undefined) spans.push({ k: 'i', v: m[3] });
+    else if (m[4] !== undefined) spans.push({ k: 's', v: m[4] });
+    else if (m[5] !== undefined) spans.push({ k: 'c', v: m[5] });
+    else spans.push({ k: 'a', v: m[6]!, href: m[7]! });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) spans.push({ k: 't', v: text.slice(last) });
+  return spans.length ? spans : [{ k: 't', v: text }];
+}
+
+function InlineMd({ text, color }: { text: string; color?: string }) {
+  const spans = useMemo(() => parseInlineMd(text), [text]);
+  return (
+    <Text color={color}>
+      {spans.map((s, i) => {
+        switch (s.k) {
+          case 'b': return <Text key={i} bold color={color}>{s.v}</Text>;
+          case 'i': return <Text key={i} italic color={color}>{s.v}</Text>;
+          case 's': return <Text key={i} strikethrough color={theme.muted}>{s.v}</Text>;
+          case 'c': return <Text key={i} color={theme.accent2}>{s.v}</Text>;
+          case 'a': return <Text key={i} color={theme.accent} underline>{s.v}</Text>;
+          default:  return <Text key={i} color={color}>{s.v}</Text>;
+        }
+      })}
+    </Text>
+  );
+}
+
+type MdBlock =
+  | { k: 'code'; lang: string; lines: string[] }
+  | { k: 'heading'; level: 1 | 2 | 3; text: string }
+  | { k: 'quote'; text: string }
+  | { k: 'hr' }
+  | { k: 'li'; indent: number; marker: string; text: string }
+  | { k: 'p'; text: string }
+  | { k: 'blank' };
+
+function parseBlocks(raw: string): MdBlock[] {
+  const out: MdBlock[] = [];
+  const lines = raw.split('\n');
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i]!;
+
+    const fence = line.match(/^\s*```(\w*)\s*$/);
+    if (fence) {
+      const lang = fence[1] ?? '';
+      const body: string[] = [];
+      i++;
+      while (i < lines.length && !/^\s*```\s*$/.test(lines[i]!)) { body.push(lines[i]!); i++; }
+      i++; // consume closing fence
+      out.push({ k: 'code', lang, lines: body });
+      continue;
+    }
+
+    const h = line.match(/^(#{1,3})\s+(.+)/);
+    if (h) { out.push({ k: 'heading', level: h[1]!.length as 1 | 2 | 3, text: h[2]! }); i++; continue; }
+
+    if (/^\s*([-*_])(?:\s*\1){2,}\s*$/.test(line)) { out.push({ k: 'hr' }); i++; continue; }
+
+    const q = line.match(/^>\s?(.*)/);
+    if (q) { out.push({ k: 'quote', text: q[1]! }); i++; continue; }
+
+    const li = line.match(/^(\s*)([-*+]|\d+[.)])\s+(.+)/);
+    if (li) {
+      const indent = Math.min(4, Math.floor(li[1]!.length / 2));
+      const marker = /\d/.test(li[2]!) ? li[2]!.replace(/[.)]/, '.') + ' ' : '• ';
+      out.push({ k: 'li', indent, marker, text: li[3]! });
+      i++; continue;
+    }
+
+    if (line.trim() === '') { out.push({ k: 'blank' }); i++; continue; }
+
+    out.push({ k: 'p', text: line }); i++;
+  }
+  return out;
+}
+
+function MarkdownBlock({ text, color }: { text: string; color?: string }) {
+  const blocks = useMemo(() => parseBlocks(text), [text]);
+  return (
+    <Box flexDirection="column">
+      {blocks.map((b, i) => {
+        switch (b.k) {
+          case 'code':
+            return (
+              <Box
+                key={i}
+                flexDirection="column"
+                borderStyle="round"
+                borderColor={theme.line}
+                paddingX={1}
+              >
+                {b.lang ? <Text color={theme.muted}>{b.lang}</Text> : null}
+                {(b.lines.length ? b.lines : ['']).map((l, j) => (
+                  <Text key={j} color={theme.plus}>{l || ' '}</Text>
+                ))}
+              </Box>
+            );
+          case 'heading':
+            return (
+              <Text
+                key={i}
+                bold
+                color={b.level === 1 ? theme.accent : b.level === 2 ? theme.inkSoft : color}
+              >
+                {b.text}
+              </Text>
+            );
+          case 'quote':
+            return (
+              <Box key={i}>
+                <Text color={theme.line}>│ </Text>
+                <InlineMd text={b.text} color={theme.inkSoft} />
+              </Box>
+            );
+          case 'hr':
+            return <Text key={i} color={theme.line}>{'─'.repeat(24)}</Text>;
+          case 'li':
+            return (
+              <Box key={i} paddingLeft={b.indent * 2}>
+                <Text color={theme.accent}>{b.marker}</Text>
+                <InlineMd text={b.text} color={color} />
+              </Box>
+            );
+          case 'blank':
+            return <Text key={i}> </Text>;
+          default:
+            return (
+              <Box key={i}>
+                <InlineMd text={b.text} color={color} />
+              </Box>
+            );
+        }
+      })}
+    </Box>
+  );
 }
 
 // ── Tool group rendering ──────────────────────────────────────────────
@@ -93,189 +252,47 @@ function ReasoningRow({ text, verbose }: { text: string; verbose?: boolean }) {
 }
 
 // ── Render item types ─────────────────────────────────────────────────
+//
+// A RenderItem is one printable unit of scrollback. `lastMsgIndex` records
+// the highest underlying message index so the stream can be partitioned
+// into a committed (Static) prefix and a live tail without breaking the
+// turn-divider / tool-grouping logic.
 
-type RenderItem =
-  | { id: string; kind: 'msg';       msg: Message }
-  | { id: string; kind: 'toolgroup'; tools: ToolMsg[] }
-  | { id: string; kind: 'divider' };
+type RenderItem = (
+  | { kind: 'msg';       msg: Message }
+  | { kind: 'toolgroup'; tools: ToolMsg[] }
+  | { kind: 'divider' }
+) & { id: string; lastMsgIndex: number };
 
 function buildRenderItems(msgs: Message[]): RenderItem[] {
   const items: RenderItem[] = [];
   let toolBuf: ToolMsg[] = [];
+  let toolBufIdx = -1;
 
   const flushTools = () => {
     if (!toolBuf.length) return;
-    items.push({ id: `tg:${toolBuf[0]!.id}`, kind: 'toolgroup', tools: toolBuf });
+    items.push({ id: `tg:${toolBuf[0]!.id}`, kind: 'toolgroup', tools: toolBuf, lastMsgIndex: toolBufIdx });
     toolBuf = [];
+    toolBufIdx = -1;
   };
 
   for (let i = 0; i < msgs.length; i++) {
     const msg = msgs[i]!;
     if (msg.type === 'tool') {
       toolBuf.push(msg as ToolMsg);
+      toolBufIdx = i;
       continue;
     }
     flushTools();
     if (msg.type === 'user' && i > 0) {
       const prev = items[items.length - 1];
       const prevIsMeta = prev?.kind === 'msg' && prev.msg.type === 'turnmeta';
-      if (!prevIsMeta) items.push({ id: `div:${msg.id}`, kind: 'divider' });
+      if (!prevIsMeta) items.push({ id: `div:${msg.id}`, kind: 'divider', lastMsgIndex: i });
     }
-    items.push({ id: msg.id, kind: 'msg', msg });
+    items.push({ id: msg.id, kind: 'msg', msg, lastMsgIndex: i });
   }
   flushTools();
   return items;
-}
-
-// ── Height estimation (for virtual scroll) ────────────────────────────
-
-function estimateItemHeight(item: RenderItem, cols: number): number {
-  const w = Math.max(20, cols - 6);
-  if (item.kind === 'divider') return 2;
-  if (item.kind === 'toolgroup') return 2 + item.tools.length;
-  const msg = item.msg;
-  switch (msg.type) {
-    case 'user': {
-      const lines = msg.text.split('\n').reduce((acc, l) =>
-        acc + Math.max(1, Math.ceil(l.length / w)), 0);
-      return 2 + lines;
-    }
-    case 'assistant': {
-      const lines = msg.text.split('\n').reduce((acc, l) =>
-        acc + Math.max(1, Math.ceil(l.length / w)), 0);
-      return 2 + lines;
-    }
-    case 'system':     return 2; // <Box marginTop={1}> + 1 content row
-    case 'tool':       return 1;
-    case 'turnmeta':   return 2;
-    case 'error':      return 3 + Math.min(6, msg.error.lines?.length ?? 0);
-    case 'diff':       return 3 + Math.min(12, msg.diff.lines?.length ?? 0);
-    case 'chips':      return 2;
-    case 'permission': return 7;
-    default:           return 2;
-  }
-}
-
-// ── Viewport calculator ───────────────────────────────────────────────
-
-function buildViewport(
-  items: RenderItem[],
-  viewportH: number,
-  scrollOffset: number,
-  cols: number,
-): { visible: RenderItem[]; linesAbove: number; totalLines: number } {
-  if (viewportH <= 0 || items.length === 0) {
-    return { visible: [], linesAbove: 0, totalLines: 0 };
-  }
-
-  const heights = items.map(it => Math.max(1, estimateItemHeight(it, cols)));
-  const totalLines = heights.reduce((a, b) => a + b, 0);
-
-  if (totalLines <= viewportH) {
-    return { visible: items, linesAbove: 0, totalLines };
-  }
-
-  // bottomEdge = the last line index (0-based) we want to show
-  const clampedOffset = Math.max(0, Math.min(scrollOffset, totalLines - viewportH));
-  const bottomEdge = totalLines - clampedOffset;
-  const topEdge = Math.max(0, bottomEdge - viewportH);
-
-  let cum = 0;
-  const visible: RenderItem[] = [];
-  let linesAbove = 0;
-
-  for (let i = 0; i < items.length; i++) {
-    const h = heights[i]!;
-    const end = cum + h;
-    if (end <= topEdge) {
-      linesAbove += h;
-    } else if (cum >= topEdge + viewportH) {
-      break;
-    } else {
-      visible.push(items[i]!);
-    }
-    cum += h;
-  }
-
-  return { visible, linesAbove, totalLines };
-}
-
-// ── Markdown rendering ────────────────────────────────────────────────
-
-type MdSpan = { k: 't' | 'b' | 'i' | 'c'; v: string };
-
-function parseInlineMd(text: string): MdSpan[] {
-  const spans: MdSpan[] = [];
-  const re = /\*\*(.+?)\*\*|\*(.+?)\*|`(.+?)`/g;
-  let last = 0;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > last) spans.push({ k: 't', v: text.slice(last, m.index) });
-    if (m[1] !== undefined) spans.push({ k: 'b', v: m[1] });
-    else if (m[2] !== undefined) spans.push({ k: 'i', v: m[2] });
-    else spans.push({ k: 'c', v: m[3]! });
-    last = m.index + m[0].length;
-  }
-  if (last < text.length) spans.push({ k: 't', v: text.slice(last) });
-  return spans;
-}
-
-function InlineMd({ text, color }: { text: string; color?: string }) {
-  const spans = useMemo(() => parseInlineMd(text), [text]);
-  return (
-    <Text>
-      {spans.map((s, i) =>
-        s.k === 'b' ? <Text key={i} bold color={color}>{s.v}</Text>
-        : s.k === 'i' ? <Text key={i} italic color={color}>{s.v}</Text>
-        : s.k === 'c' ? <Text key={i} color={theme.accent2}>{s.v}</Text>
-        : <Text key={i} color={color}>{s.v}</Text>
-      )}
-    </Text>
-  );
-}
-
-type MdLine =
-  | { k: 'code'; t: string }
-  | { k: 'h1' | 'h2' | 'h3'; t: string }
-  | { k: 'li'; prefix: string; t: string }
-  | { k: 'text'; t: string };
-
-function parseMdLines(raw: string): MdLine[] {
-  const result: MdLine[] = [];
-  let inCode = false;
-  for (const line of raw.split('\n')) {
-    if (line.startsWith('```')) { inCode = !inCode; continue; }
-    if (inCode) { result.push({ k: 'code', t: line }); continue; }
-    const h = line.match(/^(#{1,3}) (.+)/);
-    if (h) { result.push({ k: `h${h[1]!.length}` as 'h1' | 'h2' | 'h3', t: h[2]! }); continue; }
-    const ul = line.match(/^[-*] (.+)/);
-    if (ul) { result.push({ k: 'li', prefix: '• ', t: ul[1]! }); continue; }
-    const ol = line.match(/^(\d+)\. (.+)/);
-    if (ol) { result.push({ k: 'li', prefix: ol[1]! + '. ', t: ol[2]! }); continue; }
-    result.push({ k: 'text', t: line });
-  }
-  return result;
-}
-
-function MarkdownBlock({ text, color }: { text: string; color?: string }) {
-  const lines = useMemo(() => parseMdLines(text), [text]);
-  return (
-    <Box flexDirection="column">
-      {lines.map((line, i) => {
-        if (line.k === 'code') return <Text key={i} color={theme.accent2}>{line.t}</Text>;
-        if (line.k === 'h1')   return <Text key={i} bold color={theme.accent}>{line.t}</Text>;
-        if (line.k === 'h2')   return <Text key={i} bold color={theme.inkSoft}>{line.t}</Text>;
-        if (line.k === 'h3')   return <Text key={i} bold>{line.t}</Text>;
-        if (line.k === 'li')   return (
-          <Box key={i}>
-            <Text color={theme.muted}>{line.prefix}</Text>
-            <InlineMd text={line.t} color={color} />
-          </Box>
-        );
-        return <Box key={i}><InlineMd text={line.t} color={color} /></Box>;
-      })}
-    </Box>
-  );
 }
 
 // ── Single message renderer ───────────────────────────────────────────
@@ -359,97 +376,76 @@ function RenderItemRow({ item, cols, verbose }: { item: RenderItem; cols: number
 
 // ── ChatStream ────────────────────────────────────────────────────────
 //
-// Full-viewport chat area. No <Static>: every message lives in the live
-// region, and a virtual-scroll window selects which items to render.
-// scrollOffset=0 pins to the bottom (latest messages); positive values
-// scroll upward through history.
+// Claude Code style conversation flow. Completed messages — those in
+// [0, committedCount) — are emitted once through <Static>, so the terminal
+// writes them into its own scrollback and the user scrolls history with the
+// terminal's native scrollback (mouse / trackpad / PgUp). The live tail
+// (uncommitted messages of the current turn + the streaming frame) is the
+// only region repainted in place.
+
+type StaticEntry =
+  | { id: '__header__'; kind: 'header' }
+  | RenderItem;
 
 export const ChatStream = React.memo(function ChatStream({
   stepLabel,
   messages,
+  committedCount,
   streaming,
   reasoning,
   activeTool,
   verbose,
-  scrollOffset,
-  chatHeight,
   cols,
+  header,
 }: {
   stepLabel?: string;
   messages: Message[];
+  committedCount: number;
   streaming?: string | null;
   reasoning?: string | null;
   activeTool?: ToolProgressType | null;
   verbose?: boolean;
-  scrollOffset: number;
-  chatHeight: number;
   cols: number;
+  header?: ReactNode;
 }) {
   const allItems = useMemo(() => buildRenderItems(messages), [messages]);
 
-  // Estimate live-frame height so we don't let it crowd the history pane.
+  // Partition into the committed prefix (Static scrollback) and the live tail.
+  const { staticEntries, liveItems } = useMemo(() => {
+    const committed: RenderItem[] = [];
+    const live: RenderItem[] = [];
+    for (const it of allItems) {
+      if (it.lastMsgIndex < committedCount) committed.push(it);
+      else live.push(it);
+    }
+    const entries: StaticEntry[] = header
+      ? [{ id: '__header__', kind: 'header' }, ...committed]
+      : committed;
+    return { staticEntries: entries, liveItems: live };
+  }, [allItems, committedCount, header]);
+
+  // Live streaming frame (the only thing repainted on every token).
   const streamText = streaming ?? '';
   const streamViewport = streamText.split('\n').slice(-STREAM_MAX_LINES).join('\n');
   const hasLive = !!stepLabel || !!activeTool || !!reasoning || !!streamViewport;
 
-  const liveH = hasLive
-    ? 2                                           // border top+bottom
-    + (stepLabel ? 1 : 0)
-    + (activeTool ? 1 : 0)
-    + (reasoning ? (verbose ? 4 : 2) : 0)
-    + (streamViewport ? 3 : 0)
-    : 0;
-
-  // One row for the scroll indicator, reserved whenever there are items above.
-  const indicatorH = 1;
-  const historyH = Math.max(4, chatHeight - liveH - indicatorH);
-
-  const { visible, linesAbove, totalLines } = useMemo(
-    () => buildViewport(allItems, historyH, scrollOffset, cols),
-    [allItems, historyH, scrollOffset, cols],
-  );
-
-  const isScrolled = scrollOffset > 0;
-  const canScrollDown = isScrolled;
-
   return (
-    <Box flexDirection="column" flexGrow={1}>
+    <Box flexDirection="column">
+      {/* ── committed history → terminal scrollback (printed once) ───── */}
+      <Static items={staticEntries}>
+        {(entry) =>
+          entry.kind === 'header'
+            ? <Box key="__header__">{header}</Box>
+            : <RenderItemRow key={entry.id} item={entry} cols={cols} verbose={verbose} />
+        }
+      </Static>
 
-      {/* ── scroll-up indicator ─────────────────────────────────────── */}
-      {linesAbove > 0 ? (
-        <Box paddingLeft={2}>
-          <Text color={theme.muted}>
-            {'↑ '}
-            <Text color={theme.inkSoft}>{Math.round(linesAbove / 2)}</Text>
-            {' messages above · '}
-            <Text color={theme.accent}>PgUp</Text>
-          </Text>
-        </Box>
-      ) : (
-        // Always keep one blank indicator row so the layout height is stable.
-        <Box paddingLeft={2}><Text> </Text></Box>
-      )}
-
-      {/* ── visible history ─────────────────────────────────────────── */}
-      {visible.map(item => (
+      {/* ── live tail of the current turn ───────────────────────────── */}
+      {liveItems.map(item => (
         <RenderItemRow key={item.id} item={item} cols={cols} verbose={verbose} />
       ))}
 
-      {/* ── scroll-down indicator (shown when scrolled up) ──────────── */}
-      {canScrollDown ? (
-        <Box paddingLeft={2} marginTop={1}>
-          <Text color={theme.muted}>
-            {'↓ '}
-            {hasLive
-              ? <Text color={theme.accent}>turn in progress</Text>
-              : <Text color={theme.inkSoft}>latest messages</Text>}
-            {' · '}
-            <Text color={theme.accent}>PgDn</Text>
-          </Text>
-        </Box>
-      ) : null}
-
-      {/* ── live frame ──────────────────────────────────────────────── */}
+      {/* ── live streaming frame ────────────────────────────────────── */}
       {hasLive ? (
         <Box
           flexDirection="column"
@@ -492,7 +488,6 @@ export const ChatStream = React.memo(function ChatStream({
           ) : null}
         </Box>
       ) : null}
-
     </Box>
   );
 });

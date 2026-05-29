@@ -4,10 +4,11 @@ import { render } from 'ink';
 import { App } from './app.js';
 import { createEngineRunner } from './engine.js';
 
-// ── Alternate screen + mouse tracking ────────────────────────────────
-process.stdout.write('\x1b[?1049h'); // alternate screen
-process.stdout.write('\x1b[?1000h'); // mouse button/wheel tracking
-process.stdout.write('\x1b[?1006h'); // SGR extended mouse (large coords)
+// ── Inline (non-fullscreen) rendering ────────────────────────────────
+// Claude Code style: no alternate screen and no mouse capture, so the
+// terminal's own scrollback owns the conversation history. Completed
+// messages are printed once (via <Static>) and scroll away naturally;
+// only the live turn + input box are repainted in place at the bottom.
 
 // ── Synchronized output (DEC mode 2026) ──────────────────────────────
 // Wraps each stdout.write in a BSU/ESU pair so the terminal renders frames
@@ -21,19 +22,6 @@ const _origWrite = process.stdout.write.bind(process.stdout);
   return r;
 };
 
-let _altRestored = false;
-const restoreAlt = () => {
-  if (_altRestored) return;
-  _altRestored = true;
-  process.stdout.write('\x1b[?1006l'); // disable SGR mouse
-  process.stdout.write('\x1b[?1000l'); // disable mouse tracking
-  process.stdout.write('\x1b[?1049l'); // exit alternate screen
-};
-process.on('exit', restoreAlt);
-process.on('SIGINT', () => { restoreAlt(); process.exit(0); });
-process.on('SIGTERM', () => { restoreAlt(); process.exit(0); });
-
 const { runner, pipelineRunner, info } = await createEngineRunner(process.cwd());
 const { waitUntilExit } = render(<App runner={runner} pipelineRunner={pipelineRunner} engineInfo={info} />);
 await waitUntilExit();
-restoreAlt();

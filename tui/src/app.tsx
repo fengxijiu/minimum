@@ -3,7 +3,6 @@ import { Box, useApp } from 'ink';
 import { TitleBar }       from './components/TitleBar.js';
 import { PlanStrip }      from './components/PlanStrip.js';
 import { PipelinePanel }  from './components/PipelinePanel.js';
-import { ContextRail }    from './components/ContextRail.js';
 import { ChatStream }     from './components/ChatStream.js';
 import { StatusBar }      from './components/StatusBar.js';
 import { WelcomeScreen }  from './components/WelcomeScreen.js';
@@ -70,22 +69,15 @@ const PipelineZone = React.memo(function PipelineZone({ phases }: {
   return <PipelinePanel phases={phases} />;
 });
 
-/** ContextRail zone — only re-renders on files/edits/mode changes. */
-const ContextZone = React.memo(function ContextZone({ files, edits, mode }: {
-  files: FileEntry[]; edits: AppState['edits']; mode: Mode;
-}) {
-  return <ContextRail files={files} edits={edits} mode={mode} />;
-});
-
 /** ChatStream zone — only re-renders on messages/stepLabel/activeTool/streaming changes. */
 const ChatZone = React.memo(function ChatZone({
-  messages, path, engineInfo, stepLabel, activeTool, helpOpen,
-  streaming, reasoning, verbose, scrollOffset, chatHeight, cols,
+  messages, committedCount, path, engineInfo, stepLabel, activeTool, helpOpen,
+  streaming, reasoning, verbose, cols, header,
 }: {
-  messages: Message[]; path: string; engineInfo: EngineInfo;
+  messages: Message[]; committedCount: number; path: string; engineInfo: EngineInfo;
   stepLabel: string; activeTool: AppState['activeTool']; helpOpen: boolean;
   streaming?: string | null; reasoning?: string | null; verbose?: boolean;
-  scrollOffset: number; chatHeight: number; cols: number;
+  cols: number; header: React.ReactNode;
 }) {
   const hasConversation = messages.some(m => m.type !== 'system');
   const showWelcome = !hasConversation && !helpOpen;
@@ -94,13 +86,13 @@ const ChatZone = React.memo(function ChatZone({
     : <ChatStream
         stepLabel={stepLabel}
         messages={messages}
+        committedCount={committedCount}
         streaming={streaming}
         reasoning={reasoning}
         activeTool={activeTool}
         verbose={verbose}
-        scrollOffset={scrollOffset}
-        chatHeight={chatHeight}
         cols={cols}
+        header={header}
       />;
 });
 
@@ -133,32 +125,12 @@ export function App({
   engineInfo = DEFAULT_ENGINE_INFO,
 }: { runner?: Runner; pipelineRunner?: Runner; engineInfo?: EngineInfo } = {}) {
   const { exit } = useApp();
-  // ── Terminal dimensions — updated on resize ───────────────────────
-  const [termRows, setTermRows] = useState(() => process.stdout.rows ?? 40);
+  // ── Terminal width — used for text-wrap / divider sizing on resize ──
   const [termCols, setTermCols] = useState(() => process.stdout.columns ?? 80);
   useEffect(() => {
-    const onResize = () => {
-      setTermRows(process.stdout.rows ?? 40);
-      setTermCols(process.stdout.columns ?? 80);
-    };
+    const onResize = () => setTermCols(process.stdout.columns ?? 80);
     process.stdout.on('resize', onResize);
     return () => { process.stdout.off('resize', onResize); };
-  }, []);
-
-  // ── Mouse wheel scroll (SGR format: ESC [ < btn ; col ; row M) ───────
-  useEffect(() => {
-    const onData = (chunk: Buffer) => {
-      const s = chunk.toString('binary');
-      const re = /\x1b\[<(\d+);\d+;\d+M/g;
-      let m: RegExpMatchArray | null;
-      while ((m = re.exec(s)) !== null) {
-        const btn = parseInt(m[1]!, 10);
-        if (btn === 64) setScrollOffset(p => p + 3);       // wheel up
-        else if (btn === 65) setScrollOffset(p => Math.max(0, p - 3)); // wheel down
-      }
-    };
-    process.stdin.on('data', onData);
-    return () => { process.stdin.off('data', onData); };
   }, []);
 
   const [state, dispatch] = useAgentStore(() => createInitialState(process.cwd()));
@@ -176,12 +148,6 @@ export function App({
   // ── Per-turn telemetry (reset on turn.start, drained into turnmeta) ──
   const turnToolCountRef = useRef(0);
   const turnUsageRef = useRef<{ totalTokens: number; toolCalls: number; steps: number; totalCostUsd: number } | null>(null);
-
-  // ── Chat scroll state ────────────────────────────────────────────────
-  // 0 = pinned to bottom; positive = lines scrolled up through history.
-  const [scrollOffset, setScrollOffset] = useState(0);
-  const handleScrollUp   = useCallback((lines: number) => setScrollOffset(p => p + lines), []);
-  const handleScrollDown = useCallback((lines: number) => setScrollOffset(p => Math.max(0, p - lines)), []);
 
   // ── Streaming chunk buffer (adaptive ~120ms coalescing flush) ────────
   // Buffers both answer text and reasoning text, draining them together on an
@@ -505,7 +471,6 @@ export function App({
     const trimmed = text.trim();
     if (!trimmed) return;
     if (st.pending) dispatch({ type: 'pending.clear' });
-    setScrollOffset(0); // jump to bottom on new submit
 
     if (st.mode === 'orchestrate') {
       if (!pipelineRunner) {
@@ -536,6 +501,7 @@ export function App({
   const sFiles = useSlice(state, s => s.files);
   const sEdits = useSlice(state, s => s.edits);
   const sMessages  = useSlice(state, s => s.messages);
+  const sCommittedCount = useSlice(state, s => s.committedCount);
   const sHelpOpen  = useSlice(state, s => s.helpOpen);
   const sStepLabel = useSlice(state, s => s.currentStepLabel);
   const sActiveTool = useSlice(state, s => s.activeTool);
@@ -555,17 +521,9 @@ export function App({
     [sMessages],
   );
 
-  // ── Chat area height / width estimates (for virtual scroll) ─────────
-  // These estimates tell ChatStream how many lines the viewport has.
-  // Exact value doesn't matter — a few rows off is fine.
-  // PlanStrip: 0 when empty · 2 (header+steps-row) when 1-4 steps · 1 compact when >4
-  const planH = sPlanSteps.length === 0 ? 0 : sPlanSteps.length > 4 ? 1 : 2;
-  const pipeH = sPipeline && sPipeline.length > 0 ? 4 : 0;
-  const toastH = sToasts.length > 0 ? 1 : 0;
-  // overhead = titlebar(1) + plan + pipe + statusbar(1) + prompt(1) + toast + safety(1)
-  const chatH  = Math.max(8, termRows - 1 - planH - pipeH - 1 - 1 - toastH - 1);
-  // ContextRail is exactly 28 cols wide (fixed); leave 2 cols right margin
-  const chatCols = Math.max(40, termCols - 30);
+  // ── Text-wrap width for dividers / turn-meta rules ──────────────────
+  // No sidebar any more: the chat uses (nearly) the full terminal width.
+  const chatCols = Math.max(40, termCols - 2);
 
   const titleMode =
     sPending === 'permission' ? 'agent · paused'
@@ -577,54 +535,50 @@ export function App({
     : sMode === 'orchestrate' ? 'orchestrate'
     : sMode === 'agent' ? 'agent' : 'mimo';
 
-  // ── Render: zone-based layout ───────────────────────────────────────
+  // ── Render: Claude Code style inline conversation flow ──────────────
+  // The conversation (ChatZone) owns the terminal scrollback; the plan,
+  // pipeline, toast, input and status bar form the live frame anchored at
+  // the bottom of the terminal and repainted in place.
   return (
-    <Box flexDirection="column" height={termRows}>
-      <TitleZone path={sPath} branch={sBranch} mode={titleMode} />
+    <Box flexDirection="column">
+      <ChatZone
+        messages={sMessages}
+        committedCount={sCommittedCount}
+        path={sPath}
+        engineInfo={engineInfo}
+        stepLabel={sStepLabel}
+        activeTool={sActiveTool}
+        helpOpen={sHelpOpen}
+        streaming={sStreaming}
+        reasoning={sReasoning}
+        verbose={sVerbose}
+        cols={chatCols}
+        header={<TitleZone path={sPath} branch={sBranch} mode={titleMode} />}
+      />
+
       <PlanZone title={sPlanTitle} steps={sPlanSteps} />
       <PipelineZone phases={sPipeline} />
-      <Box flexDirection="row" flexGrow={1}>
-        <ContextZone files={sFiles} edits={sEdits} mode={sMode} />
-        <Box flexDirection="column" flexGrow={1}>
-          <ChatZone
-            messages={sMessages}
-            path={sPath}
-            engineInfo={engineInfo}
-            stepLabel={sStepLabel}
-            activeTool={sActiveTool}
-            helpOpen={sHelpOpen}
-            streaming={sStreaming}
-            reasoning={sReasoning}
-            verbose={sVerbose}
-            scrollOffset={scrollOffset}
-            chatHeight={chatH}
-            cols={chatCols}
-          />
 
-          <ToastBar toasts={sToasts} onDismiss={handleToastDismiss} />
+      <ToastBar toasts={sToasts} onDismiss={handleToastDismiss} />
 
-          <InputArea
-            files={sFiles}
-            helpOpen={sHelpOpen}
-            pending={sPending}
-            hasMessages={sHasMessages}
-            mode={sMode}
-            editMode={sEditMode}
-            verbose={sVerbose}
-            hasEdits={sHasEdits}
-            onSubmit={handleSubmit}
-            onPermAllow={allowPermission}
-            onPermAlwaysAllow={allowPermissionAlways}
-            onPermDeny={dismissPending}
-            onApplyFix={applyFix}
-            dispatch={dispatch}
-            cmdCtx={cmdCtx}
-            chatHeight={chatH}
-            onScrollUp={handleScrollUp}
-            onScrollDown={handleScrollDown}
-          />
-        </Box>
-      </Box>
+      <InputArea
+        files={sFiles}
+        helpOpen={sHelpOpen}
+        pending={sPending}
+        hasMessages={sHasMessages}
+        mode={sMode}
+        editMode={sEditMode}
+        verbose={sVerbose}
+        hasEdits={sHasEdits}
+        onSubmit={handleSubmit}
+        onPermAllow={allowPermission}
+        onPermAlwaysAllow={allowPermissionAlways}
+        onPermDeny={dismissPending}
+        onApplyFix={applyFix}
+        dispatch={dispatch}
+        cmdCtx={cmdCtx}
+      />
+
       <StatusZone
         statusState={statusState}
         approvalMode={sApprovalMode}
