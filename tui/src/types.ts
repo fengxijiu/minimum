@@ -105,6 +105,13 @@ export type AppState = {
   plan: { title: string; steps: PlanStep[] };
   currentStepLabel: string;
   messages: Message[];
+  /**
+   * How many messages from the start of `messages[]` have been committed to the
+   * Static scrollback layer.  Messages in [0, committedCount) are rendered once
+   * via <Static> and never re-drawn; messages in [committedCount, …) are the
+   * live tail rendered in the active frame.
+   */
+  committedCount: number;
   input: string;
   pending: PendingState;
   helpOpen: boolean;

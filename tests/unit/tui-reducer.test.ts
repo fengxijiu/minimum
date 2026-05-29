@@ -15,6 +15,7 @@ const base: AppState = {
 	plan: { title: "", steps: [] },
 	currentStepLabel: "",
 	messages: [],
+	committedCount: 0,
 	input: "",
 	pending: null,
 	helpOpen: false,
@@ -401,5 +402,57 @@ describe("TUI reducer", () => {
 	it("init.run is a no-op in reducer", () => {
 		const s = reduce(base, { type: "init.run", cwd: "/proj" });
 		expect(s).toBe(base); // same reference — no state change
+	});
+
+	// ── Phase 2: Static double-buffer commit ─────────────────────────
+	it("messages.commit advances committedCount to current message length", () => {
+		let s = reduce(base, { type: "user.submit", text: "hello" });
+		s = reduce(s, { type: "assistant.final", text: "hi" });
+		expect(s.committedCount).toBe(0); // not committed yet
+		s = reduce(s, { type: "messages.commit" });
+		expect(s.committedCount).toBe(2); // user + assistant
+		expect(s.messages).toHaveLength(2); // messages still present for history
+	});
+
+	it("messages.commit is idempotent when called twice", () => {
+		let s = reduce(base, { type: "user.submit", text: "hello" });
+		s = reduce(s, { type: "messages.commit" });
+		const count = s.committedCount;
+		s = reduce(s, { type: "messages.commit" });
+		expect(s.committedCount).toBe(count);
+	});
+
+	it("messages.clear resets committedCount to 0", () => {
+		let s = reduce(base, { type: "user.submit", text: "hi" });
+		s = reduce(s, { type: "messages.commit" });
+		s = reduce(s, { type: "messages.clear" });
+		expect(s.messages).toHaveLength(0);
+		expect(s.committedCount).toBe(0);
+	});
+
+	it("session.clear resets committedCount", () => {
+		let s = reduce(base, { type: "user.submit", text: "hi" });
+		s = reduce(s, { type: "messages.commit" });
+		s = reduce(s, { type: "session.clear" });
+		expect(s.committedCount).toBe(0);
+	});
+
+	it("session.reset resets committedCount", () => {
+		let s = reduce(base, { type: "user.submit", text: "hi" });
+		s = reduce(s, { type: "messages.commit" });
+		s = reduce(s, { type: "session.reset" });
+		expect(s.committedCount).toBe(0);
+	});
+
+	it("new messages after commit appear in live tail (index >= committedCount)", () => {
+		let s = reduce(base, { type: "user.submit", text: "turn 1" });
+		s = reduce(s, { type: "assistant.final", text: "reply 1" });
+		s = reduce(s, { type: "messages.commit" }); // committedCount = 2
+		s = reduce(s, { type: "user.submit", text: "turn 2" });
+		expect(s.committedCount).toBe(2);
+		expect(s.messages).toHaveLength(3);
+		// live tail = messages.slice(2) = [turn 2 message]
+		expect(s.messages.slice(s.committedCount)).toHaveLength(1);
+		expect(s.messages[2]).toMatchObject({ type: "user", text: "turn 2" });
 	});
 });

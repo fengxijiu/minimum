@@ -24,6 +24,7 @@ export function createInitialState(cwd: string): AppState {
     plan: { title: '', steps: [] },
     currentStepLabel: '',
     messages: [],
+    committedCount: 0,
     input: '',
     pending: null,
     helpOpen: false,

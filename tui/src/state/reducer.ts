@@ -113,6 +113,7 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
       return {
         ...state,
         messages: [],
+        committedCount: 0,
         edits: [],
         plan: { title: '(no plan yet)', steps: [] },
         currentStepLabel: '',
@@ -125,6 +126,7 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
       return {
         ...state,
         messages: [],
+        committedCount: 0,
         edits: [],
         plan: { title: '(no plan yet)', steps: [] },
         currentStepLabel: '',
@@ -136,13 +138,17 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
       };
 
     case 'messages.clear':
-      return { ...state, messages: [] };
+      return { ...state, messages: [], committedCount: 0 };
+
+    case 'messages.commit':
+      return { ...state, committedCount: state.messages.length };
 
     case 'session.load':
       return {
         ...state,
         sessionName: event.name,
         messages: [],
+        committedCount: 0,
         streaming: null,
         pending: null,
       };

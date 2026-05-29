@@ -78,9 +78,9 @@ const ContextZone = React.memo(function ContextZone({ files, edits, mode }: {
   return <ContextRail files={files} edits={edits} mode={mode} />;
 });
 
-/** ChatStream zone — only re-renders on messages/stepLabel/activeTool/streaming changes. */
-const ChatZone = React.memo(function ChatZone({ messages, path, engineInfo, stepLabel, activeTool, helpOpen, streaming }: {
-  messages: Message[]; path: string; engineInfo: EngineInfo;
+/** ChatStream zone — only re-renders on messages/stepLabel/activeTool/streaming/committedCount changes. */
+const ChatZone = React.memo(function ChatZone({ messages, committedCount, path, engineInfo, stepLabel, activeTool, helpOpen, streaming }: {
+  messages: Message[]; committedCount: number; path: string; engineInfo: EngineInfo;
   stepLabel: string; activeTool: AppState['activeTool']; helpOpen: boolean;
   streaming?: string | null;
 }) {
@@ -90,7 +90,7 @@ const ChatZone = React.memo(function ChatZone({ messages, path, engineInfo, step
     <>
       {showWelcome
         ? <WelcomeScreen path={path} engine={engineInfo} />
-        : <ChatStream stepLabel={stepLabel} messages={messages} streaming={streaming} />}
+        : <ChatStream stepLabel={stepLabel} messages={messages} committedCount={committedCount} streaming={streaming} />}
       {activeTool ? <ToolProgress tool={activeTool} /> : null}
     </>
   );
@@ -343,6 +343,8 @@ export function App({
         stopChunkFlusher();
         if (isPipeline) dispatch({ type: 'pipeline.end' });
         dispatch({ type: 'turn.end', success: true });
+        // Phase 2: commit all messages from this turn into the Static scrollback layer.
+        dispatch({ type: 'messages.commit' });
       }
     })();
   }, [dispatch, startChunkFlusher, stopChunkFlusher, W_PHASES]);
@@ -401,7 +403,8 @@ export function App({
   const sPipeline = useSlice(state, s => s.pipeline);
   const sFiles = useSlice(state, s => s.files);
   const sEdits = useSlice(state, s => s.edits);
-  const sMessages = useSlice(state, s => s.messages);
+  const sMessages        = useSlice(state, s => s.messages);
+  const sCommittedCount  = useSlice(state, s => s.committedCount);
   const sHelpOpen = useSlice(state, s => s.helpOpen);
   const sStepLabel = useSlice(state, s => s.currentStepLabel);
   const sActiveTool = useSlice(state, s => s.activeTool);
@@ -432,7 +435,7 @@ export function App({
 
   // ── Render: zone-based layout ───────────────────────────────────────
   return (
-    <Box flexDirection="column" height={termRows}>
+    <Box flexDirection="column" maxHeight={termRows - 1}>
       <TitleZone path={sPath} branch={sBranch} mode={titleMode} />
       <PlanZone title={sPlanTitle} steps={sPlanSteps} />
       <PipelineZone phases={sPipeline} />
@@ -441,6 +444,7 @@ export function App({
         <Box flexDirection="column" flexGrow={1}>
           <ChatZone
             messages={sMessages}
+            committedCount={sCommittedCount}
             path={sPath}
             engineInfo={engineInfo}
             stepLabel={sStepLabel}

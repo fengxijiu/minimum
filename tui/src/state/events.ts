@@ -21,6 +21,7 @@ export type AgentEvent =
   | { type: 'session.clear' }
   | { type: 'session.reset' }
   | { type: 'messages.clear' }
+  | { type: 'messages.commit' }
   | { type: 'session.load'; name: string }
   // UI state
   | { type: 'input.change'; value: string }
