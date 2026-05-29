@@ -16,7 +16,7 @@ export type AgentEvent =
   | { type: 'reasoning.clear' }
   | { type: 'turnmeta.push'; summary: string }
   | { type: 'system.push'; text: string; tone?: 'info' | 'warn' | 'ok' }
-  | { type: 'error.push'; title: string; lines: string[] }
+  | { type: 'error.push'; title: string; lines: string[]; context?: string; hint?: string }
   | { type: 'diff.push'; file: string; added: number; removed: number; lines: string[] }
   | { type: 'chips.push'; chips: import('../types.js').Chip[] }
   | { type: 'permission.show'; perm: import('../types.js').Permission }

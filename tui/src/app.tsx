@@ -14,7 +14,7 @@ import { createInitialState } from './seed.js';
 import {
   runCommand, type CommandOutcome, type CommandContext,
 } from './commands.js';
-import { mockRunner, uiEventToMessages, summarizeTool, summarizeToolResult, type Runner, type EngineInfo, type UiPlanStatus } from './engine.js';
+import { mockRunner, uiEventToMessages, summarizeTool, summarizeToolResult, describePermissionArgs, type Runner, type EngineInfo, type UiPlanStatus } from './engine.js';
 import { scanFiles, readBranch, touch } from './files.js';
 import { useAgentStore, useSlice, type Dispatch } from './state/store.js';
 import type { AppState, Message, FileEntry, SessionState, Chip, PlanStep, PendingState, ApprovalMode, EditMode, UsageInfo, Mode, StagedEdit } from './types.js';
@@ -136,6 +136,8 @@ export function App({
   activePermRef.current = activePerm;
   // Tracks the last-started tool message id so tool_result can close it out.
   const lastToolIdRef = useRef<string | null>(null);
+  // Remembers the active tool's name + display args so a failure can attribute itself.
+  const lastToolDescRef = useRef<string | null>(null);
 
   // ── Per-turn telemetry (reset on turn.start, drained into turnmeta) ──
   const turnToolCountRef = useRef(0);
@@ -307,7 +309,9 @@ export function App({
                 tool: ev.tool,
                 cmd: `$ ${cmd}`,
                 cwd: stateRef.current.path,
-                note: `${ev.description} · risk ${ev.risk} — ⏎ allow · esc deny`,
+                note: `${ev.description} — ⏎ allow · esc deny`,
+                details: describePermissionArgs(args),
+                risk: ev.risk,
               },
             });
             continue;
@@ -319,8 +323,10 @@ export function App({
             }
             turnToolCountRef.current += 1;
             const toolId = tid();
+            const displayArgs = summarizeTool(ev.name, ev.args);
             lastToolIdRef.current = toolId;
-            dispatch({ type: 'tool.start', id: toolId, name: ev.name, args: summarizeTool(ev.name, ev.args) });
+            lastToolDescRef.current = `${ev.name} · ${displayArgs}`;
+            dispatch({ type: 'tool.start', id: toolId, name: ev.name, args: displayArgs });
             continue;
           }
           if (ev.kind === 'tool_result') {
@@ -334,8 +340,15 @@ export function App({
               lastToolIdRef.current = null;
             }
             if (!ev.ok) {
-              dispatch({ type: 'error.push', title: `${ev.name} failed`, lines: ev.content.split('\n').slice(0, 6) });
+              dispatch({
+                type: 'error.push',
+                title: `${ev.name} failed`,
+                lines: ev.content.split('\n').filter(l => l.trim() !== '').slice(0, 6),
+                context: lastToolDescRef.current ?? undefined,
+                hint: 'ctrl+r expand full output · u undo last edit',
+              });
             }
+            lastToolDescRef.current = null;
             continue;
           }
           if (ev.kind === 'streaming_reasoning') {

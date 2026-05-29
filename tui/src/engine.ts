@@ -98,6 +98,36 @@ export function summarizeTool(name: string, rawArgs: string): string {
   }
 }
 
+/**
+ * Expand a permission request's args into per-parameter detail lines so the
+ * user can see exactly what they're approving — not just the headline command.
+ * Returns "key: value" lines, value-truncated, longest/destructive params first.
+ */
+export function describePermissionArgs(rawArgs: Record<string, unknown>): string[] {
+  const KEY_ORDER = ['command', 'path', 'file_path', 'filepath', 'url', 'pattern', 'content', 'cwd', 'timeout'];
+  const entries = Object.entries(rawArgs ?? {});
+  entries.sort(([a], [b]) => {
+    const ia = KEY_ORDER.indexOf(a), ib = KEY_ORDER.indexOf(b);
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+  });
+  const lines: string[] = [];
+  for (const [k, v] of entries) {
+    let val: string;
+    if (v == null) val = String(v);
+    else if (typeof v === 'string') val = v;
+    else if (typeof v === 'object') val = JSON.stringify(v);
+    else val = String(v);
+    val = val.replace(/\s+/g, ' ').trim();
+    // content/large bodies: show length instead of dumping
+    if (k === 'content' && val.length > 60) {
+      lines.push(`${k}: ${val.length} chars`);
+    } else {
+      lines.push(`${k}: ${val.slice(0, 72)}${val.length > 72 ? '…' : ''}`);
+    }
+  }
+  return lines.slice(0, 8);
+}
+
 /** Build a brief result summary for display in tool meta. */
 export function summarizeToolResult(ok: boolean, content: string): string {
   if (!ok) return '';

@@ -25,11 +25,18 @@ export type Permission = {
   cmd: string;         // e.g. '$ pytest -q'
   cwd: string;
   note: string;
+  /** Full per-parameter breakdown of what's being approved. */
+  details?: string[];
+  risk?: 'low' | 'medium' | 'high';
 };
 
 export type ErrorReport = {
   title: string;       // e.g. 'STDERR · 1 FAILURE'
   lines: string[];
+  /** What was being attempted when this failed, e.g. 'run · pytest -q'. */
+  context?: string;
+  /** Truthful, always-available next-step hint shown in the footer. */
+  hint?: string;
 };
 
 export type Message =

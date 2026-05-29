@@ -22,6 +22,7 @@ const base: AppState = {
 	turnInProgress: false,
 	verbose: false,
 	streaming: null,
+	reasoning: null,
 	activeTool: null,
 	toasts: [],
 	usage: {
@@ -454,5 +455,58 @@ describe("TUI reducer", () => {
 		// live tail = messages.slice(2) = [turn 2 message]
 		expect(s.messages.slice(s.committedCount)).toHaveLength(1);
 		expect(s.messages[2]).toMatchObject({ type: "user", text: "turn 2" });
+	});
+
+	// ── Tier 1: reasoning / tool output / turn telemetry ──────────────
+	it("reasoning.chunk accumulates and reasoning.clear resets", () => {
+		let s = reduce(base, { type: "reasoning.chunk", text: "think " });
+		s = reduce(s, { type: "reasoning.chunk", text: "more" });
+		expect(s.reasoning).toBe("think more");
+		s = reduce(s, { type: "reasoning.clear" });
+		expect(s.reasoning).toBeNull();
+	});
+
+	it("turn.start and turn.end clear reasoning", () => {
+		let s = reduce({ ...base, reasoning: "stale" }, { type: "turn.start" });
+		expect(s.reasoning).toBeNull();
+		s = reduce({ ...base, reasoning: "stale" }, { type: "turn.end", success: true });
+		expect(s.reasoning).toBeNull();
+	});
+
+	it("tool.end stores captured output lines", () => {
+		let s = reduce(base, { type: "tool.start", id: "t1", name: "exec_shell", args: "ls" });
+		s = reduce(s, { type: "tool.end", id: "t1", ok: true, meta: "3 ln", output: ["a", "b", "c"] });
+		expect(s.messages[0]).toMatchObject({ type: "tool", tool: { output: ["a", "b", "c"] } });
+	});
+
+	it("turnmeta.push appends an informative divider message", () => {
+		const s = reduce(base, { type: "turnmeta.push", summary: "3 tools · 1.2k tok" });
+		expect(s.messages[0]).toMatchObject({ type: "turnmeta", summary: "3 tools · 1.2k tok" });
+	});
+
+	// ── Tier 2: permission detail / error attribution ─────────────────
+	it("permission.show carries details and risk", () => {
+		const s = reduce(base, {
+			type: "permission.show",
+			perm: {
+				tool: "exec_shell", cmd: "$ rm -rf x", cwd: "/proj", note: "n",
+				details: ["command: rm -rf x"], risk: "high",
+			},
+		});
+		expect(s.messages[0]).toMatchObject({
+			type: "permission",
+			perm: { risk: "high", details: ["command: rm -rf x"] },
+		});
+	});
+
+	it("error.push stores context and hint", () => {
+		const s = reduce(base, {
+			type: "error.push", title: "exec_shell failed", lines: ["boom"],
+			context: "exec_shell · pytest -q", hint: "u undo",
+		});
+		expect(s.messages[0]).toMatchObject({
+			type: "error",
+			error: { context: "exec_shell · pytest -q", hint: "u undo" },
+		});
 	});
 });

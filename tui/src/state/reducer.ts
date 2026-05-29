@@ -105,7 +105,8 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
 
     case 'error.push':
       return pushMessage(state, {
-        id: mid('e'), type: 'error', error: { title: event.title, lines: event.lines },
+        id: mid('e'), type: 'error',
+        error: { title: event.title, lines: event.lines, context: event.context, hint: event.hint },
       });
 
     case 'diff.push':

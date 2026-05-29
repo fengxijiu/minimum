@@ -171,22 +171,39 @@ export const ChipsRow = React.memo(function ChipsRow({ chips }: { chips: Chip[] 
 
 // ── PermissionCard ────────────────────────────────────────────────────
 
+const RISK_COLOR = { high: theme.danger, medium: theme.warn, low: theme.accent } as const;
+
 export const PermissionCard = React.memo(function PermissionCard({ perm }: { perm: Permission }) {
+  const risk = perm.risk ?? 'medium';
+  const accent = RISK_COLOR[risk];
   return (
     <Box paddingLeft={3}>
       <Box
         flexDirection="column"
         borderStyle="round"
-        borderColor={theme.warn}
+        borderColor={accent}
         paddingX={1}
         flexGrow={1}
       >
-        <Text color={theme.warn} bold>⚠ TOOL · {perm.tool}</Text>
+        <Box justifyContent="space-between">
+          <Text color={accent} bold>⚠ TOOL · {perm.tool}</Text>
+          <Text backgroundColor={accent} color={theme.bg} bold> risk {risk} </Text>
+        </Box>
         <Text color={theme.ink}>{perm.cmd}</Text>
+
+        {/* Full per-parameter breakdown — what's actually being approved. */}
+        {perm.details?.length ? (
+          <Box flexDirection="column" marginTop={1}>
+            {perm.details.map((d, i) => (
+              <Text key={i} color={theme.inkSoft}>  · {d}</Text>
+            ))}
+          </Box>
+        ) : null}
+
         <Text color={theme.muted}>  cwd: {perm.cwd}</Text>
         <Text color={theme.muted}>{perm.note}</Text>
         <Box marginTop={1}>
-          <Text backgroundColor={theme.warn} color={theme.bg} bold> ⏎ allow once </Text>
+          <Text backgroundColor={accent} color={theme.bg} bold> ⏎ allow once </Text>
           <Text color={theme.inkSoft}>  [a always]  [n deny]  [e edit]</Text>
         </Box>
       </Box>
@@ -207,9 +224,17 @@ export const ErrorBlock = React.memo(function ErrorBlock({ error }: { error: Err
         flexGrow={1}
       >
         <Text color={theme.danger} bold>{error.title}</Text>
+        {error.context ? (
+          <Text color={theme.muted}>while: {error.context}</Text>
+        ) : null}
         {error.lines.map((l, i) => (
           <Text key={i} color={theme.inkSoft}>{l}</Text>
         ))}
+        {error.hint ? (
+          <Box marginTop={1}>
+            <Text color={theme.muted}>↳ {error.hint}</Text>
+          </Box>
+        ) : null}
       </Box>
     </Box>
   );
