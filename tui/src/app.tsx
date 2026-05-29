@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { Box, useApp, useStdout } from 'ink';
 import { TitleBar }       from './components/TitleBar.js';
 import { PlanStrip }      from './components/PlanStrip.js';
+import { PipelinePanel }  from './components/PipelinePanel.js';
 import { ContextRail }    from './components/ContextRail.js';
 import { ChatStream }     from './components/ChatStream.js';
 import { StatusBar }      from './components/StatusBar.js';
@@ -63,6 +64,13 @@ const PlanZone = React.memo(function PlanZone({ title, steps }: {
   return <PlanStrip title={title} steps={steps} />;
 });
 
+/** Pipeline zone — only re-renders on pipeline phase changes. */
+const PipelineZone = React.memo(function PipelineZone({ phases }: {
+  phases: AppState['pipeline'];
+}) {
+  return <PipelinePanel phases={phases} />;
+});
+
 /** ContextRail zone — only re-renders on files/edits/mode changes. */
 const ContextZone = React.memo(function ContextZone({ files, edits, mode }: {
   files: FileEntry[]; edits: AppState['edits']; mode: Mode;
@@ -113,8 +121,9 @@ const StatusZone = React.memo(function StatusZone({
 
 export function App({
   runner = mockRunner,
+  pipelineRunner,
   engineInfo = DEFAULT_ENGINE_INFO,
-}: { runner?: Runner; engineInfo?: EngineInfo } = {}) {
+}: { runner?: Runner; pipelineRunner?: Runner; engineInfo?: EngineInfo } = {}) {
   const { exit } = useApp();
   const { stdout } = useStdout();
   const termRows = stdout?.rows ?? 40;
@@ -259,27 +268,21 @@ export function App({
   }, [runner, dispatch]);
 
   // ── Submit handler (stable — uses stateRef, no state deps) ──────────
-  const handleSubmit = useCallback((text: string) => {
-    const st = stateRef.current;
-
-    if (!text.trim() && st.pending === 'permission') { allowPermission(); return; }
-    if (!text.trim() && st.pending === 'error') { applyFix(); return; }
-
-    if (text.startsWith('/')) {
-      applyOutcome(runCommand(text, st, cmdCtx));
-      return;
-    }
-
-    const trimmed = text.trim();
-    if (!trimmed) return;
-    if (st.pending) dispatch({ type: 'pending.clear' });
-
-    dispatch({ type: 'user.submit', text: trimmed });
-
+  // ── Shared streaming turn — used by both the single-agent loop and the
+  //    orchestrator pipeline runner. ─────────────────────────────────────
+  const W_PHASES = useMemo(() => new Set(['W0', 'W1', 'W0.5', 'W2/3', 'W4']), []);
+  const runTurn = useCallback((activeRunner: Runner, trimmed: string, isPipeline: boolean) => {
     void (async () => {
       startChunkFlusher();
+      if (isPipeline) dispatch({ type: 'pipeline.start' });
       try {
-        for await (const ev of runner.send(trimmed)) {
+        for await (const ev of activeRunner.send(trimmed)) {
+          if (ev.kind === 'pipeline') {
+            if (W_PHASES.has(ev.phase)) {
+              dispatch({ type: 'pipeline.phase', phase: ev.phase, label: ev.label });
+            }
+            continue;
+          }
           if (ev.kind === 'permission_request') {
             const args = ev.args;
             const cmd = String((args as any).command ?? (args as any).path ?? ev.tool);
@@ -338,10 +341,41 @@ export function App({
         dispatch({ type: 'error.push', title: 'runner error', lines: [String(err?.message ?? err)] });
       } finally {
         stopChunkFlusher();
+        if (isPipeline) dispatch({ type: 'pipeline.end' });
         dispatch({ type: 'turn.end', success: true });
       }
     })();
-  }, [runner, dispatch, allowPermission, applyFix, applyOutcome, cmdCtx, startChunkFlusher, stopChunkFlusher]);
+  }, [dispatch, startChunkFlusher, stopChunkFlusher, W_PHASES]);
+
+  const handleSubmit = useCallback((text: string) => {
+    const st = stateRef.current;
+
+    if (!text.trim() && st.pending === 'permission') { allowPermission(); return; }
+    if (!text.trim() && st.pending === 'error') { applyFix(); return; }
+
+    if (text.startsWith('/')) {
+      const outcome = runCommand(text, st, cmdCtx);
+      if (outcome.kind === 'pipeline') {
+        if (!pipelineRunner) {
+          dispatch({ type: 'system.push', text: 'Pipeline runner unavailable (engine not built or no API key).', tone: 'warn' });
+          return;
+        }
+        if (st.pending) dispatch({ type: 'pending.clear' });
+        dispatch({ type: 'user.submit', text: `/orchestrate ${outcome.text}` });
+        runTurn(pipelineRunner, outcome.text, true);
+        return;
+      }
+      applyOutcome(outcome);
+      return;
+    }
+
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    if (st.pending) dispatch({ type: 'pending.clear' });
+
+    dispatch({ type: 'user.submit', text: trimmed });
+    runTurn(runner, trimmed, false);
+  }, [runner, pipelineRunner, dispatch, allowPermission, applyFix, applyOutcome, cmdCtx, runTurn]);
 
   const handleToastDismiss = useCallback((id: string) => {
     dispatch({ type: 'toast.dismiss', id });
@@ -354,6 +388,7 @@ export function App({
   const sPending = useSlice(state, s => s.pending);
   const sPlanTitle = useSlice(state, s => s.plan.title);
   const sPlanSteps = useSlice(state, s => s.plan.steps);
+  const sPipeline = useSlice(state, s => s.pipeline);
   const sFiles = useSlice(state, s => s.files);
   const sEdits = useSlice(state, s => s.edits);
   const sMessages = useSlice(state, s => s.messages);
@@ -389,6 +424,7 @@ export function App({
     <Box flexDirection="column" height={termRows}>
       <TitleZone path={sPath} branch={sBranch} mode={titleMode} />
       <PlanZone title={sPlanTitle} steps={sPlanSteps} />
+      <PipelineZone phases={sPipeline} />
       <Box flexDirection="row" flexGrow={1}>
         <ContextZone files={sFiles} edits={sEdits} mode={sMode} />
         <Box flexDirection="column" flexGrow={1}>

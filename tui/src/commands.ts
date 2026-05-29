@@ -37,6 +37,7 @@ export const COMMANDS: TuiCommand[] = [
   { name: 'diff',   desc: 'Toggle inline diff blocks',      category: 'view' },
   { name: 'plan',   desc: 'Jump to the plan strip',         category: 'view' },
   { name: 'mode',   desc: 'Switch agent / chat mode',       category: 'view', usage: '/mode <agent|chat>' },
+  { name: 'orchestrate', desc: 'Run a request through the W0–W4 pipeline', category: 'view', usage: '/orchestrate <request>', aliases: ['pipeline', 'orch'] },
   { name: 'clear',  desc: 'Clear the chat stream',          category: 'view', aliases: ['cls'] },
   { name: 'verbose', desc: 'Toggle verbose mode',           category: 'view', aliases: ['v'] },
   // system
@@ -79,6 +80,7 @@ export type CommandOutcome =
   | { kind: 'quit' }
   | { kind: 'permission'; perm: Permission }
   | { kind: 'note'; note: string; tone?: 'info' | 'warn' | 'ok' }
+  | { kind: 'pipeline'; text: string }
   | { kind: 'event'; event: import('./state/events.js').AgentEvent };
 
 let msgSeq = 0;
@@ -126,6 +128,14 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
         ? args[0]
         : state.mode === 'agent' ? 'chat' : 'agent';
       return { kind: 'patch', patch: { mode: target }, note: `Mode → ${target}.`, tone: 'ok' };
+    }
+
+    case 'orchestrate': {
+      const request = args.join(' ').trim();
+      if (!request) {
+        return { kind: 'note', note: 'Usage: /orchestrate <request>', tone: 'warn' };
+      }
+      return { kind: 'pipeline', text: request };
     }
 
     case 'compact':

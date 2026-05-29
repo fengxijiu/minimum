@@ -35,6 +35,7 @@ export type UiEvent =
   | { kind: 'usage'; totalTokens: number; toolCalls: number; steps: number; totalCostUsd: number }
   | { kind: 'plan'; steps: UiPlanStep[] }
   | { kind: 'permission_request'; id: string; tool: string; args: Record<string, unknown>; risk: UiRisk; description: string }
+  | { kind: 'pipeline'; phase: string; label: string; detail?: string }
   | { kind: 'done'; success: boolean }
   | { kind: 'streaming'; text: string }
   | { kind: 'streaming_reasoning'; text: string }
@@ -82,6 +83,7 @@ export function uiEventToMessages(ev: UiEvent): Message[] {
     case 'usage':
     case 'plan':
     case 'permission_request':
+    case 'pipeline':
     case 'done':
     case 'streaming':
     case 'streaming_reasoning':
@@ -118,7 +120,7 @@ function fallbackInfo(reason: EngineFallbackReason, error?: string): EngineInfo 
  */
 export async function createEngineRunner(
   workingDirectory: string,
-): Promise<{ runner: Runner; info: EngineInfo }> {
+): Promise<{ runner: Runner; pipelineRunner?: Runner; info: EngineInfo }> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let eng: any;
   try {
@@ -162,6 +164,14 @@ export async function createEngineRunner(
       resolvePermission: (id, decision) => bridge.resolvePermission(id, decision),
       setApprovalMode: (mode) => approvalManager.setMode(mode),
     };
+    // Pipeline (orchestrator) runner — the W0–W4 multi-persona pipeline, run
+    // through the same client behind the Runner contract. Optional: only wired
+    // when the built engine exposes PipelineBridge.
+    let pipelineRunner: Runner | undefined;
+    if (eng.PipelineBridge) {
+      const pipelineBridge = new eng.PipelineBridge(client, { projectRoot: workingDirectory });
+      pipelineRunner = { send: (input: string) => pipelineBridge.send(input) };
+    }
     const toolNames: string[] = (tools.getDefinitions?.() ?? []).map((d: { name: string }) => d.name);
     const info: EngineInfo = {
       mode: 'engine',
@@ -171,7 +181,7 @@ export async function createEngineRunner(
       configPath,
       memoryPath: path.join(workingDirectory, '.minimum', 'memory.md'),
     };
-    return { runner, info };
+    return { runner, ...(pipelineRunner && { pipelineRunner }), info };
   } catch (err) {
     return { runner: mockRunner, info: fallbackInfo('init-error', String((err as Error)?.message ?? err)) };
   }
