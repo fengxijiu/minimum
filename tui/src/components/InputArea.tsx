@@ -261,7 +261,7 @@ export const InputArea = React.memo(function InputArea({
         onChange={handleChange}
         onSubmit={handleEnter}
         placeholder={placeholder}
-        focus={!helpOpen}
+        focus={!helpOpen && pending !== 'permission' && pending !== 'error'}
       />
     </>
   );
