@@ -235,6 +235,10 @@ export const InputArea = React.memo(function InputArea({
       const MODES = ['agent', 'chat', 'orchestrate'] as const;
       const next = MODES[(MODES.indexOf(mode as typeof MODES[number]) + 1) % MODES.length] ?? 'agent';
       dispatch({ type: 'mode.change', mode: next });
+      // Mirror the Shift+Tab (edit-mode) toast so a silent mode switch is
+      // always acknowledged — the user can see which of agent/chat/orchestrate
+      // they landed on without hunting for it in the title/status bar.
+      dispatch({ type: 'toast.show', text: `Mode: ${next}`, tone: 'info', ttlMs: 2000 });
       return;
     }
   });
