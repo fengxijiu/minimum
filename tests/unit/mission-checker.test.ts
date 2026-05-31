@@ -1,0 +1,97 @@
+import { describe, expect, it } from "vitest";
+import {
+	compileMissionCheck,
+	loopBackTasksToCoarseTasks,
+} from "../../src/orchestration/index.js";
+
+describe("compileMissionCheck", () => {
+	it("parses an approved report", () => {
+		const result = compileMissionCheck(`# W3.5 Loop Detection Report
+
+## 1. Final Decision
+
+Decision: APPROVED_TO_W4
+
+Reason:
+
+- All required behavior is complete.
+`);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.report.decision).toBe("APPROVED_TO_W4");
+		expect(result.report.tasks).toEqual([]);
+		expect(result.report.reason).toContain("All required behavior");
+	});
+
+	it("parses loop-back tasks and maps owner agents", () => {
+		const result = compileMissionCheck(`# W3.5 Loop Detection Report
+
+## 1. Final Decision
+
+Decision: LOOP_BACK_TO_W1
+
+Reason:
+
+- Missing validation path.
+
+## 7. Loop-Back Tasks for W1
+
+### Task 1: Add failed upload validation
+
+- Priority: P1
+- Blocking: Yes
+- Reason: Failed uploads currently skip validation.
+- Source issue: W3 test report did not cover rejected files.
+- Expected outcome: Rejected files return a useful error.
+- Suggested owner agent: test_writer
+- Acceptance criteria:
+  - Adds a rejected-file test.
+  - Test fails before implementation and passes after.
+`);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.report.decision).toBe("LOOP_BACK_TO_W1");
+		expect(result.report.tasks).toHaveLength(1);
+		expect(result.report.tasks[0]!.personaId).toBe("test_writer");
+		expect(result.report.tasks[0]!.blocking).toBe(true);
+		expect(result.report.tasks[0]!.acceptance).toContain("Adds a rejected-file test.");
+	});
+
+	it("parses human confirmation as a blocking decision", () => {
+		const result = compileMissionCheck(`Decision: NEEDS_HUMAN_CONFIRMATION`);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.report.decision).toBe("NEEDS_HUMAN_CONFIRMATION");
+	});
+
+	it("does not approve invalid reports", () => {
+		const result = compileMissionCheck("looks good to me");
+		expect(result.ok).toBe(false);
+	});
+});
+
+describe("loopBackTasksToCoarseTasks", () => {
+	it("creates repair coarse tasks that must pass through refinement", () => {
+		const tasks = loopBackTasksToCoarseTasks(
+			[
+				{
+					title: "Patch missing edge case",
+					priority: "P1",
+					blocking: true,
+					reason: "Missing branch",
+					sourceIssue: "W3.5",
+					expectedOutcome: "Edge case is covered",
+					personaId: "code_executor",
+					acceptance: ["done"],
+				},
+			],
+			0,
+		);
+		expect(tasks[0]).toMatchObject({
+			id: "T3.5-1-1",
+			personaId: "code_executor",
+			parallelGroup: "mission-repair-1",
+			needsRefine: true,
+		});
+	});
+});

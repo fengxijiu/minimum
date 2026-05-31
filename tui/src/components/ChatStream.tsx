@@ -650,6 +650,7 @@ export const ChatStream = React.memo(function ChatStream({
   verbose,
   cols,
   maxRows,
+  resizeRevision,
   header,
 }: {
   stepLabel?: string;
@@ -661,23 +662,32 @@ export const ChatStream = React.memo(function ChatStream({
   verbose?: boolean;
   cols: number;
   maxRows: number;
+  resizeRevision?: number;
   header?: ReactNode;
 }) {
   const allItems = useMemo(() => buildRenderItems(messages), [messages]);
+  const hasConversationContent = useMemo(
+    () => messages.some(m => m.type !== 'system'),
+    [messages],
+  );
 
   // Partition into the committed prefix (Static scrollback) and the live tail.
-  const { staticEntries, liveItems } = useMemo(() => {
+  const { staticEntries, liveItems, liveHeader } = useMemo(() => {
     const committed: RenderItem[] = [];
     const live: RenderItem[] = [];
     for (const it of allItems) {
       if (it.lastMsgIndex < committedCount) committed.push(it);
       else live.push(it);
     }
-    const entries: StaticEntry[] = header
+    const entries: StaticEntry[] = header && hasConversationContent
       ? [{ id: '__header__', kind: 'header' }, ...committed]
       : committed;
-    return { staticEntries: entries, liveItems: live };
-  }, [allItems, committedCount, header]);
+    return {
+      staticEntries: entries,
+      liveItems: live,
+      liveHeader: header && !hasConversationContent ? header : null,
+    };
+  }, [allItems, committedCount, header, hasConversationContent, resizeRevision]);
 
   // Live streaming frame (the only thing repainted on every token). Its
   // height is capped so the whole dynamic region stays *strictly* below the
@@ -698,6 +708,12 @@ export const ChatStream = React.memo(function ChatStream({
 
   return (
     <Box flexDirection="column">
+      {liveHeader ? (
+        <Box key={`header:${resizeRevision ?? 0}`}>
+          {liveHeader}
+        </Box>
+      ) : null}
+
       {/* ── committed history → terminal scrollback (printed once) ───── */}
       <Static items={staticEntries}>
         {(entry) =>

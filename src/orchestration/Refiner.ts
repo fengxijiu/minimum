@@ -25,6 +25,10 @@ export interface RefinementEntry {
 	forbiddenGlobs?: string[];
 	acceptance?: string[];
 	constraints?: string[];
+	/** Inline markdown emitted by the master during W0.5; persisted before launch. */
+	contextPack?: string;
+	/** Absolute path to the persisted context pack, filled by MiMoPipeline. */
+	contextPackPath?: string;
 }
 
 export interface RefineCompileSuccess {
@@ -85,6 +89,10 @@ function validateEntry(
 	if (constraints !== undefined && !Array.isArray(constraints))
 		return { ok: false, error: `refine entry ${taskId}: constraints must be array or omitted` };
 
+	const contextPack = raw.contextPack ?? raw.context_pack;
+	if (contextPack !== undefined && typeof contextPack !== "string")
+		return { ok: false, error: `refine entry ${taskId}: contextPack must be string or omitted` };
+
 	return {
 		ok: true,
 		entry: {
@@ -93,6 +101,7 @@ function validateEntry(
 			...(forbiddenGlobs !== undefined && { forbiddenGlobs: forbiddenGlobs as string[] }),
 			...(acceptance !== undefined && { acceptance: acceptance as string[] }),
 			...(constraints !== undefined && { constraints: constraints as string[] }),
+			...(contextPack !== undefined && { contextPack }),
 		},
 	};
 }
@@ -191,6 +200,7 @@ function assembleContract(
 		objective: task.objective,
 		inputs: {
 			...opts.inputs,
+			...(entry?.contextPackPath && { contextPack: entry.contextPackPath }),
 			...(entry?.constraints && {
 				constraints: [...opts.inputs.constraints, ...entry.constraints],
 			}),

@@ -38,7 +38,7 @@ function mkDag(over: Partial<CoarseDag> = {}): CoarseDag {
 describe("compileRefinement", () => {
 	it("parses a valid refine block", () => {
 		const text = `<refine>{"tasks":[
-			{"taskId":"T2-1","allowedGlobs":["src/upload.ts"],"acceptance":["returns 201"]}
+			{"taskId":"T2-1","allowedGlobs":["src/upload.ts"],"acceptance":["returns 201"],"contextPack":"# Context Pack"}
 		]}</refine>`;
 		const r = compileRefinement(text);
 		expect(r.ok).toBe(true);
@@ -46,6 +46,7 @@ describe("compileRefinement", () => {
 			const e = r.entries.get("T2-1")!;
 			expect(e.allowedGlobs).toEqual(["src/upload.ts"]);
 			expect(e.acceptance).toEqual(["returns 201"]);
+			expect(e.contextPack).toBe("# Context Pack");
 		}
 	});
 
@@ -175,6 +176,20 @@ describe("refineDag", () => {
 			]),
 		});
 		expect(contracts[0]!.inputs.constraints).toEqual(["no new runtime deps", "use zod"]);
+	});
+
+	it("passes persisted contextPack paths into task inputs", () => {
+		const { contracts } = refineDag(mkDag(), {
+			inputs: baseInputs,
+			refinement: refinement([
+				{
+					taskId: "T2-1",
+					allowedGlobs: ["src/upload.ts"],
+					contextPackPath: "/tmp/tasks/image_upload/context-packs/T2-1.md",
+				},
+			]),
+		});
+		expect(contracts[0]!.inputs.contextPack).toBe("/tmp/tasks/image_upload/context-packs/T2-1.md");
 	});
 
 	it("synthesizes acceptance when none is provided", () => {

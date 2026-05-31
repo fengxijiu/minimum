@@ -82,12 +82,12 @@ const PipelineZone = React.memo(function PipelineZone({ phases }: {
 /** ChatStream zone — only re-renders on messages/stepLabel/activeTool/streaming changes. */
 const ChatZone = React.memo(function ChatZone({
   messages, committedCount, stepLabel, activeTool,
-  streaming, reasoning, verbose, cols, maxRows, header,
+  streaming, reasoning, verbose, cols, maxRows, resizeRevision, header,
 }: {
   messages: Message[]; committedCount: number;
   stepLabel: string; activeTool: AppState['activeTool'];
   streaming?: string | null; reasoning?: string | null; verbose?: boolean;
-  cols: number; maxRows: number; header: React.ReactNode;
+  cols: number; maxRows: number; resizeRevision: number; header: React.ReactNode;
 }) {
   return (
     <ChatStream
@@ -100,6 +100,7 @@ const ChatZone = React.memo(function ChatZone({
       verbose={verbose}
       cols={cols}
       maxRows={maxRows}
+      resizeRevision={resizeRevision}
       header={header}
     />
   );
@@ -135,12 +136,20 @@ export function App({
 }: { runner?: Runner; pipelineRunner?: Runner; engineInfo?: EngineInfo } = {}) {
   const { exit } = useApp();
   // ── Terminal size — width drives text wrap, height caps the live frame ─
-  const [termCols, setTermCols] = useState(() => process.stdout.columns ?? 80);
-  const [termRows, setTermRows] = useState(() => process.stdout.rows ?? 40);
+  const [termSize, setTermSize] = useState(() => ({
+    cols: process.stdout.columns ?? 80,
+    rows: process.stdout.rows ?? 40,
+    revision: 0,
+  }));
   useEffect(() => {
     const onResize = () => {
-      setTermCols(process.stdout.columns ?? 80);
-      setTermRows(process.stdout.rows ?? 40);
+      const cols = process.stdout.columns ?? 80;
+      const rows = process.stdout.rows ?? 40;
+      setTermSize(prev => (
+        prev.cols === cols && prev.rows === rows
+          ? prev
+          : { cols, rows, revision: prev.revision + 1 }
+      ));
     };
     process.stdout.on('resize', onResize);
     return () => { process.stdout.off('resize', onResize); };
@@ -338,7 +347,7 @@ export function App({
   // ── Submit handler (stable — uses stateRef, no state deps) ──────────
   // ── Shared streaming turn — used by both the single-agent loop and the
   //    orchestrator pipeline runner. ─────────────────────────────────────
-  const W_PHASES = useMemo(() => new Set(['W0', 'W1', 'W0.5', 'W2/3', 'W4']), []);
+  const W_PHASES = useMemo(() => new Set(['W0', 'W1', 'W0.5', 'W2/3', 'W3.5', 'W4']), []);
   const runTurn = useCallback((activeRunner: Runner, trimmed: string, isPipeline: boolean) => {
     void (async () => {
       startChunkFlusher();
@@ -645,7 +654,7 @@ export function App({
 
   // ── Text-wrap width for dividers / turn-meta rules ──────────────────
   // No sidebar any more: the chat uses (nearly) the full terminal width.
-  const chatCols = Math.max(40, termCols - 2);
+  const chatCols = Math.max(40, termSize.cols - 2);
 
   const titleMode =
     sPending === 'permission' ? 'agent · paused'
@@ -672,11 +681,12 @@ export function App({
         reasoning={sReasoning}
         verbose={sVerbose}
         cols={chatCols}
-        maxRows={termRows}
+        maxRows={termSize.rows}
+        resizeRevision={termSize.revision}
         header={
           <Box flexDirection="column">
             <TitleZone path={sPath} branch={sBranch} mode={titleMode} />
-            {!sHasMessages && <WelcomeScreen path={sPath} engine={engineInfo} />}
+            {!sHasMessages && <WelcomeScreen path={sPath} engine={engineInfo} cols={chatCols} />}
           </Box>
         }
       />

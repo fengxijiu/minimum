@@ -29,6 +29,16 @@ const DAG = `<task_dag>{"epic":"e","phases":[
 ]}</task_dag>`;
 const REFINE = `<refine>{"tasks":[{"taskId":"T2-1","allowedGlobs":["src/x.ts"],"acceptance":["ok"]}]}</refine>`;
 const WORKER = `<task_report><status>ok</status>done</task_report>`;
+const MISSION = `# W3.5 Loop Detection Report
+
+## 1. Final Decision
+
+Decision: APPROVED_TO_W4
+
+Reason:
+
+- Ready.
+`;
 const FINALIZE = `<finalize>{"memory_decisions":[]}</finalize>`;
 
 describe("collectText", () => {
@@ -58,6 +68,50 @@ describe("createPlannerBridge", () => {
 		const planner = createPlannerBridge(scriptedClient([DAG]));
 		const out = await planner.compile("build upload", "MEM");
 		expect(out).toContain("<task_dag>");
+	});
+
+	it("passes canonical memory and context-builder guidance to refine", async () => {
+		const calls: any[] = [];
+		const client: CompletionClient = {
+			async *streamChat(options) {
+				calls.push(options);
+				yield { type: "content", content: REFINE };
+			},
+		};
+		const planner = createPlannerBridge(client);
+		await planner.refine({ epicId: "e", phases: [] }, [], "CANONICAL MEMORY");
+		const userMessage = calls[0]!.messages.find((m: any) => m.role === "user")!.content;
+		expect(userMessage).toContain("CANONICAL MEMORY");
+		expect(userMessage).toContain("Context Builder Persona");
+		expect(userMessage).toContain("contextPack");
+	});
+
+	it("runs mission checker as an inline persona", async () => {
+		const calls: any[] = [];
+		const client: CompletionClient = {
+			async *streamChat(options) {
+				calls.push(options);
+				yield { type: "content", content: MISSION };
+			},
+		};
+		const planner = createPlannerBridge(client);
+		await planner.checkMission({
+			userRequest: "build upload",
+			dag: { epicId: "e", phases: [] },
+			refinements: [],
+			results: [],
+			canonicalMemory: "CANONICAL MEMORY",
+			knownIssues: ["missing tests"],
+			loopIndex: 0,
+			maxRepairLoops: 1,
+		});
+		const systemMessage = calls[0]!.messages.find((m: any) => m.role === "system")!.content;
+		const userMessage = calls[0]!.messages.find((m: any) => m.role === "user")!.content;
+		expect(systemMessage).toContain("W3.5 Loop Checker");
+		expect(userMessage).toContain("build upload");
+		expect(userMessage).toContain("CANONICAL MEMORY");
+		expect(userMessage).toContain("missing tests");
+		expect(userMessage).toContain("Decision: APPROVED_TO_W4");
 	});
 });
 
@@ -117,14 +171,15 @@ describe("PipelineBridge", () => {
 	afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
 	it("streams pipeline UiEvents and ends with done:true", async () => {
-		// compile, (perception worker), refine, (impl worker), finalize
-		const client = scriptedClient([DAG, WORKER, REFINE, WORKER, FINALIZE]);
+		// compile, (perception worker), refine, (impl worker), mission check, finalize
+		const client = scriptedClient([DAG, WORKER, REFINE, WORKER, MISSION, FINALIZE]);
 		const bridge = new PipelineBridge(client, { projectRoot: dir });
 		const events: UiEvent[] = [];
 		for await (const e of bridge.send("build an upload endpoint")) events.push(e);
 
 		const phases = events.filter((e) => e.kind === "pipeline").map((e) => (e as any).phase);
 		expect(phases).toContain("W0");
+		expect(phases).toContain("W3.5");
 		expect(phases).toContain("W4");
 		const last = events[events.length - 1]!;
 		expect(last).toEqual({ kind: "done", success: true });

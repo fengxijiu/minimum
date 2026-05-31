@@ -10,6 +10,7 @@ import type { UiEvent } from "./EngineBridge.js";
 
 /**
  * PipelineBridge — wrap the W0–W4 orchestrator as a normalized UiEvent stream,
+ * including the W3.5 mission-check loop,
  * mirroring EngineBridge so the TUI can switch between the single-agent loop
  * and the multi-persona pipeline behind the same Runner contract.
  *

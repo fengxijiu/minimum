@@ -38,7 +38,7 @@ export const COMMANDS: TuiCommand[] = [
   { name: 'diff',   desc: 'Toggle inline diff blocks',      category: 'view' },
   { name: 'plan',   desc: 'Jump to the plan strip',         category: 'view' },
   { name: 'mode',   desc: 'Switch mode: agent / chat / orchestrate', category: 'view', usage: '/mode <agent|chat|orchestrate>' },
-  { name: 'orchestrate', desc: 'Run a request through the W0–W4 pipeline', category: 'view', usage: '/orchestrate <request>', aliases: ['pipeline', 'orch'] },
+  { name: 'orchestrate', desc: 'Run a request through the W0–W4 pipeline with W3.5 mission check', category: 'view', usage: '/orchestrate <request>', aliases: ['pipeline', 'orch'] },
   { name: 'clear',  desc: 'Clear the chat stream',          category: 'view', aliases: ['cls'] },
   { name: 'verbose', desc: 'Toggle verbose mode',           category: 'view', aliases: ['v'] },
   // system

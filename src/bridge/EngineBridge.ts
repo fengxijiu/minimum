@@ -43,7 +43,7 @@ export type UiEvent =
 			description: string;
 	  }
 	| {
-			/** Pipeline (orchestrator) phase transition for the W0–W4 panel. */
+			/** Pipeline (orchestrator) phase transition for the W0–W4 panel, including W3.5. */
 			kind: "pipeline";
 			phase: string;
 			label: string;

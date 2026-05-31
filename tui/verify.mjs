@@ -41,6 +41,8 @@ check('CommandPalette/empty', h(CommandPalette, { items: [], selected: 0 }), ['n
 
 // Height stability: full vs filtered vs empty must be the same number of rows.
 function rows(el) { const { lastFrame, unmount } = render(el); const n = (lastFrame() ?? '').split('\n').length; unmount(); return n; }
+function frame(el) { const { lastFrame, unmount } = render(el); const out = lastFrame() ?? ''; unmount(); return out; }
+function firstNonEmptyLine(text) { return text.split('\n').find(line => line.trim().length > 0) ?? ''; }
 const rFull  = rows(h(CommandPalette, { items: allCmds, selected: 0 }));
 const rOne   = rows(h(CommandPalette, { items: filterCommands('/he'), selected: 0 }));
 const rEmpty = rows(h(CommandPalette, { items: [], selected: 0 }));
@@ -75,7 +77,29 @@ for (const st of ['agent', 'mimo', 'orchestrate', 'paused', 'error']) {
 
 // 5. Static chrome.
 check('TitleBar',      h(TitleBar, { path: '/repo', branch: 'main', mode: 'agent' }), ['minimum']);
-check('WelcomeScreen', h(WelcomeScreen, { path: '~', engine: { mode: 'engine', model: 'mimo' } }), ['QUICK START']);
+check('WelcomeScreen', h(WelcomeScreen, { path: '~', engine: { mode: 'engine', model: 'mimo' } }), [
+  'ᴛʜᴇ ᴍɪɴɪᴍᴜᴍ ᴇғғᴏʀᴛ',
+  'workspace',
+  'Describe a task or type /help.',
+]);
+check('WelcomeScreen/narrow', h(WelcomeScreen, { path: '/very/long/workspace/path/that/should/not/wrap', cols: 56 }), [
+  'MINIMUM',
+  'workspace',
+]);
+const welcomeNarrowTop = firstNonEmptyLine(frame(h(WelcomeScreen, { path: '~', cols: 56 })));
+const welcomeWideTop = firstNonEmptyLine(frame(h(WelcomeScreen, { path: '~', cols: 96 })));
+results.push({
+  name: `WelcomeScreen/responsive-width (${welcomeNarrowTop.length}/${welcomeWideTop.length})`,
+  ok: welcomeWideTop.length > welcomeNarrowTop.length,
+});
+check('WelcomeScreen/wide-poppy', h(WelcomeScreen, { path: 'C:\\workspace\\minimum', cols: 180 }), [
+  '████████',
+  '███╗   ███╗',
+  '𝙏𝙃𝙀 𝙈𝙄𝙉𝙄𝙈𝙐𝙈',
+  'engine',
+  'layout',
+  'commands',
+]);
 check('HelpOverlay',   h(HelpOverlay, {}), ['help']);
 check('PlanStrip',     h(PlanStrip, { title: 'plan', steps: [
   { label: 'scan', status: 'done' }, { label: 'edit', status: 'now' }, { label: 'test', status: 'next' },

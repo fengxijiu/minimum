@@ -22,6 +22,15 @@ export {
 	type PlannerBridge,
 } from "./MiMoPipeline.js";
 export {
+	compileMissionCheck,
+	loopBackTasksToCoarseTasks,
+	type MissionCheckCompileResult,
+	type MissionCheckInput,
+	type MissionCheckReport,
+	type MissionDecision,
+	type MissionLoopBackTask,
+} from "./MissionChecker.js";
+export {
 	compileRefinement,
 	refineDag,
 	type RefineCompileResult,

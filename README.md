@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="docs/logo.png" alt="Minimum" width="120" />
+  <img src="icon.png" alt="Minimum" width="120" />
 </p>
 
 <h1 align="center">Minimum</h1>
 
 <p align="center">
   <strong>MiMo Coding Experience Optimization</strong><br/>
-  针对 MiMo 模型的终端编码助手 · TypeScript + Ink TUI
+  面向 MiMo 模型的终端编码助手 · TypeScript 引擎 + Ink TUI
 </p>
 
 <p align="center">
@@ -16,25 +16,23 @@
   <img src="https://img.shields.io/badge/tests-798+-brightgreen" alt="Tests" />
 </p>
 
+> Minimum 是一个专为 MiMo 模型设计的终端 AI 编码工作台，集成单 Agent 对话、W0-W4 多角色流水线、项目记忆系统、工具调用与审批治理，适合日常编码、复杂任务拆解与长周期项目协作。
+
 ---
 
 ## 目录
 
 - [简介](#简介)
-- [截图](#截图)
+- [能力概览](#能力概览)
 - [快速开始](#快速开始)
 - [配置](#配置)
-- [TUI 交互](#tui-交互)
 - [运行模式](#运行模式)
   - [单 Agent 模式](#单-agent-模式)
-  - [W0–W4 流水线模式](#w0w4-流水线模式)
+  - [W0-W4 流水线模式](#w0-w4-流水线模式)
   - [记忆系统](#记忆系统)
 - [内置工具](#内置工具)
 - [TUI 命令参考](#tui-命令参考)
 - [架构设计](#架构设计)
-  - [目录结构](#目录结构)
-  - [核心模块说明](#核心模块说明)
-  - [数据流](#数据流)
 - [开发指南](#开发指南)
 - [测试](#测试)
 - [许可证](#许可证)
@@ -43,16 +41,29 @@
 
 ## 简介
 
-**Minimum** 是一个运行在终端中的 AI 编码助手，专为小米 MiMo 大模型设计。它将 MiMo 的推理能力与完整的开发工具链集成，提供从对话式编码到多 Agent 协作流水线的全栈开发体验。
+**Minimum** 运行在终端中，围绕 MiMo 的推理能力构建了一套完整的编码工作流。它既可以像传统命令行助手一样完成快速问答、代码修改、文件检索，也可以将复杂需求拆解为多阶段、多角色、多波次的协作流水线。
 
-**核心特性：**
+和“只有聊天框”的 CLI 工具不同，Minimum 提供了完整的 TUI、状态可观测能力、审批模式、项目记忆和可扩展工具层，适合真实项目中的持续开发，而不只是单轮问答。
 
-- 🖥️ **沉浸式终端 UI** — 基于 Ink (React for CLI) 构建，三栏布局：聊天流 + 文件侧栏 + 状态栏
-- 🤖 **双模式运行** — 单 Agent 快速对话 / W0–W4 多 Persona 流水线编排
-- 🔧 **8 种内置工具** — 文件读写、代码搜索、Shell 执行、Git 操作、Web 抓取等
-- 🧠 **记忆治理** — 项目级记忆系统，跨会话持久化知识，fence-aware 合并
-- 🛡️ **三级审批** — read-only / auto-edit / full-auto，安全可控
-- 📊 **实时可观测** — Token 用量、费用估算、工具进度、Plan 步骤可视化
+**适用场景：**
+
+- 终端内进行日常编码、调试、重构和问答
+- 需要拆解复杂需求并分配给多个角色协同执行
+- 希望跨会话保留项目上下文和开发经验
+- 需要可控的工具执行与编辑审批流程
+
+---
+
+## 能力概览
+
+| 能力 | 说明 |
+| --- | --- |
+| 单 Agent 对话 | 适合小规模修改、问答、排错、文件操作 |
+| W0-W4 流水线 | 将复杂任务拆解为多个 Persona 协作执行 |
+| 项目记忆 | 跨会话保存项目知识，减少重复解释成本 |
+| Ink TUI | 终端交互界面，支持计划、工具进度和状态展示 |
+| 审批治理 | 支持 `read-only`、`auto-edit`、`full-auto` |
+| 工具体系 | 内置文件、搜索、Shell、Git、Web、Todo 等工具 |
 
 ---
 
@@ -61,13 +72,35 @@
 ### 1. 环境要求
 
 | 依赖 | 版本 | 说明 |
-|------|------|------|
+| --- | --- | --- |
 | Node.js | >= 22 | 引擎和 TUI 均需 |
 | npm | 任意版本 | 随 Node.js 安装 |
 
-### 2. 安装与构建
+### 2. 克隆与构建
 
-**一键构建（推荐）：**
+**Windows（PowerShell，推荐）：**
+
+```powershell
+git clone https://github.com/fengxijiu/minimum.git
+cd minimum
+.\scripts\build-all.ps1
+```
+
+如果遇到 PowerShell 执行限制，可先运行：
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+```
+
+可用选项：
+
+```powershell
+.\scripts\build-all.ps1
+.\scripts\build-all.ps1 -NoLink
+.\scripts\build-all.ps1 -Clean
+```
+
+**Linux / macOS（Bash，推荐）：**
 
 ```bash
 git clone https://github.com/fengxijiu/minimum.git
@@ -75,16 +108,21 @@ cd minimum
 scripts/build-all.sh
 ```
 
-`build-all.sh` 会按依赖顺序构建引擎 → TUI，然后通过 `npm link` 注册全局 `minimum` 命令。
-
 可用选项：
+
 ```bash
-scripts/build-all.sh            # 完整构建 + 全局注册
-scripts/build-all.sh --no-link  # 仅构建，不注册全局命令
-scripts/build-all.sh --clean    # 清理旧产物后重新构建
+scripts/build-all.sh
+scripts/build-all.sh --no-link
+scripts/build-all.sh --clean
 ```
 
-**手动构建：**
+两个脚本都会按依赖顺序完成：
+
+1. 构建引擎
+2. 构建 TUI
+3. 可选执行 `npm link` 注册全局 `minimum` 命令
+
+### 3. 手动构建
 
 ```bash
 # 1. 构建引擎
@@ -101,19 +139,51 @@ cd ..
 npm link
 ```
 
-### 3. 配置 API Key
+### 4. 配置 API Key
+
+**Windows（PowerShell）：**
+
+```powershell
+$env:MIMO_API_KEY="your_key_here"
+```
+
+**Linux / macOS（Bash）：**
 
 ```bash
 export MIMO_API_KEY=your_key_here
 ```
 
-Token Plan 用户（`tp-` 开头的 key 会自动选择 Token Plan 端点）：
+Token Plan 用户使用 `tp-` 开头的 key 时，会自动选择 Token Plan 端点；如需手动指定区域，可额外配置 `MIMO_BASE_URL`。
+
+**Windows（PowerShell）：**
+
+```powershell
+$env:MIMO_API_KEY="tp-your_key_here"
+$env:MIMO_BASE_URL="https://token-plan-sgp.xiaomimimo.com/v1"
+# 或：
+# $env:MIMO_BASE_URL="https://token-plan-ams.xiaomimimo.com/v1"
+```
+
+**Linux / macOS（Bash）：**
 
 ```bash
 export MIMO_API_KEY=tp-your_key_here
+export MIMO_BASE_URL=https://token-plan-sgp.xiaomimimo.com/v1
+# 或：
+# export MIMO_BASE_URL=https://token-plan-ams.xiaomimimo.com/v1
 ```
 
-### 4. 启动
+### 5. 启动
+
+**Windows（PowerShell）：**
+
+```powershell
+minimum
+# 或直接运行
+node .\bin\minimum-ink.js
+```
+
+**Linux / macOS（Bash）：**
 
 ```bash
 minimum
@@ -121,7 +191,7 @@ minimum
 node bin/minimum-ink.js
 ```
 
-> 💡 未设置 `MIMO_API_KEY` 时自动进入 **mock 模式**，TUI 正常启动，回复为占位文本。适合体验 UI 或开发调试。
+> 未设置 `MIMO_API_KEY` 时会自动进入 Mock 模式，适合先体验 UI 或调试终端交互。
 
 ---
 
@@ -129,14 +199,14 @@ node bin/minimum-ink.js
 
 ### 配置文件层级
 
-配置按优先级从高到低合并（项目配置覆盖全局配置）：
+配置按优先级从高到低合并，项目配置会覆盖全局配置：
 
 | 层级 | 路径 | 说明 |
-|------|------|------|
-| 项目级 | `.minimum/config.json` | 项目专属配置，`/init` 命令自动生成 |
+| --- | --- | --- |
+| 项目级 | `.minimum/config.json` | 当前项目专属配置，`/init` 可自动生成 |
 | 全局级 | `~/.minimum/config.json` | 所有项目共享的默认配置 |
 
-### 配置文件格式
+### 配置示例
 
 ```json
 {
@@ -148,365 +218,231 @@ node bin/minimum-ink.js
 }
 ```
 
+如果你使用 Token Plan，也可以将 `baseUrl` 改为对应区域端点，例如：
+
+```json
+{
+  "apiKey": "tp-your_key_here",
+  "baseUrl": "https://token-plan-sgp.xiaomimimo.com/v1"
+}
+```
+
 ### 可用模型
 
 | 模型 | 说明 |
-|------|------|
-| `mimo-v2.5-pro` | 专业版 — Agentic 长上下文一致性更强（推荐） |
-| `mimo-v2.5` | 标准版 — 支持图片理解，多模态能力 |
-| `mimo-omni` | 全能版 — 多模态全能 |
+| --- | --- |
+| `mimo-v2.5-pro` | 专业版，长上下文一致性更强，推荐用于复杂编码任务 |
+| `mimo-v2.5` | 标准版，支持图片理解与多模态能力 |
 
 ### API 端点
 
-| 区域 | URL |
-|------|-----|
+| 场景 | URL |
+| --- | --- |
 | 默认（中国） | `https://api.xiaomimimo.com/v1` |
-| 新加坡 | `https://token-plan-sgp.xiaomimimo.com/v1` |
-| 欧洲 | `https://token-plan-ams.xiaomimimo.com/v1` |
+| Token Plan 新加坡 | `https://token-plan-sgp.xiaomimimo.com/v1` |
+| Token Plan 欧洲 | `https://token-plan-ams.xiaomimimo.com/v1` |
 
 ### 环境变量
 
 | 变量名 | 说明 | 默认值 |
-|--------|------|--------|
-| `MIMO_API_KEY` | MiMo API 认证密钥 | 未设置（Mock 模式） |
+| --- | --- | --- |
+| `MIMO_API_KEY` | MiMo API 认证密钥 | 未设置时进入 Mock 模式 |
 | `MIMO_BASE_URL` | API 端点地址 | `https://api.xiaomimimo.com/v1` |
-| `MINIMUM_ENABLE_SHELL` | 启用 Shell 工具执行 | `0`（禁用） |
-| `MINIMUM_TELEMETRY` | 启用遥测数据收集 | `1`（启用） |
-
----
-
-## TUI 交互
-
-### 界面布局
-
-TUI 采用 **Zone 隔离渲染** 架构，各区域独立刷新：
-
-```
-┌─ TitleBar ─────────────────────────────────────────────┐
-│ 项目名 · 分支名 · 模式指示器                              │
-├─ PlanStrip ────────────────────────────────────────────┤
-│ [✓] Step 1  [▶] Step 2  [ ] Step 3  [ ] Step 4        │
-├─ PipelinePanel (仅 /orchestrate 模式) ─────────────────┤
-│ W0 ████░░░ 1.2s  W1 ██░░░░░ 0.5s  W2/3 ░░░░░░░  --   │
-├─ ChatStream ──────────────────────────────────────────┤
-│ ● Agent: I'll help you set up the project...           │
-│ ┌─ Tool ──────────────────────────────────────────┐   │
-│ │ ▶ run  npm init -y                     0.3s  ✓  │   │
-│ └─────────────────────────────────────────────────┘   │
-├───────────────────────────────────────────────────────┤
-│ ▸ Type a message or / for commands...                  │
-├─ StatusBar ───────────────────────────────────────────┤
-│ mimo-v2.5-pro │ 1,234 tok │ $0.003 │ auto-edit        │
-└───────────────────────────────────────────────────────┘
-```
-
-### 输入交互
-
-| 操作 | 说明 |
-|------|------|
-| 直接输入文字 | 发送给 Agent 对话 |
-| `/` | 打开命令面板（模糊搜索 + 匹配高亮） |
-| `@` | 打开文件选择器（basename 优先匹配，路径分层着色） |
-| `↑` / `↓` | 面板内选择 / 浏览输入历史 |
-| `Tab` | 命令/文件补全；无面板时切换 agent/chat 模式 |
-| `Shift+Tab` | 循环切换编辑模式 |
-| `Esc` | 关闭面板 / 清空输入 |
-| `Ctrl+U` | 清空当前输入 |
-| `Alt+S` | 交换暂存内容与当前输入 |
-| `Ctrl+R` | 切换 verbose 模式 |
-| `Ctrl+P` / `Ctrl+N` | 会话内输入历史前/后 |
-| `Ctrl+D` | 退出 |
+| `MINIMUM_ENABLE_SHELL` | 启用 Shell 工具执行 | `0` |
+| `MINIMUM_TELEMETRY` | 启用遥测收集 | `1` |
 
 ---
 
 ## 运行模式
 
-Minimum 提供三种核心能力：**单 Agent 对话**处理日常编码任务，**W0–W4 流水线**编排复杂多角色协作，**记忆系统**实现跨会话知识持久化。三者相互独立又紧密协作——流水线的 W4 阶段会自动将成果写入记忆，记忆又为后续对话和流水线提供上下文。
+Minimum 主要由三部分能力构成：单 Agent 对话、W0-W4 多角色流水线，以及跨会话项目记忆系统。三者既能独立使用，也能在复杂任务中联动。
 
 ### 单 Agent 模式
 
-默认模式。适合交互式对话、小规模代码修改、快速问答。
+默认模式，适合快速问答、小规模改动、文件操作与即时调试。
 
 **工作流程：**
 
-1. 用户输入消息 → 发送给 MiMo 模型
-2. 模型返回文本 + 工具调用请求
-3. 引擎执行工具（受审批策略控制）
-4. 工具结果回传给模型，继续推理
-5. 循环直到模型输出最终回复
+1. 用户输入消息
+2. 模型返回文本与工具调用请求
+3. 引擎按审批策略执行工具
+4. 工具结果回传模型，继续推理
+5. 直到输出最终回复
 
-**核心机制：**
+**关键机制：**
 
-- **流式输出** — 100ms 缓冲刷新，实时看到模型推理过程
-- **并行工具执行** — 只读工具批量并发（默认最多 3 个），加速信息收集
-- **工具结果截断** — 单个工具结果上限 32K 字符，防止上下文溢出
-- **消息历史修复** — 自动检测并修复不完整的消息序列（healing）
-- **编辑快照** — 每次文件编辑自动创建快照，支持 `/undo` 回滚
-- **Plan 可视化** — 模型输出的步骤计划实时渲染为进度条
+- 流式输出，默认 100ms 缓冲刷新
+- 只读工具可并发执行，加快信息收集
+- 单个工具结果有截断保护，避免上下文过载
+- 自动修复不完整消息序列
+- 文件编辑支持快照与 `/undo`
+- 计划步骤可视化展示
 
 **审批模式：**
 
 | 模式 | 说明 |
-|------|------|
-| `read-only` | 仅允许读取操作，所有写入/执行需手动确认 |
-| `auto-edit` | 自动批准文件编辑，Shell 执行需确认（推荐） |
-| `full-auto` | 全自动，所有操作无需确认 |
+| --- | --- |
+| `read-only` | 仅允许读取，写入和执行需手动确认 |
+| `auto-edit` | 自动批准文件编辑，Shell 执行需确认 |
+| `full-auto` | 全自动执行 |
 
 **编辑模式：**
 
 | 模式 | 说明 |
-|------|------|
-| `review` | 每次编辑前显示 diff 预览 |
-| `auto` | 自动应用编辑，不中断工作流 |
-| `yolo` | 自动应用，跳过所有验证 |
+| --- | --- |
+| `review` | 应用前展示 diff 预览 |
+| `auto` | 自动应用编辑 |
+| `yolo` | 自动应用并跳过验证 |
 
-### W0–W4 流水线模式
+### W0-W4 流水线模式
 
-通过 `/orchestrate <需求>` 启动。适合复杂特性开发、多文件重构、需要多角色协作的任务。
+通过 `/orchestrate <需求>` 启动，适合复杂功能开发、多文件重构、需要分角色协作的任务。
 
-与单 Agent 模式不同，流水线将一个大任务拆解为多个子任务，分配给不同 Persona 并发执行，通过依赖图保证执行顺序，最终由 master_planner 汇总结果。整个过程在 TUI 的 `PipelinePanel` 中实时展示各阶段的进度和耗时。
+流水线会将一个大任务拆解为多个子任务，按依赖关系划分波次，并分配给不同 Persona 并发执行，最终由 `master_planner` 汇总结果。
 
 #### 流水线阶段
 
-```
-用户需求
-  │
-  ▼
-┌─────────────────────────────────────────────────────────────────┐
-│ W0   TaskCompiler                                               │
-│      master_planner 读取项目记忆，分析需求，生成粗粒度任务            │
-│      输出：TaskContract[]（含依赖关系、Persona 分配、验收标准）       │
-└────────────────────────┬────────────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────────────┐
-│ W0.5 Refiner                                                    │
-│      master_planner 二次精化合约：补全缺失字段、校验路径策略          │
-│      ContractValidator 检查完整性，不通过则要求重编译                │
-└────────────────────────┬────────────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────────────┐
-│ W1   感知波（并发）                                               │
-│      vision         — 需求理解、UI/UX 设计分析                     │
-│      repo_scout     — 仓库结构扫描、依赖图谱、代码风格识别            │
-│      context_builder — 聚合前两者产出，构建 ContextPack             │
-│      以上三个 Persona 均为只读，并发执行无文件冲突                    │
-└────────────────────────┬────────────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────────────┐
-│ W2/3 实现+校验波（并发，可多轮）                                    │
-│      code_executor  — 根据 ContextPack 实现代码修改               │
-│      test_writer    — 编写测试用例                                │
-│      test_runner    — 执行测试并报告结果                           │
-│      runtime_debug  — 运行时调试、错误诊断                         │
-│      reviewer       — 代码审查、质量检查                           │
-│      docs           — 文档编写、注释补充                           │
-│      TaskGraph 保证同一 Wave 内并发任务的文件路径不冲突               │
-└────────────────────────┬────────────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────────────┐
-│ W4   Finalize                                                   │
-│      master_planner 汇总所有 TaskResult                          │
-│      MemoryGovernor 执行记忆治理（详见「记忆系统」）                 │
-│      清理 staging 暂存区                                         │
-│      输出：FinalizeReport（成功/失败/记忆变更摘要）                  │
-└─────────────────────────────────────────────────────────────────┘
-```
+| 阶段 | 职责 |
+| --- | --- |
+| W0 TaskCompiler | 读取上下文与记忆，生成粗粒度任务合约 |
+| W0.5 Refiner | 精化任务字段并校验路径策略与完整性 |
+| W1 感知波 | 并发完成需求理解、仓库扫描、上下文构建 |
+| W2/W3 实现与校验波 | 代码实现、测试编写、运行验证、文档补充 |
+| W4 Finalize | 汇总结果、执行记忆治理、输出最终报告 |
 
-#### 10 个 Persona 角色
+#### Persona 角色
 
-每个 Persona 有独立的模型选择、工具白名单、路径策略和输出 Schema：
+| 角色 | 类型 | 职责 | 可写 | 最大并发 |
+| --- | --- | --- | --- | --- |
+| `master_planner` | master | 任务编排、合约生成、最终汇总 | — | 1 |
+| `vision` | worker | 需求理解、UI/UX 分析 | ✗ | 1 |
+| `repo_scout` | worker | 仓库结构与依赖分析 | ✗ | 1 |
+| `context_builder` | worker | 聚合上下文，生成 ContextPack | ✗ | 1 |
+| `code_executor` | worker | 实现代码修改 | ✓ | 3 |
+| `test_writer` | worker | 编写测试 | ✓ | 2 |
+| `test_runner` | worker | 执行测试与分析结果 | ✗ | 1 |
+| `runtime_debug` | worker | 运行时调试与错误诊断 | ✓ | 1 |
+| `reviewer` | worker | 代码审查与质量检查 | ✗ | 1 |
+| `docs` | worker | 文档与注释补充 | ✓ | 1 |
 
-| 角色 | 类型 | 职责 | 可写 | 独占 Wave | 最大并发 |
-|------|------|------|------|-----------|---------|
-| `master_planner` | master | 任务编排、合约生成、结果终结 | — | — | 1 |
-| `vision` | worker | 需求分析、UI/UX 设计建议 | ✗ | 否 | 1 |
-| `repo_scout` | worker | 仓库结构扫描、依赖分析 | ✗ | 否 | 1 |
-| `context_builder` | worker | 上下文包构建、信息聚合 | ✗ | 否 | 1 |
-| `code_executor` | worker | 代码实现、文件修改 | ✓ | 否 | 3 |
-| `test_writer` | worker | 测试用例编写 | ✓ | 否 | 2 |
-| `test_runner` | worker | 测试执行与结果分析 | ✗ | 否 | 1 |
-| `runtime_debug` | worker | 运行时调试、错误诊断 | ✓ | 是 | 1 |
-| `reviewer` | worker | 代码审查、质量检查 | ✗ | 否 | 1 |
-| `docs` | worker | 文档编写、注释补充 | ✓ | 否 | 1 |
+#### 并发与安全
 
-**路径安全策略：**
+- `TaskGraph` 保证同一波次内并发任务的路径策略不冲突
+- `soloPerWave` 任务可独占整个 Wave
+- `PathPolicyEnforcer` 统一约束读写范围
+- 只读 Persona 无法突破 `canWrite: false` 限制
+- `.minimum/memory.md` 等核心文件由记忆治理模块专管
 
-- `canWrite: false` 的 Persona（vision / repo_scout / reviewer）被 `PathPolicyEnforcer` 全局禁止写入
-- `alwaysAllowedGlobs` — 每个 Persona 只能写入自己的 `_staging/<taskId>/` 目录
-- `forbiddenGlobs` — 禁止任何 Persona 修改 `.minimum/memory.md` 等核心文件（由 MemoryGovernor 专管）
-
-#### 并发调度机制
-
-`WaveScheduler` 基于 DAG 拓扑排序将任务划分为多个 Wave：
-
-- 同一 `parallelGroup` 内的任务并发执行
-- `TaskGraph` 保证并发任务的 `allowedGlobs` 不相交（无文件冲突）
-- `soloPerWave` 标记的任务（如 `runtime_debug`）独占整个 Wave，其他任务等它完成后再启动
-- `maxConcurrent` 限制单个 Wave 内的最大并发数
-- 上游任务全部完成后，下游任务才会被调度
-
-#### TaskContract 合约
-
-每个任务在执行前必须有完整的 `TaskContract`，由 `ContractValidator` 校验：
+#### TaskContract 示例
 
 ```typescript
 interface TaskContract {
-  taskId: string;           // 全局唯一，如 "T-C1-2"
-  phase: string;            // 所属阶段，如 "P3-frontend"
-  epicId: string;           // 所属 Epic
-  personaId: PersonaId;     // 执行者角色
-  objective: string;        // 人类可读的任务目标
-  inputs: TaskInputs;       // 用户目标 + 上下文包 + 上游产物
-  pathPolicy: TaskPathPolicy; // 路径访问控制
-  acceptance: string[];     // 验收标准列表
-  outputSchema: OutputSchema; // 期望输出格式
-  parallelGroup: string;    // 并发分组标识
-  dependsOn: string[];      // 上游任务 ID 列表
-  abortOnConflict: boolean; // 路径冲突时是否中止
+  taskId: string;
+  phase: string;
+  epicId: string;
+  personaId: PersonaId;
+  objective: string;
+  inputs: TaskInputs;
+  pathPolicy: TaskPathPolicy;
+  acceptance: string[];
+  outputSchema: OutputSchema;
+  parallelGroup: string;
+  dependsOn: string[];
+  abortOnConflict: boolean;
 }
 ```
 
 ### 记忆系统
 
-记忆系统是 Minimum 的核心差异化能力。它让 Agent 能够跨会话积累项目知识，避免每次对话都从零开始理解代码库。
+记忆系统让 Minimum 可以跨会话积累项目知识，减少重复解释，提高后续任务上下文质量。
 
 #### 三层记忆架构
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                   项目记忆 (ProjectMemory)                   │
-│    .minimum/memory.md — 跨会话持久化的项目知识库                │
-│    由 MemoryGovernor 管理，fence-aware 合并，不破坏代码块       │
-├─────────────────────────────────────────────────────────────┤
-│                   会话记忆 (SessionMemory)                   │
-│    当前会话内的对话历史和上下文                                 │
-│    会话结束时可选择性沉淀到项目记忆                              │
-├─────────────────────────────────────────────────────────────┤
-│                   运行时记忆 (RuntimeMemory)                  │
-│    内存中的临时状态：工具执行结果、编辑快照等                       │
-│    会话结束后清除                                              │
-└─────────────────────────────────────────────────────────────┘
-```
+| 层级 | 说明 |
+| --- | --- |
+| ProjectMemory | 项目级记忆，持久化在 `.minimum/memory.md` |
+| SessionMemory | 当前会话上下文，可选择沉淀到项目记忆 |
+| RuntimeMemory | 运行期临时状态，如工具结果、编辑快照 |
 
-#### 记忆治理流程（W4 阶段）
+#### 记忆治理流程
 
-流水线的 W4 Finalize 阶段会自动执行记忆治理：
+W4 Finalize 阶段会统一收集 `MemoryCandidate[]`，再由 `master_planner` 决定：
 
-```
-所有 TaskResult
-  │
-  ▼
-MemoryGovernor 收集 MemoryCandidate[]
-  │
-  ▼
-master_planner 对每个候选做出决策：
-  ├── merge   → 追加到 .minimum/memory.md（带来源标记）
-  ├── archive → 移动到 _archive/ 目录
-  └── reject  → 丢弃
-  │
-  ▼
-MemoryStaging 清理暂存区
-```
+- `merge`：写入 `.minimum/memory.md`
+- `archive`：归档到 `_archive/`
+- `reject`：丢弃
 
-**关键设计：**
+#### 关键设计
 
-- **Fence-aware 合并** — 写入记忆时不会破坏已有的代码块围栏（` ``` `），精确插入到正确位置
-- **来源追溯** — 每条记忆条目携带 `source_task`、`persona`、`related_files` 元数据
-- **Token 预算加载** — `MemoryLoader` 按 token 预算加载记忆，W0 编排时不会超出上下文窗口
-- **相关性排序** — `ContextPackBuilder` 为每个 Worker 按相关性排序注入上下文，确保关键信息优先
-- **评分淘汰** — `MemoryScorer` 对记忆条目评分，低分条目在后续合并中被淘汰
-
-#### 记忆文件格式
-
-`.minimum/memory.md` 示例：
-
-```markdown
-## 项目架构
-
-- 使用 Express.js + TypeScript 构建 REST API
-- 数据库：PostgreSQL，通过 Prisma ORM 访问
-<!-- source: T-C1-2, persona: repo_scout, files: [prisma/schema.prisma] -->
-
-## 编码规范
-
-- 错误处理统一使用 AppError 类（src/errors.ts）
-- 所有路由需添加 Joi 输入验证
-<!-- source: T-C2-1, persona: reviewer, files: [src/routes/*.ts] -->
-
-## 已知问题
-
-- JWT token 过期逻辑需要 refresh token 支持
-<!-- source: T-C3-1, persona: runtime_debug, files: [src/auth/jwt.ts] -->
-```
+- Fence-aware 合并，不破坏已有代码块围栏
+- 记忆条目保留 `source_task`、`persona`、`related_files` 元数据
+- 按 token 预算加载记忆，避免挤占上下文窗口
+- 为不同 Worker 按相关性排序注入上下文
 
 #### 记忆命令
 
 | 命令 | 说明 |
-|------|------|
+| --- | --- |
 | `/memory` | 显示项目记忆文件路径和大小 |
-| `/compact` | 查看上下文压缩状态，了解记忆占用 |
-| `/init` | 初始化项目时自动创建 `.minimum/` 目录结构 |
+| `/compact` | 查看上下文压缩状态 |
+| `/init` | 初始化 `.minimum/` 目录结构 |
 
 ---
 
 ## 内置工具
 
 | 工具 | 类别 | 说明 |
-|------|------|------|
-| `read_file` | 读取 | 读取文件内容，支持行范围、编码指定 |
+| --- | --- | --- |
+| `read_file` | 读取 | 读取文件内容，支持行范围和编码 |
 | `edit_file` | 编辑 | SEARCH/REPLACE 块编辑 |
-| `apply_patch` | 编辑 | 安全的 search/replace hunk 编辑，防止盲目覆写 |
+| `apply_patch` | 编辑 | 安全的 hunk 级编辑 |
 | `write_file` | 编辑 | 创建或覆写文件 |
-| `exec_shell` | 执行 | 执行 Shell 命令（需 `MINIMUM_ENABLE_SHELL=1`） |
-| `grep` | 搜索 | 代码搜索（正则匹配） |
+| `exec_shell` | 执行 | 执行 Shell 命令，需启用 `MINIMUM_ENABLE_SHELL=1` |
+| `grep` | 搜索 | 正则代码搜索 |
 | `glob` | 搜索 | 文件名模式匹配 |
 | `git` | 版本控制 | Git 操作封装 |
-| `web_fetch` | 网络 | 网页内容抓取 |
-| `todo` | 任务 | 待办事项管理 |
+| `web_fetch` | 网络 | 抓取网页内容 |
+| `todo` | 任务 | 管理待办事项 |
 
 **安全策略：**
 
-- `PathPolicyEnforcer` — 基于 Persona 的路径访问控制（glob 模式匹配）
-- `ToolAllowlistEnforcer` — 工具白名单/黑名单过滤
-- Shell 工具默认关闭，需显式启用
+- `PathPolicyEnforcer` 基于 Persona 控制路径访问
+- `ToolAllowlistEnforcer` 负责工具白名单与黑名单过滤
+- Shell 工具默认关闭，需要显式启用
 
 ---
 
 ## TUI 命令参考
 
-在输入框输入 `/` 弹出命令面板（支持模糊搜索）。
+在输入框输入 `/` 可以打开命令面板并进行模糊搜索。
 
 | 命令 | 别名 | 说明 |
-|------|------|------|
-| `/orchestrate <需求>` | `pipeline` `orch` | 通过 W0–W4 流水线执行复杂任务 |
+| --- | --- | --- |
+| `/orchestrate <需求>` | `pipeline` `orch` | 启动 W0-W4 流水线 |
 | `/new` | `reset` | 开启新会话 |
-| `/save [name]` | | 保存当前会话 |
-| `/load <name>` | | 加载已保存会话 |
+| `/save [name]` | - | 保存当前会话 |
+| `/load <name>` | - | 加载已保存会话 |
 | `/sessions` | `ls` | 列出已保存会话 |
 | `/clear` | `cls` | 清空聊天记录 |
 | `/context` | `ctx` | 显示 token 用量 |
-| `/compact` | | 上下文压缩状态 |
-| `/undo` | | 撤销最后一次暂存编辑 |
-| `/redo` | | 重做已撤销的编辑 |
+| `/compact` | - | 查看上下文压缩状态 |
+| `/undo` | - | 撤销最后一次暂存编辑 |
+| `/redo` | - | 重做已撤销编辑 |
 | `/memory` | `mem` | 显示项目记忆路径 |
-| `/plan` | | 显示当前计划进度 |
-| `/mode [agent\|chat]` | | 切换模式 |
-| `/permission [mode]` | `perm`, `approval`, `appr` | 权限模式：`read-only` / `auto-edit` / `full-auto` |
-| `/editmode [mode]` | | 编辑模式：`review` / `auto` / `yolo` |
-| `/verbose` | `v` | 切换详细输出（也可 Ctrl+R） |
-| `/run <cmd>` | | 运行 shell 命令（先弹权限确认） |
-| `/mcp` | | 显示 MCP Server 状态 |
-| `/status` | | 显示会话状态摘要 |
-| `/tools` | | 列出可用工具 |
-| `/model` | | 显示当前模型 |
+| `/plan` | - | 显示当前计划进度 |
+| `/mode [agent\|chat]` | - | 切换模式 |
+| `/permission [mode]` | `perm` `approval` `appr` | 设置审批模式 |
+| `/editmode [mode]` | - | 设置编辑模式 |
+| `/verbose` | `v` | 切换详细输出 |
+| `/run <cmd>` | - | 运行 shell 命令 |
+| `/mcp` | - | 查看 MCP Server 状态 |
+| `/status` | - | 显示会话状态摘要 |
+| `/tools` | - | 列出可用工具 |
+| `/model` | - | 显示当前模型 |
 | `/config` | `cfg` | 显示配置信息 |
-| `/init` | | 在当前项目初始化配置 |
+| `/init` | - | 初始化当前项目配置 |
 | `/help` | `?` | 显示快捷键帮助 |
-| `/quit` | `exit` `q` | 退出（也可 Ctrl+D） |
+| `/quit` | `exit` `q` | 退出 |
 
 ---
 
@@ -514,268 +450,132 @@ MemoryStaging 清理暂存区
 
 ### 目录结构
 
-```
+下面只列出最关键的目录，完整结构请以仓库实际内容为准：
+
+```text
 minimum/
-├── bin/                        # CLI 入口
-│   └── minimum-ink.js          # 主入口，spawn tui/dist/cli.js
-│
-├── src/                        # 引擎层（框架无关，可被任意前端消费）
-│   ├── index.ts                # 统一 re-export
-│   │
-│   ├── bridge/                 # 事件桥接
-│   │   ├── EngineBridge.ts     # MiMoLoop → UiEvent 规范化流
-│   │   └── PipelineBridge.ts   # MiMoPipeline → UiEvent 规范化流
-│   │
-│   ├── loop/                   # 单 Agent 推理循环
-│   │   ├── MiMoLoop.ts         # 核心循环：stream → tool → loop
-│   │   ├── healing.ts          # 消息历史修复
-│   │   ├── messages.ts         # 消息构建
-│   │   ├── ReadTracker.ts      # 读取/编辑工具追踪
-│   │   └── SnapshotManager.ts  # 编辑快照管理
-│   │
-│   ├── orchestration/          # W0–W4 多 Persona 流水线
-│   │   ├── MiMoPipeline.ts     # 主编排器
-│   │   ├── TaskCompiler.ts     # W0: 需求 → 带依赖图的任务 DAG
-│   │   ├── TaskGraph.ts        # DAG 构建与拓扑排序
-│   │   ├── TaskContract.ts     # 任务合约定义
-│   │   ├── ContractValidator.ts# 合约完整性校验
-│   │   ├── Refiner.ts          # W0.5: 二次精化
-│   │   ├── WaveScheduler.ts    # 并发波次调度
-│   │   ├── TaskRunner.ts       # 单任务执行
-│   │   └── ClientAdapters.ts   # 流式客户端适配
-│   │
-│   ├── personas/               # 10 个固定角色定义
-│   │   └── Persona.ts          # PersonaId / PathPolicy / Parallelism
-│   │
-│   ├── memory/                 # 项目记忆系统
-│   │   ├── ProjectMemory.ts    # 项目级记忆
-│   │   ├── RuntimeMemory.ts    # 运行时记忆
-│   │   ├── SessionMemory.ts    # 会话级记忆
-│   │   ├── MemoryStore.ts      # 记忆存储
-│   │   └── governance/         # 记忆治理
-│   │       ├── MemoryGovernor.ts    # W4 合并决策执行
-│   │       ├── MemoryLoader.ts      # 按 token 预算加载
-│   │       ├── ContextPackBuilder.ts# Worker 上下文注入
-│   │       ├── MemoryScorer.ts      # 记忆评分
-│   │       ├── MemoryStaging.ts     # 暂存区管理
-│   │       ├── MemoryManifest.ts    # 记忆清单
-│   │       └── MemoryInspector.ts   # 记忆检查
-│   │
-│   ├── tools/                  # 内置工具
-│   │   ├── ToolRegistry.ts     # 工具注册中心
-│   │   ├── filesystem/         # read_file / edit_file / apply_patch / write_file
-│   │   ├── shell/              # exec_shell
-│   │   ├── search/             # grep / glob
-│   │   ├── git/                # git 操作
-│   │   ├── web/                # web_fetch
-│   │   ├── todo/               # todo 管理
-│   │   └── policy/             # PathPolicyEnforcer / ToolAllowlistEnforcer
-│   │
-│   ├── clients/                # MiMo API 客户端
-│   │   └── MiMoClient.ts       # 流式 Chat Completion
-│   │
-│   ├── approval/               # 审批流程
-│   │   ├── ApprovalManager.ts  # 审批管理器
-│   │   └── types.ts            # ApprovalMode / Request / Response
-│   │
-│   ├── config/                 # 配置管理
-│   │   ├── MiMoConfig.ts       # 配置类型
-│   │   ├── loadMiMoConfig.ts   # 配置加载与合并
-│   │   └── createMiMoStack.ts  # 全栈初始化
-│   │
-│   ├── capacity/               # 容量控制（token 预算、上下文窗口）
-│   ├── context/                # 上下文管理（摘要、关键信息提取）
-│   ├── index/                  # 语义索引（Embedding + Chunker）
-│   ├── session/                # 会话管理（保存/加载/检查点）
-│   ├── transcript/             # 对话记录持久化
-│   ├── commands/               # 命令系统
-│   ├── skills/                 # 技能系统
-│   ├── hooks/                  # 生命周期钩子
-│   ├── mcp/                    # MCP 协议支持
-│   ├── lsp/                    # LSP 协议集成
-│   ├── subagent/               # 子代理系统
-│   ├── tasks/                  # 任务队列
-│   ├── telemetry/              # 遥测统计
-│   ├── repair/                 # 工具调用修复（StormBreaker）
-│   ├── validators/             # 代码验证器
-│   ├── completeness/           # 完整性检查
-│   ├── iteration/              # 迭代控制
-│   ├── types/                  # 全局类型定义
-│   ├── utils/                  # 工具函数
-│   └── mocks/                  # Mock 实现
-│
-├── tui/src/                    # Ink 终端 UI
-│   ├── cli.tsx                 # TUI 入口
-│   ├── app.tsx                 # 主应用，Zone 隔离渲染
-│   ├── engine.ts               # Runner 接口 + createEngineRunner
-│   ├── commands.ts             # 命令路由
-│   ├── types.ts                # TUI 类型定义
-│   ├── files.ts                # 文件扫描
-│   ├── seed.ts                 # 初始状态
-│   ├── theme.ts                # 主题定义
-│   ├── markdown.ts             # Markdown 渲染
-│   ├── inputHistory.ts         # 输入历史持久化
-│   ├── toolIcon.ts             # 工具图标映射
-│   │
-│   ├── state/                  # Flux 风格状态机
-│   │   ├── events.ts           # 事件定义
-│   │   ├── reducer.ts          # 纯函数 reducer
-│   │   └── store.ts            # 状态订阅
-│   │
-│   ├── components/             # UI 组件
-│   │   ├── TitleBar.tsx         # 标题栏（项目名 / 分支 / 模式）
-│   │   ├── PlanStrip.tsx        # Agent 计划条（步骤级进度）
-│   │   ├── PipelinePanel.tsx    # W0–W4 相位条（动画 spinner + 计时）
-│   │   ├── ChatStream.tsx       # 消息流
-│   │   ├── ContextRail.tsx      # 文件/编辑侧栏
-│   │   ├── StatusBar.tsx        # 状态栏（token / 费用 / 模式）
-│   │   ├── CommandPalette.tsx   # 命令面板（模糊匹配 + 高亮）
-│   │   ├── FilePicker.tsx       # 文件选择器（模糊匹配 + 路径分层着色）
-│   │   ├── InputArea.tsx        # 输入区域
-│   │   ├── ToolProgress.tsx     # 工具进度（spinner + 计时）
-│   │   ├── WelcomeScreen.tsx    # 欢迎屏幕
-│   │   ├── ToastBar.tsx         # 通知条
-│   │   ├── HelpOverlay.tsx      # 帮助覆盖层
-│   │   ├── MarkdownText.tsx     # Markdown 渲染组件
-│   │   ├── Prompt.tsx           # 提示组件
-│   │   └── atoms.tsx            # 原子组件
-│   │
-│   └── theme/                  # 主题上下文
-│       └── context.tsx
-│
-├── scripts/                    # 构建脚本
-│   ├── build-all.sh            # 一键构建 + 全局注册
-│   └── copy-assets.mjs         # 资源文件复制
-│
-├── tests/                      # 测试
-│   ├── unit/                   # 单元测试（239+ tests）
-│   └── integration/            # 集成测试
-│
-├── docs/                       # 文档
-├── doc/                        # 设计文档
-├── opencode.json               # OpenCode 兼容配置
-├── tsconfig.json               # TypeScript 配置
-├── tsup.config.ts              # 打包配置
-├── vitest.config.ts            # 测试配置
-└── jest.config.js              # Jest 配置（兼容层）
+├── bin/                 # CLI 入口
+├── src/                 # 引擎层
+│   ├── loop/            # 单 Agent 推理循环
+│   ├── orchestration/   # W0-W4 流水线编排
+│   ├── personas/        # Persona 定义
+│   ├── memory/          # 项目记忆系统
+│   ├── tools/           # 内置工具
+│   ├── bridge/          # Engine/Pipeline -> UiEvent
+│   └── config/          # 配置加载与初始化
+├── tui/src/             # Ink 终端 UI
+│   ├── components/      # 组件
+│   ├── state/           # 状态机
+│   └── theme/           # 主题上下文
+├── scripts/             # 构建脚本
+│   ├── build-all.ps1
+│   ├── build-all.sh
+│   └── copy-assets.mjs
+├── tests/               # 单元与集成测试
+├── docs/                # 文档
+└── doc/                 # 设计文档
 ```
 
-### 核心模块说明
+### 核心模块
 
-#### 引擎层 (`src/`)
-
-引擎层是框架无关的核心逻辑，通过 `UiEvent` 规范化事件流与 UI 层解耦。任何前端（Ink TUI / Web / Headless）都可以消费同一套事件流。
-
-**MiMoLoop** — 单 Agent 推理循环的核心：
-
-```
-用户输入 → MiMo 模型推理 → [工具调用 → 执行 → 结果回传] → 循环 → 最终回复
-                                    ↑___retry on error___↓
-```
-
-- 流式输出（100ms 缓冲刷新）
-- 并行只读工具批量执行（默认最多 3 个）
-- 工具结果截断保护（32K 字符上限）
-- 消息历史自动修复（healing）
-
-**MiMoPipeline** — W0–W4 流水线编排的核心：
-
-- `PlannerBridge` 注入 master_planner 的三次 LLM 触点（compile / refine / finalize）
-- `WorkerExecutor` 注入 worker 的执行逻辑，便于单元测试 stub
-- `PipelineEvent` 事件流驱动 TUI 的 `PipelinePanel` 实时渲染
-
-#### Bridge 层 (`src/bridge/`)
-
-将引擎内部事件（`LoopEvent` / `PipelineEvent`）翻译为前端友好的 `UiEvent`：
-
-```typescript
-type UiEvent =
-  | { kind: 'assistant'; text: string }
-  | { kind: 'reasoning'; text: string }
-  | { kind: 'tool'; name: string; args: string }
-  | { kind: 'tool_result'; name: string; ok: boolean; content: string }
-  | { kind: 'notice'; text: string; tone: 'info' | 'warn' | 'ok' }
-  | { kind: 'error'; text: string }
-  | { kind: 'usage'; totalTokens: number; toolCalls: number; steps: number; totalCostUsd: number }
-  | { kind: 'plan'; steps: UiPlanStep[] }
-  | { kind: 'permission_request'; ... }
-  | { kind: 'pipeline'; phase: string; label: string; detail?: string }
-  | { kind: 'done'; success: boolean }
-  | { kind: 'streaming'; text: string }
-  | { kind: 'streaming_reasoning'; text: string }
-  | { kind: 'streaming_start' }
-  | { kind: 'streaming_end' };
-```
+| 模块 | 说明 |
+| --- | --- |
+| `MiMoLoop` | 单 Agent 推理循环核心，负责 stream -> tool -> loop |
+| `MiMoPipeline` | 多 Persona 流水线总编排器 |
+| `TaskCompiler` / `Refiner` / `WaveScheduler` | 负责任务合约、精化与波次调度 |
+| `EngineBridge` / `PipelineBridge` | 将内部事件翻译为前端可消费的 `UiEvent` |
+| `ProjectMemory` / `MemoryGovernor` | 项目记忆存储与治理 |
+| `ToolRegistry` | 内置工具注册与调用入口 |
+| `ApprovalManager` | 审批模式与交互控制 |
 
 ### 数据流
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        TUI (Ink)                            │
-│  app.tsx → Zone 隔离渲染                                     │
-│  state/events.ts → reducer.ts → store.ts → 组件重渲染        │
-└───────────────┬─────────────────────────────┬───────────────┘
-                │ Runner.send()               │ UiEvent stream
-                ▼                             ▲
-┌───────────────────────────────┐   ┌─────────────────────────┐
-│  EngineBridge (单 Agent)      │   │  PipelineBridge (流水线) │
-│  MiMoLoop → LoopEvent → UiEvent│  │  MiMoPipeline → UiEvent │
-└───────────────┬───────────────┘   └───────────┬─────────────┘
-                │                               │
-                ▼                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    MiMo API Client                          │
-│  流式 Chat Completion · 工具调用 · Token 统计                  │
-└─────────────────────────────────────────────────────────────┘
+```text
+用户输入
+  -> TUI Runner
+  -> EngineBridge / PipelineBridge
+  -> MiMoLoop / MiMoPipeline
+  -> MiMo API Client
+  -> 工具调用 / 推理结果
+  -> UiEvent
+  -> TUI 渲染
 ```
 
 ---
 
 ## 开发指南
 
-### 开发命令
+### 常用命令
+
+**Windows（PowerShell）：**
+
+```powershell
+# 一键构建
+.\scripts\build-all.ps1
+
+# 引擎开发
+npm run dev
+
+# TUI 开发
+Set-Location .\tui
+npm run dev
+Set-Location ..
+
+# 测试
+npm test
+npm run test:watch
+npm run test:coverage
+
+# 质量检查
+npm run lint
+npm run lint:fix
+npm run format
+npm run typecheck
+```
+
+**Linux / macOS（Bash）：**
 
 ```bash
 # 一键构建
 scripts/build-all.sh
 
 # 引擎开发
-npm run dev              # tsx 热重载
+npm run dev
 
 # TUI 开发
-cd tui && npm run dev    # tsx 热重载
+cd tui && npm run dev
 
 # 测试
-npm test                 # 运行所有测试
-npm run test:watch       # 监听模式
-npm run test:coverage    # 覆盖率报告
+npm test
+npm run test:watch
+npm run test:coverage
 
-# 代码质量
-npm run lint             # Biome 检查
-npm run lint:fix         # 自动修复
-npm run format           # 格式化
-npm run typecheck        # TypeScript 类型检查
+# 质量检查
+npm run lint
+npm run lint:fix
+npm run format
+npm run typecheck
 ```
 
-### 添加新工具
+### 新增工具
 
 1. 在 `src/tools/` 下创建新目录
-2. 实现工具接口，定义 `name`、`description`、`parameters` 和 `execute()` 方法
+2. 实现工具接口，定义 `name`、`description`、`parameters` 和 `execute()`
 3. 在 `src/tools/ToolRegistry.ts` 中注册
-4. 在 `tui/src/engine.ts` 的 `KIND` 映射中添加分类
-5. 编写单元测试
+4. 在 `tui/src/engine.ts` 中补充工具分类映射
+5. 为新工具补充单元测试
 
-### 添加新 Persona
+### 新增 Persona
 
-1. 在 `src/personas/Persona.ts` 的 `PersonaId` 联合类型中添加
-2. 在 `src/personas/` 中注册 Persona 配置（模型、工具白名单、路径策略）
-3. 在 `MiMoPipeline.ts` 中定义其所属的 Wave 阶段
+1. 在 `src/personas/Persona.ts` 中扩展 `PersonaId`
+2. 注册 Persona 的模型、工具白名单和路径策略
+3. 在 `MiMoPipeline.ts` 中定义该角色所属阶段
 
-### 添加新 TUI 组件
+### 新增 TUI 组件
 
 1. 在 `tui/src/components/` 下创建组件
-2. 在 `app.tsx` 中添加到对应的 Zone
-3. 如需新的事件类型，在 `state/events.ts` 中定义，在 `reducer.ts` 中处理
+2. 在 `app.tsx` 中接入对应 Zone
+3. 如需新增事件类型，在 `state/events.ts` 和 `reducer.ts` 中同步处理
 
 ---
 
@@ -785,20 +585,20 @@ npm run typecheck        # TypeScript 类型检查
 npm test
 ```
 
-**798+ 个单元测试**，覆盖：
+当前仓库包含 **798+ 个单元测试**，覆盖以下核心模块：
 
 | 模块 | 测试数 | 说明 |
-|------|--------|------|
+| --- | --- | --- |
 | 工具层 | 76+ | 文件系统、Git、搜索、Web 工具 |
 | 审批系统 | 36 | 权限策略、审批流程 |
 | 记忆治理 | 24+ | 合并、评分、暂存、清单 |
 | 编排器 | 22+ | 任务编排、波次调度 |
 | 桥接层 | 44 | EngineBridge / PipelineBridge |
-| 技能系统 | 24 | 技能加载、注册 |
+| 技能系统 | 24 | 技能加载与注册 |
 | 容量控制 | 19 | Token 预算、上下文窗口 |
 | 遥测 | 24 | 事件统计 |
 | 子代理 | 22 | 子代理生命周期 |
-| TUI 状态机 | — | Flux reducer 全路径覆盖 |
+| TUI 状态机 | - | Flux reducer 全路径覆盖 |
 | 钩子系统 | 20 | 生命周期钩子 |
 
 ---
@@ -809,6 +609,8 @@ npm test
 
 ---
 
-<p align="center">
-  Made with ❤️ by the MiMo Team
-</p>
+## 致谢
+
+感谢 [resonix](https://github.com/resonix-dev/resonix)（@resonix-dev）、[pi code](https://github.com/earendil-works/pi)（@earendil-works）和 [CodeWhale](https://github.com/Hmbown/CodeWhale)（@Hmbown）在 Minimum 的设计与演进过程中带来的启发与帮助。
+
+---

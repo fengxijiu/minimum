@@ -263,7 +263,7 @@ export async function createEngineRunner(
       resolvePermission: (id, decision) => bridge.resolvePermission(id, decision),
       setApprovalMode: (mode) => approvalManager.setMode(mode),
     };
-    // Pipeline (orchestrator) runner — the W0–W4 multi-persona pipeline, run
+    // Pipeline (orchestrator) runner — the W0–W4 multi-persona pipeline with W3.5, run
     // through the same client behind the Runner contract. Optional: only wired
     // when the built engine exposes PipelineBridge.
     let pipelineRunner: Runner | undefined;
