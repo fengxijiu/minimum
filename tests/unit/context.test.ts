@@ -20,8 +20,8 @@ describe("Context", () => {
 		});
 
 		it("should determine if folding needed", () => {
-			// foldThreshold 默认是 0.7，所以 5600/8000 = 0.7 应该返回 true
-			expect(manager.shouldFold(5600, 8000)).toBe(true);
+			// foldThreshold 默认是 0.8，所以 6400/8000 = 0.8 应该返回 true
+			expect(manager.shouldFold(6400, 8000)).toBe(true);
 			expect(manager.shouldFold(3000, 8000)).toBe(false);
 		});
 
