@@ -3,6 +3,7 @@ import { Box, Static, Text } from 'ink';
 import { theme } from '../theme.js';
 import type { Message, ToolProgress as ToolProgressType } from '../types.js';
 import { ToolLine, DiffBlock, ChipsRow, PermissionCard, ErrorBlock } from './atoms.js';
+import { LiliMimoIdle } from './LiliMimoIdle.js';
 
 // ── @mention highlighting in user messages ───────────────────────────
 
@@ -648,6 +649,7 @@ export const ChatStream = React.memo(function ChatStream({
   reasoning,
   activeTool,
   verbose,
+  petVisible,
   cols,
   maxRows,
   resizeRevision,
@@ -660,6 +662,7 @@ export const ChatStream = React.memo(function ChatStream({
   reasoning?: string | null;
   activeTool?: ToolProgressType | null;
   verbose?: boolean;
+  petVisible?: boolean;
   cols: number;
   maxRows: number;
   resizeRevision?: number;
@@ -705,6 +708,7 @@ export const ChatStream = React.memo(function ChatStream({
   const streamText = streaming ?? '';
   const streamViewport = streamText.split('\n').slice(-streamCap).join('\n');
   const hasLive = !!stepLabel || !!activeTool || !!reasoning || !!streamViewport;
+  const showIdleMascot = !!petVisible && !hasLive;
 
   return (
     <Box flexDirection="column">
@@ -774,6 +778,8 @@ export const ChatStream = React.memo(function ChatStream({
           </Box>
         </Box>
       ) : null}
+
+      {showIdleMascot ? <LiliMimoIdle cols={cols} /> : null}
     </Box>
   );
 });

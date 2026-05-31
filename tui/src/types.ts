@@ -134,6 +134,8 @@ export type AppState = {
   reasoning: string | null;
   /** Currently executing tool — shown in the live activity area. */
   activeTool: ToolProgress | null;
+  /** Whether the idle mascot is visible in the live chat tail. */
+  petVisible: boolean;
   /** Toast notifications with auto-dismiss. */
   toasts: Toast[];
   /** Token and cost tracking. */

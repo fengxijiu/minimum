@@ -253,6 +253,9 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
       };
     }
 
+    case 'pet.toggle':
+      return { ...state, petVisible: !state.petVisible };
+
     // ── plan ──────────────────────────────────────────────────────
     case 'plan.set': {
       const nowIdx = event.steps.findIndex(s => s.status === 'now');

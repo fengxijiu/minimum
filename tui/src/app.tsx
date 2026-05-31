@@ -82,11 +82,12 @@ const PipelineZone = React.memo(function PipelineZone({ phases }: {
 /** ChatStream zone — only re-renders on messages/stepLabel/activeTool/streaming changes. */
 const ChatZone = React.memo(function ChatZone({
   messages, committedCount, stepLabel, activeTool,
-  streaming, reasoning, verbose, cols, maxRows, resizeRevision, header,
+  streaming, reasoning, verbose, petVisible, cols, maxRows, resizeRevision, header,
 }: {
   messages: Message[]; committedCount: number;
   stepLabel: string; activeTool: AppState['activeTool'];
   streaming?: string | null; reasoning?: string | null; verbose?: boolean;
+  petVisible: boolean;
   cols: number; maxRows: number; resizeRevision: number; header: React.ReactNode;
 }) {
   return (
@@ -98,6 +99,7 @@ const ChatZone = React.memo(function ChatZone({
       reasoning={reasoning}
       activeTool={activeTool}
       verbose={verbose}
+      petVisible={petVisible}
       cols={cols}
       maxRows={maxRows}
       resizeRevision={resizeRevision}
@@ -595,6 +597,7 @@ export function App({
   const sHelpOpen  = useSlice(state, s => s.helpOpen);
   const sStepLabel = useSlice(state, s => s.currentStepLabel);
   const sActiveTool = useSlice(state, s => s.activeTool);
+  const sPetVisible = useSlice(state, s => s.petVisible);
   const sStreaming = useSlice(state, s => s.streaming);
   const sReasoning = useSlice(state, s => s.reasoning);
   const sApprovalMode = useSlice(state, s => s.approvalMode);
@@ -677,6 +680,7 @@ export function App({
         committedCount={sCommittedCount}
         stepLabel={sStepLabel}
         activeTool={sActiveTool}
+        petVisible={sPetVisible}
         streaming={sStreaming}
         reasoning={sReasoning}
         verbose={sVerbose}

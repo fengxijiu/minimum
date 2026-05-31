@@ -26,6 +26,8 @@ const { PermissionCard, DiffBlock, ToolLine } = await import('./dist/components/
 const { StatusBar }      = await import('./dist/components/StatusBar.js');
 const { TitleBar }       = await import('./dist/components/TitleBar.js');
 const { WelcomeScreen }  = await import('./dist/components/WelcomeScreen.js');
+const { ChatStream }     = await import('./dist/components/ChatStream.js');
+const { LiliMimoIdle }   = await import('./dist/components/LiliMimoIdle.js');
 const { HelpOverlay }    = await import('./dist/components/HelpOverlay.js');
 const { PlanStrip }      = await import('./dist/components/PlanStrip.js');
 const { filterCommands, filterFiles } = await import('./dist/commands.js');
@@ -38,6 +40,7 @@ const allCmds = filterCommands('/');
 check('CommandPalette/full',  h(CommandPalette, { items: allCmds, selected: 0 }), ['/ commands']);
 check('CommandPalette/one',   h(CommandPalette, { items: filterCommands('/he'), selected: 0 }), ['/ commands']);
 check('CommandPalette/empty', h(CommandPalette, { items: [], selected: 0 }), ['no matches']);
+check('CommandPalette/pet',   h(CommandPalette, { items: filterCommands('/pet'), selected: 0 }), ['pet']);
 
 // Height stability: full vs filtered vs empty must be the same number of rows.
 function rows(el) { const { lastFrame, unmount } = render(el); const n = (lastFrame() ?? '').split('\n').length; unmount(); return n; }
@@ -94,12 +97,53 @@ results.push({
 });
 check('WelcomeScreen/wide-poppy', h(WelcomeScreen, { path: 'C:\\workspace\\minimum', cols: 180 }), [
   '████████',
-  '███╗   ███╗',
-  '𝙏𝙃𝙀 𝙈𝙄𝙉𝙄𝙈𝙐𝙈',
+  '███╗     ██╗',
+  'ᴛʜᴇ  ᴍɪɴɪᴍᴜᴍ',
   'engine',
   'layout',
   'commands',
 ]);
+{
+  const out = frame(h(LiliMimoIdle, { cols: 90 }));
+  results.push({ name: 'LiliMimoIdle', ok: !out.includes('idle') && out.includes('█') });
+  results.push({ name: 'LiliMimoIdle/half-blocks', ok: out.includes('▀') || out.includes('▄') });
+  results.push({ name: 'LiliMimoIdle/half-height', ok: out.split('\n').filter(line => /[█▀▄]/.test(line)).length === 6 });
+}
+{
+  const hidden = frame(h(ChatStream, {
+    messages: [{ id: 'a1', type: 'assistant', text: 'done' }],
+    committedCount: 1,
+    cols: 90,
+    maxRows: 40,
+  }));
+  const shown = frame(h(ChatStream, {
+    messages: [{ id: 'a1', type: 'assistant', text: 'done' }],
+    committedCount: 1,
+    petVisible: true,
+    cols: 90,
+    maxRows: 40,
+  }));
+  results.push({ name: 'ChatStream/pet-default-hidden', ok: !/[█▀▄]/.test(hidden) });
+  results.push({ name: 'ChatStream/pet-visible', ok: /[█▀▄]/.test(shown) && !shown.includes('idle') });
+  results.push({ name: 'ChatStream/pet-visible-before-chat', ok: /[█▀▄]/.test(frame(h(ChatStream, {
+    messages: [],
+    committedCount: 0,
+    petVisible: true,
+    cols: 90,
+    maxRows: 40,
+  }))) });
+}
+{
+  const out = frame(h(ChatStream, {
+    messages: [{ id: 'a1', type: 'assistant', text: 'done' }],
+    committedCount: 1,
+    petVisible: true,
+    streaming: 'working',
+    cols: 90,
+    maxRows: 40,
+  }));
+  results.push({ name: 'ChatStream/pet-hidden-while-streaming', ok: !/[█▀▄]/.test(out) && out.includes('working') });
+}
 check('HelpOverlay',   h(HelpOverlay, {}), ['help']);
 check('PlanStrip',     h(PlanStrip, { title: 'plan', steps: [
   { label: 'scan', status: 'done' }, { label: 'edit', status: 'now' }, { label: 'test', status: 'next' },

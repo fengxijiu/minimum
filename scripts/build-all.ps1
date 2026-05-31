@@ -56,28 +56,47 @@ function Fail([string]$Message) {
     throw $Message
 }
 
-# NEW: detect the known vitest / coverage-v8 major-version mismatch so we can
-# skip the noisy failing install attempt and go straight to --legacy-peer-deps.
+# CHANGED: use native PowerShell JSON parsing here because passing the
+# "@vitest/coverage-v8" key through `node -e` can be mangled by PowerShell's
+# native argument quoting, which caused the noisy pre-check to fail.
 function Test-KnownPeerConflict([string]$Prefix) {
     $packageJson = Join-Path $Prefix 'package.json'
     if (-not (Test-Path $packageJson)) {
         return $false
     }
 
-    & node -e @'
-const fs = require("fs");
-const pkg = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
-const vitest = deps.vitest;
-const coverage = deps["@vitest/coverage-v8"];
-const major = (value) => {
-    const match = String(value || "").match(/\d+/);
-    return match ? match[0] : "";
-};
-process.exit(vitest && coverage && major(vitest) !== major(coverage) ? 0 : 1);
-'@ $packageJson
+    try {
+        $pkg = Get-Content -Raw -Path $packageJson | ConvertFrom-Json
+        $deps = @{}
 
-    return $LASTEXITCODE -eq 0
+        # CHANGED: PowerShell 5's ConvertFrom-Json returns PSCustomObject, not a
+        # hashtable, so walk the property bags explicitly for compatibility.
+        foreach ($groupName in @('dependencies', 'devDependencies')) {
+            $group = $pkg.$groupName
+            if (-not $group) {
+                continue
+            }
+
+            foreach ($entry in $group.PSObject.Properties) {
+                $deps[$entry.Name] = [string]$entry.Value
+            }
+        }
+
+        $vitest = if ($deps.ContainsKey('vitest')) { $deps['vitest'] } else { '' }
+        $coverage = if ($deps.ContainsKey('@vitest/coverage-v8')) { $deps['@vitest/coverage-v8'] } else { '' }
+        $major = {
+            param([string]$Value)
+            $text = if ($null -ne $Value) { [string]$Value } else { '' }
+            $match = [regex]::Match($text, '\d+')
+            if ($match.Success) { return $match.Value }
+            return ''
+        }
+
+        return ($vitest -and $coverage -and (& $major $vitest) -ne (& $major $coverage))
+    }
+    catch {
+        return $false
+    }
 }
 
 function Invoke-NpmInstallAttempt([string]$Prefix, [switch]$LegacyPeerDeps) {

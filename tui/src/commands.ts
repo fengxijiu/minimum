@@ -39,6 +39,7 @@ export const COMMANDS: TuiCommand[] = [
   { name: 'plan',   desc: 'Jump to the plan strip',         category: 'view' },
   { name: 'mode',   desc: 'Switch mode: agent / chat / orchestrate', category: 'view', usage: '/mode <agent|chat|orchestrate>' },
   { name: 'orchestrate', desc: 'Run a request through the W0–W4 pipeline with W3.5 mission check', category: 'view', usage: '/orchestrate <request>', aliases: ['pipeline', 'orch'] },
+  { name: 'pet',    desc: 'Toggle liliMiMO mascot',         category: 'view' },
   { name: 'clear',  desc: 'Clear the chat stream',          category: 'view', aliases: ['cls'] },
   { name: 'verbose', desc: 'Toggle verbose mode',           category: 'view', aliases: ['v'] },
   // system
@@ -220,6 +221,9 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
       }
       return { kind: 'pipeline', text: request };
     }
+
+    case 'pet':
+      return { kind: 'event', event: { type: 'pet.toggle' } };
 
     case 'compact':
       return {
