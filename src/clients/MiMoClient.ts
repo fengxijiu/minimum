@@ -27,6 +27,7 @@ export interface ChatOptions {
 	maxTokens?: number;
 	temperature?: number;
 	topP?: number;
+	signal?: AbortSignal;
 	stream?: boolean;
 	thinking?: {
 		type: "enabled" | "disabled";
@@ -101,7 +102,7 @@ export class MiMoClient {
 		);
 		this.model = options.model || "mimo-v2.5-pro";
 		this.maxTokens = options.maxTokens || 131072;
-		this.temperature = options.temperature ?? 1.0;
+		this.temperature = options.temperature ?? 0.3;
 		this.topP = options.topP ?? 0.95;
 		this.thinking = options.thinking;
 	}
@@ -120,6 +121,7 @@ export class MiMoClient {
 				Authorization: `Bearer ${this.apiKey}`,
 			},
 			body: JSON.stringify(body),
+			signal: options.signal,
 		});
 
 		if (!response.ok) {
@@ -136,20 +138,33 @@ export class MiMoClient {
 	 */
 	async *streamChat(options: ChatOptions): AsyncGenerator<StreamChunk> {
 		const body = this.buildRequestBody(options, true);
+		const RETRYABLE = new Set([429, 503, 529]);
 
-		const response = await fetch(`${this.baseUrl}/chat/completions`, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				"api-key": this.apiKey,
-				Authorization: `Bearer ${this.apiKey}`,
-			},
-			body: JSON.stringify(body),
-		});
-
-		if (!response.ok) {
-			const error = await response.text();
-			throw new MiMoApiError(response.status, error);
+		// Retry loop: only the initial HTTP handshake is retried, not streaming.
+		let response!: Response;
+		for (let attempt = 0; attempt < 4; attempt++) {
+			if (attempt > 0) {
+				const delay = Math.min(1_000 * 2 ** (attempt - 1), 16_000);
+				await new Promise<void>((r) => setTimeout(r, delay));
+			}
+			const r = await fetch(`${this.baseUrl}/chat/completions`, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					"api-key": this.apiKey,
+					Authorization: `Bearer ${this.apiKey}`,
+				},
+				body: JSON.stringify(body),
+				signal: options.signal,
+			});
+			if (r.ok) {
+				response = r;
+				break;
+			}
+			if (!RETRYABLE.has(r.status) || attempt >= 3) {
+				const error = await r.text();
+				throw new MiMoApiError(r.status, error);
+			}
 		}
 
 		const reader = response.body?.getReader();
