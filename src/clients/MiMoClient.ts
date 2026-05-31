@@ -291,16 +291,20 @@ export class MiMoClient {
 			presence_penalty: 0,
 		};
 
-		// 工具定义
+		// 工具定义 —— 按 name 排序固定顺序，使 system+tools 头块逐字节稳定，
+		// 保证前缀缓存（SGLang HiCache）的首块始终命中。
 		if (options.tools && options.tools.length > 0) {
-			body.tools = options.tools.map((tool) => ({
-				type: "function",
-				function: {
-					name: tool.name,
-					description: tool.description || "",
-					parameters: tool.parameters || { type: "object", properties: {} },
-				},
-			}));
+			body.tools = options.tools
+				.slice()
+				.sort((a, b) => a.name.localeCompare(b.name))
+				.map((tool) => ({
+					type: "function",
+					function: {
+						name: tool.name,
+						description: tool.description || "",
+						parameters: tool.parameters || { type: "object", properties: {} },
+					},
+				}));
 			body.tool_choice = "auto";
 		}
 

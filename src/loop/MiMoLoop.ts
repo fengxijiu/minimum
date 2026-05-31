@@ -24,6 +24,8 @@ const DEFAULT_PARALLEL_MAX = 3;
 
 /** Approximate MiMo API pricing (USD per 1 M tokens). */
 const PRICE_INPUT_PER_M_USD = 0.4;
+/** Cache-hit input tokens are billed at a steep discount (~0.1× fresh input). */
+const PRICE_CACHED_PER_M_USD = 0.04;
 const PRICE_OUTPUT_PER_M_USD = 1.6;
 
 // ============ Minimal collaborator interfaces ============
@@ -146,9 +148,6 @@ export class MiMoLoop {
 	private steerConsumed = false;
 	/** First all-suppressed storm → self-correct; second → force summary. */
 	private selfCorrectedThisTurn = false;
-	/** Incremental token-count cache — only recount when message list grows. */
-	private cachedTokenCount = 0;
-	private cachedTokenCountAt = 0;
 
 	constructor(config: MiMoLoopConfig) {
 		this.config = config;
@@ -251,7 +250,7 @@ export class MiMoLoop {
 				if (this.capacity.isEnabled()) {
 					const snapshot = this.capacity.observe({
 						turnIndex: step,
-						promptTokens: this.countTokensCached(),
+						promptTokens: countMessagesTokens(this.messages),
 						maxTokens: this.config.maxTokens || 131072,
 						toolCalls: this.state.toolCalls,
 					});
@@ -653,10 +652,13 @@ export class MiMoLoop {
 					usage = chunk.usage;
 					if (usage) {
 						this.state.totalTokens += usage.totalTokens || 0;
-						const inputTokens = (usage.promptTokens || 0) - (usage.cachedTokens || 0);
+						// 三段计价：fresh input / cache-hit input / output
+						const cachedTokens = usage.cachedTokens || 0;
+						const freshInput = (usage.promptTokens || 0) - cachedTokens;
 						const outputTokens = usage.completionTokens || 0;
 						this.state.totalCostUsd +=
-							(inputTokens * PRICE_INPUT_PER_M_USD +
+							(freshInput * PRICE_INPUT_PER_M_USD +
+								cachedTokens * PRICE_CACHED_PER_M_USD +
 								outputTokens * PRICE_OUTPUT_PER_M_USD) /
 							1_000_000;
 					}
@@ -964,15 +966,6 @@ export class MiMoLoop {
 			yield { type: "tool_result", toolCall: tc, result, success: !result.isError };
 			this.messages.push({ role: "tool", content: result.content, tool_call_id: tcId });
 		}
-	}
-
-	/** Cached token count — only recomputes when the messages array grows. */
-	private countTokensCached(): number {
-		if (this.messages.length !== this.cachedTokenCountAt) {
-			this.cachedTokenCount = countMessagesTokens(this.messages);
-			this.cachedTokenCountAt = this.messages.length;
-		}
-		return this.cachedTokenCount;
 	}
 
 	private isMutatingTool(call: ToolCall): boolean {
