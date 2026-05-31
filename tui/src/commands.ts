@@ -42,7 +42,7 @@ export const COMMANDS: TuiCommand[] = [
   { name: 'clear',  desc: 'Clear the chat stream',          category: 'view', aliases: ['cls'] },
   { name: 'verbose', desc: 'Toggle verbose mode',           category: 'view', aliases: ['v'] },
   // system
-  { name: 'approval', desc: 'Set approval mode: read-only | auto-edit | full-auto', category: 'system', usage: '/approval <mode>', aliases: ['appr'] },
+  { name: 'permission', desc: 'Set permission mode: read-only | auto-edit | full-auto', category: 'system', usage: '/permission <mode>', aliases: ['approval', 'appr', 'perm'] },
   { name: 'editmode', desc: 'Set edit mode: review | auto | yolo', category: 'system', usage: '/editmode <mode>' },
   { name: 'run',    desc: 'Run a shell command (asks first)', category: 'system', usage: '/run <cmd>' },
   { name: 'mcp',    desc: 'Show MCP server status',         category: 'system' },
@@ -294,20 +294,20 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
       };
     }
 
-    case 'approval': {
+    case 'permission': {
       const MODES: ApprovalMode[] = ['read-only', 'auto-edit', 'full-auto'];
       const current = state.approvalMode;
       const target = (args[0] as ApprovalMode | undefined) ??
         MODES[(MODES.indexOf(current) + 1) % MODES.length]!;
       if (!MODES.includes(target)) {
-        return { kind: 'note', note: `Unknown approval mode "${target}". Valid: ${MODES.join(' | ')}`, tone: 'warn' };
+        return { kind: 'note', note: `Unknown permission mode "${target}". Valid: ${MODES.join(' | ')}`, tone: 'warn' };
       }
       const labels: Record<ApprovalMode, string> = {
         'read-only': 'read-only — writes blocked',
         'auto-edit': 'auto-edit — file writes allowed, shell needs confirmation',
         'full-auto': 'full-auto — unrestricted',
       };
-      return { kind: 'patch', patch: { approvalMode: target }, note: `Approval mode → ${labels[target]}.`, tone: 'ok' };
+      return { kind: 'patch', patch: { approvalMode: target }, note: `Permission mode → ${labels[target]}.`, tone: 'ok' };
     }
 
     case 'tools': {
@@ -338,7 +338,7 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
         ctx.baseUrl ? `baseUrl: ${ctx.baseUrl}` : null,
         ctx.configPath ? `global: ${ctx.configPath}` : null,
         'project: .minimum/config.json',
-        `approval: ${state.approvalMode}`,
+        `permission: ${state.approvalMode}`,
       ].filter(Boolean).join(' · ');
       return { kind: 'note', note: `Config — ${lines}` };
     }

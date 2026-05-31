@@ -495,10 +495,10 @@ MemoryStaging 清理暂存区
 | `/memory` | `mem` | 显示项目记忆路径 |
 | `/plan` | | 显示当前计划进度 |
 | `/mode [agent\|chat]` | | 切换模式 |
-| `/approval [mode]` | `appr` | 审批模式：`read-only` / `auto-edit` / `full-auto` |
+| `/permission [mode]` | `perm`, `approval`, `appr` | 权限模式：`read-only` / `auto-edit` / `full-auto` |
 | `/editmode [mode]` | | 编辑模式：`review` / `auto` / `yolo` |
 | `/verbose` | `v` | 切换详细输出（也可 Ctrl+R） |
-| `/run <cmd>` | | 运行 shell 命令（先弹审批） |
+| `/run <cmd>` | | 运行 shell 命令（先弹权限确认） |
 | `/mcp` | | 显示 MCP Server 状态 |
 | `/status` | | 显示会话状态摘要 |
 | `/tools` | | 列出可用工具 |

@@ -173,6 +173,7 @@ export const ChipsRow = React.memo(function ChipsRow({ chips }: { chips: Chip[] 
 // ── PermissionCard ────────────────────────────────────────────────────
 
 const RISK_COLOR = { high: theme.danger, medium: theme.warn, low: theme.accent } as const;
+const RISK_LABEL = { high: 'HIGH RISK', medium: 'CONFIRM', low: 'LOW RISK' } as const;
 
 export const PermissionCard = React.memo(function PermissionCard({ perm }: { perm: Permission }) {
   const risk = perm.risk ?? 'medium';
@@ -187,25 +188,32 @@ export const PermissionCard = React.memo(function PermissionCard({ perm }: { per
         flexGrow={1}
       >
         <Box justifyContent="space-between">
-          <Text color={accent} bold>⚠ TOOL · {perm.tool}</Text>
-          <Text backgroundColor={accent} color={theme.bg} bold> risk {risk} </Text>
+          <Text color={accent} bold>⚠ PERMISSION · {perm.tool}</Text>
+          <Text backgroundColor={accent} color={theme.bg} bold> {RISK_LABEL[risk]} </Text>
         </Box>
-        <Text color={theme.ink}>{perm.cmd}</Text>
+
+        <Box marginTop={1} flexDirection="column">
+          <Text color={theme.muted}>request</Text>
+          <Text color={theme.ink}>{perm.cmd}</Text>
+        </Box>
 
         {/* Full per-parameter breakdown — what's actually being approved. */}
         {perm.details?.length ? (
           <Box flexDirection="column" marginTop={1}>
+            <Text color={theme.muted}>details</Text>
             {perm.details.map((d, i) => (
-              <Text key={i} color={theme.inkSoft}>  · {d}</Text>
+              <Text key={i} color={theme.inkSoft}>  • {d}</Text>
             ))}
           </Box>
         ) : null}
 
-        <Text color={theme.muted}>  cwd: {perm.cwd}</Text>
-        <Text color={theme.muted}>{perm.note}</Text>
+        <Box marginTop={1} flexDirection="column">
+          <Text color={theme.muted}>cwd  <Text color={theme.inkSoft}>{perm.cwd}</Text></Text>
+          {perm.note ? <Text color={theme.inkSoft}>{perm.note}</Text> : null}
+        </Box>
+
         <Box marginTop={1}>
-          <Text backgroundColor={accent} color={theme.bg} bold> ⏎ allow once </Text>
-          <Text color={theme.inkSoft}>  [a always]  [n deny]  [e edit]</Text>
+          <Text color={theme.muted}>choose below: ←/→ select · ⏎ confirm · y allow · a always · n deny</Text>
         </Box>
       </Box>
     </Box>
@@ -260,14 +268,15 @@ export const TokenMeter = React.memo(function TokenMeter({ used, max }: { used: 
 // ── HighlightText ─────────────────────────────────────────────────────
 
 export const HighlightText = React.memo(function HighlightText({
-  text, positions, color, matchColor,
+  text, positions, color, matchColor, backgroundColor,
 }: {
   text: string;
   positions: number[];
   color: string;
   matchColor: string;
+  backgroundColor?: string;
 }) {
-  if (!positions.length) return <Text color={color}>{text}</Text>;
+  if (!positions.length) return <Text color={color} backgroundColor={backgroundColor}>{text}</Text>;
   const posSet = new Set(positions);
   type Seg = { t: string; hi: boolean };
   const segs: Seg[] = [];
@@ -278,9 +287,9 @@ export const HighlightText = React.memo(function HighlightText({
     else segs.push({ t: text[i]!, hi });
   }
   return (
-    <Text>
+    <Text backgroundColor={backgroundColor}>
       {segs.map((s, i) => (
-        <Text key={i} color={s.hi ? matchColor : color} bold={s.hi}>{s.t}</Text>
+        <Text key={i} color={s.hi ? matchColor : color} backgroundColor={backgroundColor} bold={s.hi}>{s.t}</Text>
       ))}
     </Text>
   );
