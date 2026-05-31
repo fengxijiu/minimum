@@ -4,7 +4,9 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	inspectCanonical,
+	inspectMemoryIndex,
 	inspectStaging,
+	refreshMemoryIndex,
 	renderMemoryReport,
 	writeCandidate,
 } from "../../src/memory/governance/index.js";
@@ -74,6 +76,18 @@ describe("renderMemoryReport", () => {
 		expect(out).toContain("T1.vision");
 	});
 
+	it("renders index status when supplied", () => {
+		const out = renderMemoryReport([], [], {
+			path: ".minimum/index.json",
+			exists: true,
+			entryCount: 3,
+			missingCount: 1,
+		});
+		expect(out).toContain("Index:");
+		expect(out).toContain("3 entries");
+		expect(out).toContain("1 missing");
+	});
+
 	it("shows empty markers", () => {
 		const out = renderMemoryReport([], []);
 		expect(out).toContain("(none declared)");
@@ -94,10 +108,19 @@ describe("MemoryCommand", () => {
 
 	it("status reports canonical and staging", async () => {
 		await writeCandidate(dir, mkCandidate());
+		await refreshMemoryIndex(dir);
 		const r = await new MemoryCommand().execute(["status"], ctx());
 		expect(r.success).toBe(true);
 		expect(r.output).toContain("Canonical memory:");
 		expect(r.output).toContain("Staging (1 candidate)");
+		expect(r.output).toContain("Index:");
+	});
+
+	it("inspectMemoryIndex reports generated index stats", async () => {
+		await refreshMemoryIndex(dir);
+		const info = await inspectMemoryIndex(dir);
+		expect(info.exists).toBe(true);
+		expect(info.entryCount).toBeGreaterThan(0);
 	});
 
 	it("defaults to status with no args", async () => {

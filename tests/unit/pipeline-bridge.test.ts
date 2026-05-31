@@ -104,6 +104,14 @@ describe("createPlannerBridge", () => {
 			knownIssues: ["missing tests"],
 			loopIndex: 0,
 			maxRepairLoops: 1,
+			artifactPaths: {
+				dag: ".minimum/tasks/e/dag.json",
+				refinements: [".minimum/tasks/e/refinements/initial.json"],
+				contracts: [".minimum/tasks/e/contracts/initial.json"],
+				missionChecks: [],
+				repairDags: [],
+				memoryIndex: ".minimum/index.json",
+			},
 		});
 		const systemMessage = calls[0]!.messages.find((m: any) => m.role === "system")!.content;
 		const userMessage = calls[0]!.messages.find((m: any) => m.role === "user")!.content;
@@ -111,6 +119,8 @@ describe("createPlannerBridge", () => {
 		expect(userMessage).toContain("build upload");
 		expect(userMessage).toContain("CANONICAL MEMORY");
 		expect(userMessage).toContain("missing tests");
+		expect(userMessage).toContain(".minimum/tasks/e/dag.json");
+		expect(userMessage).toContain(".minimum/index.json");
 		expect(userMessage).toContain("Decision: APPROVED_TO_W4");
 	});
 });

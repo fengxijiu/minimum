@@ -1,6 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { extractJsonBlock, isObj } from "../../utils/guards.js";
+import { refreshMemoryIndex } from "./MemoryIndex.js";
 import { clearForEpic } from "./MemoryStaging.js";
 import type { MemoryCandidate, MergeAction, MergeDecision } from "./types.js";
 
@@ -167,6 +168,7 @@ export async function applyFinalize(
 	} catch {
 		stagingCleared = false;
 	}
+	await refreshMemoryIndex(projectRoot);
 
 	return { applied, errors, stagingCleared };
 }

@@ -4,6 +4,7 @@ import type { PersonaId } from "../../personas/Persona.js";
 import type { TaskContract } from "../../orchestration/TaskContract.js";
 import { matchGlob, normalizeRelPath } from "../../tools/policy/PathPolicyEnforcer.js";
 import { CharBudget } from "../../utils/tokenBudget.js";
+import { refreshMemoryIndex } from "./MemoryIndex.js";
 import type { MemoryCandidate, MemoryConfidence } from "./types.js";
 
 /**
@@ -209,5 +210,6 @@ export async function writeContextPack(
 	);
 	await fs.mkdir(path.dirname(filePath), { recursive: true });
 	await fs.writeFile(filePath, pack.text, "utf-8");
+	await refreshMemoryIndex(projectRoot);
 	return { pack, path: filePath };
 }

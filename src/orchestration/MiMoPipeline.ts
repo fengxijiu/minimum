@@ -6,6 +6,8 @@ import {
 	contextPackPath,
 	listCandidates,
 	loadCanonicalMemory,
+	memoryIndexPath,
+	refreshMemoryIndex,
 	type FinalizeReport,
 } from "../memory/governance/index.js";
 import type { MemoryCandidate } from "../memory/governance/types.js";
@@ -20,6 +22,15 @@ import {
 	type MissionCheckInput,
 	type MissionLoopBackTask,
 } from "./MissionChecker.js";
+import {
+	emptyArtifactPaths,
+	writeContracts,
+	writeDag,
+	writeMissionCheck,
+	writeRefinement,
+	writeRepairDag,
+	type ArtifactPaths,
+} from "./PipelineArtifactStore.js";
 import { schedule, type WaveEvent } from "./WaveScheduler.js";
 import type { TaskResult, WorkerExecutor } from "./TaskRunner.js";
 
@@ -98,6 +109,8 @@ export async function runPipeline(
 	const resolvedContracts: TaskContract[] = [];
 	const refinements: RefinementEntry[] = [];
 	const knownIssues: string[] = [];
+	const artifactPaths = emptyArtifactPaths();
+	artifactPaths.memoryIndex = memoryIndexPath(opts.projectRoot);
 	const maxMissionRepairLoops = opts.maxMissionRepairLoops ?? 1;
 
 	// ── W0: load memory, compile coarse DAG ──────────────────────────────────
@@ -123,6 +136,12 @@ export async function runPipeline(
 	}
 	const dag = compiled.dag;
 	const taskCount = dag.phases.reduce((n, p) => n + p.tasks.length, 0);
+	try {
+		artifactPaths.dag = await writeDag(opts.projectRoot, dag.epicId, dag);
+		await refreshMemoryIndex(opts.projectRoot);
+	} catch (e) {
+		return fail(emit, "W0", e);
+	}
 	emit({ type: "dag_compiled", epicId: dag.epicId, taskCount });
 
 	const baseInputs: TaskInputs = { userGoal: userRequest, artifacts: [], constraints: [] };
@@ -138,6 +157,8 @@ export async function runPipeline(
 		baseInputs,
 		memoryText: memory.text,
 		labelSuffix: "",
+		passId: "initial",
+		artifactPaths,
 	});
 	if (!initialPass.ok) return initialPass.result;
 
@@ -155,6 +176,7 @@ export async function runPipeline(
 				knownIssues,
 				loopIndex: missionLoopIndex,
 				maxRepairLoops: maxMissionRepairLoops,
+				artifactPaths,
 			});
 		} catch (e) {
 			return fail(emit, "W3.5", e, allResults);
@@ -163,6 +185,19 @@ export async function runPipeline(
 		const mission = compileMissionCheck(missionText);
 		if (!mission.ok) {
 			return fail(emit, "W3.5", mission.error, allResults);
+		}
+		try {
+			const written = await writeMissionCheck(
+				opts.projectRoot,
+				dag.epicId,
+				missionLoopIndex + 1,
+				missionText,
+				mission.report,
+			);
+			artifactPaths.missionChecks.push(written.markdownPath, written.jsonPath);
+			await refreshMemoryIndex(opts.projectRoot);
+		} catch (e) {
+			return fail(emit, "W3.5", e, allResults);
 		}
 
 		if (mission.report.decision === "APPROVED_TO_W4") {
@@ -189,6 +224,18 @@ export async function runPipeline(
 		}
 
 		const repairDag = buildRepairDag(dag.epicId, missionLoopIndex, mission.report.tasks);
+		try {
+			const repairDagPath = await writeRepairDag(
+				opts.projectRoot,
+				dag.epicId,
+				missionLoopIndex + 1,
+				repairDag,
+			);
+			artifactPaths.repairDags.push(repairDagPath);
+			await refreshMemoryIndex(opts.projectRoot);
+		} catch (e) {
+			return fail(emit, "W3.5", e, allResults);
+		}
 		missionLoopIndex++;
 		const repairPass = await runDagPass({
 			dag: repairDag,
@@ -201,6 +248,8 @@ export async function runPipeline(
 			baseInputs,
 			memoryText: memory.text,
 			labelSuffix: " repair",
+			passId: `repair-${missionLoopIndex}`,
+			artifactPaths,
 		});
 		if (!repairPass.ok) return repairPass.result;
 	}
@@ -240,6 +289,8 @@ interface DagPassOptions {
 	baseInputs: TaskInputs;
 	memoryText: string;
 	labelSuffix: string;
+	passId: string;
+	artifactPaths: ArtifactPaths;
 }
 
 type DagPassResult = { ok: true } | { ok: false; result: PipelineResult };
@@ -256,6 +307,8 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 		baseInputs,
 		memoryText,
 		labelSuffix,
+		passId,
+		artifactPaths,
 	} = args;
 
 	// ── W1: perception ───────────────────────────────────────────────────────
@@ -277,18 +330,43 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 	// ── W0.5: refine ──────────────────────────────────────────────────────────
 	emit({ type: "phase_start", phase: "W0.5", label: `refine${labelSuffix}` });
 	let refinement: Map<string, RefinementEntry> = new Map();
+	let refinementParsed = false;
 	try {
 		const refineText = await opts.planner.refine(dag, allResults, memoryText);
 		const parsed = compileRefinement(refineText);
 		if (parsed.ok) {
 			refinement = parsed.entries;
+			refinementParsed = true;
 			await writeInlineContextPacks(opts.projectRoot, dag.epicId, refinement);
 			refinements.push(...refinement.values());
 		} else {
 			knownIssues.push(`W0.5 refine parse failed for ${dag.epicId}: ${parsed.error}`);
+			const refinementPath = await writeRefinement(
+				opts.projectRoot,
+				dag.epicId,
+				passId,
+				[],
+				parsed.error,
+			);
+			artifactPaths.refinements.push(refinementPath);
+			await refreshMemoryIndex(opts.projectRoot);
 		}
 	} catch (e) {
 		return { ok: false, result: fail(emit, "W0.5", e, allResults) };
+	}
+	if (refinementParsed) {
+		try {
+			const refinementPath = await writeRefinement(
+				opts.projectRoot,
+				dag.epicId,
+				passId,
+				refinement.values(),
+			);
+			artifactPaths.refinements.push(refinementPath);
+			await refreshMemoryIndex(opts.projectRoot);
+		} catch (e) {
+			return { ok: false, result: fail(emit, "W0.5", e, allResults) };
+		}
 	}
 	const { contracts: allContracts, errors: refineErrors } = refineDag(dag, {
 		inputs: baseInputs,
@@ -299,6 +377,13 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 		for (const error of refineErrors) {
 			knownIssues.push(`W0.5 ${error.taskId}: ${error.errors.join("; ")}`);
 		}
+	}
+	try {
+		const contractsPath = await writeContracts(opts.projectRoot, dag.epicId, passId, allContracts, refineErrors);
+		artifactPaths.contracts.push(contractsPath);
+		await refreshMemoryIndex(opts.projectRoot);
+	} catch (e) {
+		return { ok: false, result: fail(emit, "W0.5", e, allResults) };
 	}
 	emit({ type: "refine_done", contractCount: allContracts.length, errorCount: refineErrors.length });
 
@@ -346,6 +431,7 @@ async function writeInlineContextPacks(
 		await fs.writeFile(filePath, text.endsWith("\n") ? text : `${text}\n`, "utf-8");
 		entry.contextPackPath = filePath;
 	}
+	await refreshMemoryIndex(projectRoot);
 }
 
 function buildRepairDag(

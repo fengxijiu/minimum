@@ -75,6 +75,13 @@ describe("runPipeline", () => {
 		expect(result.ok).toBe(true);
 		const phases = events.filter((e) => e.type === "phase_start").map((e) => (e as any).phase);
 		expect(phases).toEqual(["W0", "W1", "W0.5", "W2/3", "W3.5", "W4"]);
+		expect(fs.existsSync(path.join(dir, ".minimum", "tasks", "image_upload", "dag.json"))).toBe(true);
+		expect(fs.existsSync(path.join(dir, ".minimum", "tasks", "image_upload", "refinements", "initial.json"))).toBe(true);
+		expect(fs.existsSync(path.join(dir, ".minimum", "tasks", "image_upload", "contracts", "initial.json"))).toBe(true);
+		expect(fs.existsSync(path.join(dir, ".minimum", "tasks", "image_upload", "mission-checks", "1.md"))).toBe(true);
+		expect(fs.existsSync(path.join(dir, ".minimum", "tasks", "image_upload", "mission-checks", "1.json"))).toBe(true);
+		const index = fs.readFileSync(path.join(dir, ".minimum", "index.json"), "utf-8");
+		expect(index).toContain("pipeline_artifact");
 	});
 
 	it("runs perception then implementation tasks", async () => {
@@ -284,6 +291,9 @@ Reason:
 		expect(result.ok).toBe(true);
 		expect(checks).toBe(2);
 		expect(ran).toContain("T3.5-1-1");
+		expect(fs.existsSync(path.join(dir, ".minimum", "tasks", "image_upload", "repair-dags", "1.json"))).toBe(true);
+		expect(fs.existsSync(path.join(dir, ".minimum", "tasks", "image_upload", "contracts", "repair-1.json"))).toBe(true);
+		expect(fs.existsSync(path.join(dir, ".minimum", "tasks", "image_upload", "mission-checks", "2.md"))).toBe(true);
 		const phases = events.filter((e) => e.type === "phase_start").map((e) => (e as any).phase);
 		expect(phases).toEqual([
 			"W0",

@@ -31,6 +31,17 @@ export {
 	type MissionLoopBackTask,
 } from "./MissionChecker.js";
 export {
+	artifactPath,
+	emptyArtifactPaths,
+	writeContracts,
+	writeDag,
+	writeMissionCheck,
+	writeRefinement,
+	writeRepairDag,
+	type ArtifactPaths,
+	type WrittenMissionCheck,
+} from "./PipelineArtifactStore.js";
+export {
 	compileRefinement,
 	refineDag,
 	type RefineCompileResult,

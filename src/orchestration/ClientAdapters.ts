@@ -116,6 +116,7 @@ export function createPlannerBridge(
 							`## Original User Request\n${input.userRequest}`,
 							`## Loop State\nCurrent loop index: ${input.loopIndex}\nMax automatic repair loops: ${input.maxRepairLoops}`,
 							`## Coarse DAG\n${JSON.stringify(input.dag)}`,
+							`## Persisted Artifacts\n${renderArtifactPaths(input.artifactPaths)}`,
 							`## W0.5 Refinement Entries\n${renderRefinements(input.refinements)}`,
 							`## Task Results\n${renderResults(input.results)}`,
 							`## Known Issues\n${renderKnownIssues(input.knownIssues)}`,
@@ -217,4 +218,15 @@ function renderRefinements(refinements: MissionCheckInput["refinements"]): strin
 function renderKnownIssues(issues: string[]): string {
 	if (issues.length === 0) return "(none)";
 	return issues.map((issue) => `- ${issue}`).join("\n");
+}
+
+function renderArtifactPaths(paths: MissionCheckInput["artifactPaths"]): string {
+	const lines: string[] = [];
+	if (paths.dag) lines.push(`- dag: ${paths.dag}`);
+	if (paths.memoryIndex) lines.push(`- memoryIndex: ${paths.memoryIndex}`);
+	for (const p of paths.refinements) lines.push(`- refinement: ${p}`);
+	for (const p of paths.contracts) lines.push(`- contracts: ${p}`);
+	for (const p of paths.repairDags) lines.push(`- repairDag: ${p}`);
+	for (const p of paths.missionChecks) lines.push(`- missionCheck: ${p}`);
+	return lines.length > 0 ? lines.join("\n") : "(none)";
 }

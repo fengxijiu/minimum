@@ -72,6 +72,7 @@ export async function writeManifest(
 	const filePath = path.join(projectRoot, manifest.memoryRoot, "manifest.yaml");
 	await fs.mkdir(path.dirname(filePath), { recursive: true });
 	await fs.writeFile(filePath, serializeYaml(manifest), "utf-8");
+	await refreshIndexBestEffort(projectRoot, manifest);
 }
 
 /** Read the manifest; create with defaults if missing. */
@@ -82,7 +83,9 @@ export async function getOrInitManifest(
 	const filePath = path.join(projectRoot, memoryRoot, "manifest.yaml");
 	try {
 		const text = await fs.readFile(filePath, "utf-8");
-		return parseYaml(text);
+		const manifest = parseYaml(text);
+		await refreshIndexBestEffort(projectRoot, manifest);
+		return manifest;
 	} catch {
 		const manifest = defaultManifest(memoryRoot);
 		await writeManifest(projectRoot, manifest);
@@ -213,4 +216,13 @@ function camelToSnake(s: string): string {
 
 function snakeToCamel(s: string): string {
 	return s.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+}
+
+async function refreshIndexBestEffort(projectRoot: string, manifest: Manifest): Promise<void> {
+	try {
+		const { refreshMemoryIndex } = await import("./MemoryIndex.js");
+		await refreshMemoryIndex(projectRoot, manifest);
+	} catch {
+		// Manifest creation must not fail just because the derived index cannot refresh.
+	}
 }

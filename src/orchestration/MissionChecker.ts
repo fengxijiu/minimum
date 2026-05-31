@@ -1,5 +1,6 @@
 import type { PersonaId } from "../personas/Persona.js";
 import { listPersonaIds } from "../personas/PersonaRegistry.js";
+import type { ArtifactPaths } from "./PipelineArtifactStore.js";
 import type { RefinementEntry } from "./Refiner.js";
 import type { CoarseDag, CoarseTask } from "./TaskContract.js";
 import type { TaskResult } from "./TaskRunner.js";
@@ -18,6 +19,7 @@ export interface MissionCheckInput {
 	knownIssues: string[];
 	loopIndex: number;
 	maxRepairLoops: number;
+	artifactPaths: ArtifactPaths;
 }
 
 export interface MissionLoopBackTask {
