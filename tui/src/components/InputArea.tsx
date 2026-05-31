@@ -13,28 +13,32 @@ import { theme } from '../theme.js';
 type Overlay = 'none' | 'cmd' | 'file';
 
 const PERM_OPTIONS = [
-  { label: 'Allow once', key: '⏎ / y', tone: 'ok' },
-  { label: 'Always allow', key: 'a', tone: 'warn' },
-  { label: 'Deny', key: 'n', tone: 'danger' },
+  { label: 'Allow once', tone: 'ok', width: 15 },
+  { label: 'Always allow', tone: 'warn', width: 17 },
+  { label: 'Deny', tone: 'danger', width: 9 },
 ] as const;
 
 function PermissionChoiceBar({ selected }: { selected: number }) {
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={theme.warn} paddingX={1}>
-      <Box justifyContent="space-between">
-        <Text color={theme.warn} bold>permission required</Text>
-        <Text color={theme.muted}>←/→ select · ⏎ confirm</Text>
-      </Box>
-      <Box>
+    <Box flexDirection="column" borderStyle="round" borderColor={theme.warn} paddingX={2} paddingY={0}>
+      <Text color={theme.warn} bold>permission required</Text>
+      <Box marginTop={0}>
         {PERM_OPTIONS.map((opt, i) => {
           const active = i === selected;
-          const color = opt.tone === 'danger' ? theme.danger : opt.tone === 'warn' ? theme.warn : theme.accent;
+          const color =
+            opt.tone === 'danger' ? theme.danger
+            : opt.tone === 'warn' ? theme.warn
+            : theme.accent;
+          const label = `${active ? '▶ ' : '  '}${opt.label}`.padEnd(opt.width, ' ');
           return (
             <Box key={opt.label} marginRight={1}>
-              <Text backgroundColor={active ? color : undefined} color={active ? theme.bg : color} bold={active}>
-                {' '}{active ? '❯ ' : ''}{opt.label}{' '}
+              <Text
+                backgroundColor={active ? theme.accent : undefined}
+                color={active ? theme.bg : color}
+                bold={active}
+              >
+                {label}
               </Text>
-              <Text color={theme.muted}>{opt.key}</Text>
             </Box>
           );
         })}
@@ -242,9 +246,6 @@ export const InputArea = React.memo(function InputArea({
     }
 
     if (pending === 'permission' && !inputRef.current) {
-      if (input === 'y') { onPermAllow(); return; }
-      if (input === 'a') { onPermAlwaysAllow(); return; }
-      if (input === 'n') { onPermDeny('Permission denied.'); return; }
       if (key.leftArrow)  { setPermSel(s => (s - 1 + PERM_OPTIONS.length) % PERM_OPTIONS.length); return; }
       if (key.rightArrow) { setPermSel(s => (s + 1) % PERM_OPTIONS.length); return; }
     }

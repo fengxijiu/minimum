@@ -68,7 +68,7 @@ results.push({ name: `FilePicker/stable-height (${fpFull}/${fpOne}/${fpEmpty})`,
 check('PermissionCard', h(PermissionCard, { perm: {
   tool: 'exec_shell', cmd: '$ rm -rf build', cwd: '/repo',
   note: 'destructive', risk: 'high', details: ['command: rm -rf build'],
-}}), ['TOOL', 'allow', 'deny']);
+}}), ['permission required', 'TOOL', '←/→ select']);
 
 // 4. Status bar across every session state (mode-switching surface).
 for (const st of ['agent', 'mimo', 'orchestrate', 'paused', 'error']) {

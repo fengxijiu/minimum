@@ -188,11 +188,12 @@ export const PermissionCard = React.memo(function PermissionCard({ perm }: { per
         flexGrow={1}
       >
         <Box justifyContent="space-between">
-          <Text color={accent} bold>⚠ PERMISSION · {perm.tool}</Text>
+          <Text color={accent} bold>permission required</Text>
           <Text backgroundColor={accent} color={theme.bg} bold> {RISK_LABEL[risk]} </Text>
         </Box>
 
         <Box marginTop={1} flexDirection="column">
+          <Text color={theme.muted}>TOOL  <Text color={theme.inkSoft}>{perm.tool}</Text></Text>
           <Text color={theme.muted}>request</Text>
           <Text color={theme.ink}>{perm.cmd}</Text>
         </Box>
@@ -213,7 +214,7 @@ export const PermissionCard = React.memo(function PermissionCard({ perm }: { per
         </Box>
 
         <Box marginTop={1}>
-          <Text color={theme.muted}>choose below: ←/→ select · ⏎ confirm · y allow · a always · n deny</Text>
+          <Text color={theme.muted}>choose below: ←/→ select · ⏎ confirm · esc deny</Text>
         </Box>
       </Box>
     </Box>
