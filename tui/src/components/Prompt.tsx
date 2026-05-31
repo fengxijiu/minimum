@@ -20,7 +20,7 @@ export const Prompt = React.memo(function Prompt({ value, onChange, onSubmit, pl
   return (
     <Box flexDirection="column">
       <PromptRule isCmd={isCmd} />
-      <Box paddingX={2}>
+      <Box paddingX={2} paddingY={1}>
         <Text color={isCmd ? theme.accent2 : theme.accent} bold>❯ </Text>
         <TextInput
           value={value}
