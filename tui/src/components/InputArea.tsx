@@ -27,15 +27,11 @@ export interface InputAreaProps {
   onApplyFix: () => void;
   dispatch: Dispatch;
   cmdCtx: CommandContext;
-  chatHeight?: number;
-  onScrollUp?: (lines: number) => void;
-  onScrollDown?: (lines: number) => void;
 }
 
 export const InputArea = React.memo(function InputArea({
   files, helpOpen, pending, hasMessages, mode, editMode, verbose, hasEdits,
   onSubmit, onPermAllow, onPermAlwaysAllow, onPermDeny, onApplyFix, dispatch, cmdCtx,
-  chatHeight, onScrollUp, onScrollDown,
 }: InputAreaProps) {
   const { exit } = useApp();
   const [inputValue, setInputValue] = useState('');
@@ -213,15 +209,6 @@ export const InputArea = React.memo(function InputArea({
       return;
     }
 
-    if (key.pageUp) {
-      onScrollUp?.(Math.max(4, Math.floor((chatHeight ?? 20) / 2)));
-      return;
-    }
-    if (key.pageDown) {
-      onScrollDown?.(Math.max(4, Math.floor((chatHeight ?? 20) / 2)));
-      return;
-    }
-
     if (pending === 'permission' && !inputRef.current) {
       if (key.leftArrow)  { setPermSel(s => (s - 1 + 3) % 3); return; }
       if (key.rightArrow) { setPermSel(s => (s + 1) % 3); return; }
@@ -248,6 +235,10 @@ export const InputArea = React.memo(function InputArea({
       const MODES = ['agent', 'chat', 'orchestrate'] as const;
       const next = MODES[(MODES.indexOf(mode as typeof MODES[number]) + 1) % MODES.length] ?? 'agent';
       dispatch({ type: 'mode.change', mode: next });
+      // Mirror the Shift+Tab (edit-mode) toast so a silent mode switch is
+      // always acknowledged — the user can see which of agent/chat/orchestrate
+      // they landed on without hunting for it in the title/status bar.
+      dispatch({ type: 'toast.show', text: `Mode: ${next}`, tone: 'info', ttlMs: 2000 });
       return;
     }
   });

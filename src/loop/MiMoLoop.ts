@@ -22,6 +22,12 @@ const MAX_TOOL_RESULT_CHARS = 32_000;
 /** Default max parallel tool calls for read-only batch. */
 const DEFAULT_PARALLEL_MAX = 3;
 
+/** Approximate MiMo API pricing (USD per 1 M tokens). */
+const PRICE_INPUT_PER_M_USD = 0.4;
+/** Cache-hit input tokens are billed at a steep discount (~0.1× fresh input). */
+const PRICE_CACHED_PER_M_USD = 0.04;
+const PRICE_OUTPUT_PER_M_USD = 1.6;
+
 // ============ Minimal collaborator interfaces ============
 
 export interface IStreamingClient {
@@ -30,6 +36,7 @@ export interface IStreamingClient {
 		tools?: ToolDefinition[];
 		maxTokens?: number;
 		thinking?: { type: "enabled" | "disabled"; budget_tokens?: number };
+		signal?: AbortSignal;
 	}): AsyncIterable<StreamChunk>;
 }
 
@@ -260,7 +267,7 @@ export class MiMoLoop {
 				// 调用模型
 				let response;
 				try {
-					response = await this.callModel();
+					response = await this.callModel(this.abortController?.signal);
 				} catch (error: any) {
 					this.state.errors++;
 					yield { type: "error", error: error.message, recoverable: true };
@@ -334,6 +341,12 @@ export class MiMoLoop {
 						yield* this.forceSummary("stuck");
 						yield* this.finishTurn();
 						return;
+					}
+
+					// 全部为只读工具时，并行执行（提速，参考 DEFAULT_PARALLEL_MAX）
+					if (activeCalls.length > 1 && activeCalls.every((tc) => isReadTool(tc))) {
+						yield* this.executeReadBatch(activeCalls);
+						continue;
 					}
 
 					// 逐个执行活跃的工具调用
@@ -580,7 +593,7 @@ export class MiMoLoop {
 		});
 
 		try {
-			const response = await this.callModel();
+			const response = await this.callModel(this.abortController?.signal);
 			const summary = response.content || "No summary produced.";
 			this.messages.push(buildAssistantMessage(summary, [], response.reasoningContent));
 			yield { type: "content", content: summary };
@@ -598,7 +611,7 @@ export class MiMoLoop {
 	/**
 	 * 调用模型 - 流式
 	 */
-	private async callModel(): Promise<{
+	private async callModel(signal?: AbortSignal): Promise<{
 		content: string;
 		reasoningContent?: string;
 		toolCalls?: ToolCall[];
@@ -615,6 +628,7 @@ export class MiMoLoop {
 			tools: this.config.tools.getDefinitions(),
 			maxTokens: this.config.maxTokens,
 			thinking: this.config.thinking,
+			signal,
 		})) {
 			switch (chunk.type) {
 				case "content":
@@ -638,6 +652,15 @@ export class MiMoLoop {
 					usage = chunk.usage;
 					if (usage) {
 						this.state.totalTokens += usage.totalTokens || 0;
+						// 三段计价：fresh input / cache-hit input / output
+						const cachedTokens = usage.cachedTokens || 0;
+						const freshInput = (usage.promptTokens || 0) - cachedTokens;
+						const outputTokens = usage.completionTokens || 0;
+						this.state.totalCostUsd +=
+							(freshInput * PRICE_INPUT_PER_M_USD +
+								cachedTokens * PRICE_CACHED_PER_M_USD +
+								outputTokens * PRICE_OUTPUT_PER_M_USD) /
+							1_000_000;
 					}
 					break;
 				case "error":
@@ -877,6 +900,72 @@ export class MiMoLoop {
 			}
 		}
 		return { ...last, content: `[重试 2 次后仍失败] ${last.content}` };
+	}
+
+	/**
+	 * 并行执行一批只读工具（无审批、无写操作），结果按原顺序 yield。
+	 * 并发度上限 DEFAULT_PARALLEL_MAX。
+	 */
+	private async *executeReadBatch(toolCalls: ToolCall[]): AsyncGenerator<LoopEvent> {
+		// Emit all tool_call events first so the UI can show them immediately
+		for (const tc of toolCalls) {
+			yield { type: "tool_call", toolCall: tc, repaired: false };
+		}
+
+		// Pre-hooks (sequential, fast)
+		const blocked = new Map<string, string>();
+		if (this.config.hookManager) {
+			for (const tc of toolCalls) {
+				const pre = await this.runHooks("PreToolUse", {
+					toolName: tc.function.name,
+					toolArgs: this.safeParseArgs(tc),
+				});
+				if (pre.block) blocked.set(tc.id ?? "", `Blocked by PreToolUse: ${pre.reason}`);
+			}
+		}
+
+		// Parallel execution in batches of DEFAULT_PARALLEL_MAX
+		const results = new Map<string, { content: string; isError?: boolean }>();
+		const toRun = toolCalls.filter((tc) => !blocked.has(tc.id ?? ""));
+		for (let i = 0; i < toRun.length; i += DEFAULT_PARALLEL_MAX) {
+			const batch = toRun.slice(i, i + DEFAULT_PARALLEL_MAX);
+			const settled = await Promise.allSettled(batch.map((tc) => this.executeToolWithRetry(tc)));
+			for (let j = 0; j < batch.length; j++) {
+				const s = settled[j]!;
+				results.set(
+					batch[j]!.id ?? "",
+					s.status === "fulfilled" ? s.value : { content: String(s.reason), isError: true },
+				);
+			}
+		}
+
+		// Yield results in original order, update read tracker and messages
+		for (const tc of toolCalls) {
+			const tcId = tc.id ?? "";
+			const result = blocked.has(tcId)
+				? { content: blocked.get(tcId)!, isError: true }
+				: (results.get(tcId) ?? { content: "not executed", isError: true });
+
+			// Post-hook
+			if (this.config.hookManager) {
+				const post = await this.runHooks("PostToolUse", {
+					toolName: tc.function.name,
+					toolArgs: this.safeParseArgs(tc),
+					toolResult: result,
+				});
+				if (post.results.length) {
+					yield { type: "hook", event: "PostToolUse", results: post.results };
+				}
+			}
+
+			if (!result.isError) {
+				const args = this.safeParseArgs(tc);
+				this.readTracker.markRead(args.path, this.config.workingDirectory);
+			}
+
+			yield { type: "tool_result", toolCall: tc, result, success: !result.isError };
+			this.messages.push({ role: "tool", content: result.content, tool_call_id: tcId });
+		}
 	}
 
 	private isMutatingTool(call: ToolCall): boolean {

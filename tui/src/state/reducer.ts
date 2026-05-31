@@ -13,8 +13,31 @@ let seq = 0;
 const mid = (p: string) => p + Date.now() + '_' + seq++;
 let toastSeq = 0;
 
+/**
+ * Length of the longest contiguous prefix of `messages` that is "settled"
+ * (safe to freeze into the <Static> scrollback). A message is settled
+ * unless it's a tool whose tool.end hasn't fired yet (status undefined) —
+ * such a row still mutates by id and must stay in the live region.
+ */
+function settledPrefix(messages: Message[], from: number): number {
+  let n = Math.max(0, from);
+  while (n < messages.length) {
+    const m = messages[n]!;
+    if (m.type === 'tool' && m.tool.status === undefined) break;
+    n++;
+  }
+  return n;
+}
+
 function pushMessage(state: AppState, msg: Message): AppState {
-  return { ...state, messages: [...state.messages, msg] };
+  const messages = [...state.messages, msg];
+  // Advance the committed prefix synchronously on every push. This freezes
+  // settled messages straight into <Static> so a tall one (a pasted prompt,
+  // a long reply, a big error/diff) never lands in the repainting region —
+  // not even for a single frame — which would otherwise trip Ink's
+  // clearTerminal (flicker + scrollback wipe via \x1b[3J). Grouping survives
+  // because ChatStream partitions render items by their last message index.
+  return { ...state, messages, committedCount: settledPrefix(messages, state.committedCount) };
 }
 
 function samePlanSteps(a: AppState['plan']['steps'], b: AppState['plan']['steps']): boolean {
@@ -60,9 +83,10 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
       if (!text && state.streaming === null) return state;
       const next: AppState = { ...state, streaming: null };
       if (!text) return next;
-      return pushMessage(next, {
-        id: mid('a'), type: 'assistant', text,
-      });
+      // pushMessage commits the settled prefix, so the finished reply is
+      // frozen straight into <Static> instead of landing tall in the live
+      // region for a frame (which would trip clearTerminal).
+      return pushMessage(next, { id: mid('a'), type: 'assistant', text });
     }
 
     case 'tool.start':
@@ -107,6 +131,8 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
         activeTool: activeMatches
           ? { ...state.activeTool!, status, meta: event.meta }
           : state.activeTool,
+        // Advance the settled prefix now that this tool's status is set.
+        committedCount: settledPrefix(messages, state.committedCount),
       };
     }
 
@@ -185,8 +211,14 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
     case 'messages.clear':
       return { ...state, messages: [], committedCount: 0 };
 
-    case 'messages.commit':
-      return { ...state, committedCount: state.messages.length };
+    case 'messages.commit': {
+      // Commit a contiguous prefix into the <Static> scrollback layer.
+      // `count` lets callers commit only the settled prefix mid-turn; it
+      // defaults to the full list (end-of-turn commit). Never moves backward.
+      const next = Math.min(event.count ?? state.messages.length, state.messages.length);
+      if (next <= state.committedCount) return state;
+      return { ...state, committedCount: next };
+    }
 
     case 'session.load':
       return {

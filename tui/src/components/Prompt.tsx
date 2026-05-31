@@ -3,6 +3,12 @@ import { Box, Text } from 'ink';
 import TextInput from 'ink-text-input';
 import { theme } from '../theme.js';
 
+// Only re-renders when isCmd flips — never on every keystroke
+const PromptRule = React.memo(function PromptRule({ isCmd }: { isCmd: boolean }) {
+  const cols = process.stdout.columns ?? 80;
+  return <Text color={isCmd ? theme.accent2 : theme.accent}>{'─'.repeat(cols)}</Text>;
+});
+
 export const Prompt = React.memo(function Prompt({ value, onChange, onSubmit, placeholder, focus }: {
   value: string;
   onChange: (v: string) => void;
@@ -12,15 +18,18 @@ export const Prompt = React.memo(function Prompt({ value, onChange, onSubmit, pl
 }) {
   const isCmd = value.startsWith('/');
   return (
-    <Box paddingX={1} borderStyle="round" borderColor={isCmd ? theme.accent2 : theme.accent}>
-      <Text color={isCmd ? theme.accent2 : theme.accent} bold>❯ </Text>
-      <TextInput
-        value={value}
-        onChange={onChange}
-        onSubmit={onSubmit}
-        placeholder={placeholder}
-        focus={focus ?? true}
-      />
+    <Box flexDirection="column">
+      <PromptRule isCmd={isCmd} />
+      <Box paddingX={2} paddingY={1}>
+        <Text color={isCmd ? theme.accent2 : theme.accent} bold>❯ </Text>
+        <TextInput
+          value={value}
+          onChange={onChange}
+          onSubmit={onSubmit}
+          placeholder={placeholder}
+          focus={focus ?? true}
+        />
+      </Box>
     </Box>
   );
 });

@@ -1,19 +1,368 @@
-import React, { useMemo } from 'react';
-import { Box, Text } from 'ink';
+import React, { useMemo, useState, useEffect, type ReactNode } from 'react';
+import { Box, Static, Text } from 'ink';
 import { theme } from '../theme.js';
 import type { Message, ToolProgress as ToolProgressType } from '../types.js';
 import { ToolLine, DiffBlock, ChipsRow, PermissionCard, ErrorBlock } from './atoms.js';
 
-const STREAM_MAX_LINES = 8;
+// ── @mention highlighting in user messages ───────────────────────────
 
-// ── Role visual system ────────────────────────────────────────────────
-
-function RoleGutter({ color }: { color: string }) {
-  return <Text color={color}>▎ </Text>;
+function UserText({ text }: { text: string }) {
+  const parts = useMemo(() => {
+    const out: Array<{ v: string; mention: boolean }> = [];
+    const re = /@([^\s]+)/g;
+    let last = 0; let m;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > last) out.push({ v: text.slice(last, m.index), mention: false });
+      out.push({ v: m[0], mention: true });
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) out.push({ v: text.slice(last), mention: false });
+    return out;
+  }, [text]);
+  if (!parts.some(p => p.mention)) return <Text color={theme.ink}>{text}</Text>;
+  return (
+    <Text>
+      {parts.map((p, i) =>
+        p.mention
+          ? <Text key={i} color={theme.accent} bold>{p.v}</Text>
+          : <Text key={i} color={theme.ink}>{p.v}</Text>
+      )}
+    </Text>
+  );
 }
 
-function RoleLabel({ label, color }: { label: string; color: string }) {
-  return <Text color={color} bold>{label}  </Text>;
+// ── Role visual system ────────────────────────────────────────────────
+//
+// Each conversational role gets a distinct colour + gutter glyph + label so
+// who-said-what stays legible while scrolling, even on monochrome terminals
+// (the label text alone disambiguates).
+
+type Role = 'you' | 'mimo' | 'error' | 'system';
+
+const ROLE_STYLE: Record<Role, { color: string; glyph: string }> = {
+  you:    { color: theme.accent,  glyph: '▌' }, // cyan
+  mimo:   { color: theme.accent2, glyph: '▎' }, // magenta
+  error:  { color: theme.danger,  glyph: '▍' }, // red
+  system: { color: theme.muted,   glyph: '·' },
+};
+
+function RoleGutter({ role }: { role: Role }) {
+  return <Text color={ROLE_STYLE[role].color}>{ROLE_STYLE[role].glyph} </Text>;
+}
+
+function RoleLabel({ role }: { role: Role }) {
+  return <Text color={ROLE_STYLE[role].color} bold>{role}  </Text>;
+}
+
+// ── Markdown rendering ────────────────────────────────────────────────
+//
+// A small, dependency-free Markdown renderer. Block-level parsing handles
+// fenced code, headings, blockquotes, horizontal rules and (nested) lists;
+// inline parsing handles bold, italic, code, strikethrough and links.
+
+type MdSpan =
+  | { k: 't' | 'b' | 'i' | 'c' | 's'; v: string }
+  | { k: 'a'; v: string; href: string };
+
+function parseInlineMd(text: string): MdSpan[] {
+  const spans: MdSpan[] = [];
+  // bold ** **  ·  italic * *  ·  italic _ _  ·  strike ~~ ~~  ·  code ` `  ·  link [t](u)
+  const re = /\*\*([^*]+)\*\*|\*([^*]+)\*|_([^_]+)_|~~([^~]+)~~|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\)/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) spans.push({ k: 't', v: text.slice(last, m.index) });
+    if (m[1] !== undefined) spans.push({ k: 'b', v: m[1] });
+    else if (m[2] !== undefined) spans.push({ k: 'i', v: m[2] });
+    else if (m[3] !== undefined) spans.push({ k: 'i', v: m[3] });
+    else if (m[4] !== undefined) spans.push({ k: 's', v: m[4] });
+    else if (m[5] !== undefined) spans.push({ k: 'c', v: m[5] });
+    else spans.push({ k: 'a', v: m[6]!, href: m[7]! });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) spans.push({ k: 't', v: text.slice(last) });
+  return spans.length ? spans : [{ k: 't', v: text }];
+}
+
+function InlineMd({ text, color }: { text: string; color?: string }) {
+  const spans = useMemo(() => parseInlineMd(text), [text]);
+  return (
+    <Text color={color}>
+      {spans.map((s, i) => {
+        switch (s.k) {
+          case 'b': return <Text key={i} bold color={color}>{s.v}</Text>;
+          case 'i': return <Text key={i} italic color={color}>{s.v}</Text>;
+          case 's': return <Text key={i} strikethrough color={theme.muted}>{s.v}</Text>;
+          case 'c': return <Text key={i} color={theme.accent2}>{s.v}</Text>;
+          case 'a': return <Text key={i} color={theme.accent} underline>{s.v}</Text>;
+          default:  return <Text key={i} color={color}>{s.v}</Text>;
+        }
+      })}
+    </Text>
+  );
+}
+
+type MdBlock =
+  | { k: 'code'; lang: string; lines: string[] }
+  | { k: 'heading'; level: 1 | 2 | 3; text: string }
+  | { k: 'quote'; text: string }
+  | { k: 'hr' }
+  | { k: 'li'; indent: number; marker: string; text: string }
+  | { k: 'table'; data: TableData }
+  | { k: 'p'; text: string }
+  | { k: 'blank' };
+
+// ── Table support ─────────────────────────────────────────────────────
+
+const MAX_COL_WIDTH = 28;
+const MAX_TABLE_COLS = 10;
+
+type TableAlign = 'l' | 'c' | 'r';
+type TableData = {
+  headers: string[];
+  aligns: TableAlign[];
+  rows: string[][];
+  colWidths: number[];
+};
+
+// Strip inline-markdown markers to get visual character count for column sizing.
+function stripMd(text: string): string {
+  return text
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/_([^_]+)_/g, '$1')
+    .replace(/~~([^~]+)~~/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+}
+
+function splitTableRow(line: string): string[] {
+  const s = line.trim();
+  const inner = s.startsWith('|') ? s.slice(1) : s;
+  const trimmed = inner.endsWith('|') ? inner.slice(0, -1) : inner;
+  return trimmed.split('|').map(c => c.trim());
+}
+
+function isSepRow(line: string): boolean {
+  if (!line.includes('|') && !line.includes('-')) return false;
+  const cells = splitTableRow(line);
+  return cells.length > 0 && cells.every(c => /^\s*:?-+:?\s*$/.test(c));
+}
+
+function parseSepAligns(line: string): TableAlign[] {
+  return splitTableRow(line).map(c => {
+    const t = c.trim();
+    if (t.startsWith(':') && t.endsWith(':')) return 'c';
+    if (t.endsWith(':')) return 'r';
+    return 'l';
+  });
+}
+
+function buildTableData(tableLines: string[], availCols?: number): TableData | null {
+  if (tableLines.length < 2) return null;
+  if (!isSepRow(tableLines[1]!)) return null;
+  const headers = splitTableRow(tableLines[0]!).slice(0, MAX_TABLE_COLS);
+  const aligns  = parseSepAligns(tableLines[1]!).slice(0, headers.length);
+  const rows    = tableLines.slice(2).map(l => splitTableRow(l).slice(0, headers.length));
+  let colWidths = headers.map((h, ci) => {
+    const hLen = stripMd(h).length;
+    const maxD = rows.reduce((mx, row) => Math.max(mx, stripMd(row[ci] ?? '').length), 0);
+    return Math.min(MAX_COL_WIDTH, Math.max(hLen, maxD, 1));
+  });
+  // Pad aligns to match column count
+  while (aligns.length < headers.length) aligns.push('l');
+  // Scale down proportionally if total table width exceeds available terminal columns.
+  if (availCols && availCols > 0) {
+    const totalWidth = colWidths.reduce((s, w) => s + w + 3, 1);
+    if (totalWidth > availCols) {
+      const budget = Math.max(colWidths.length * 3, availCols - 1 - colWidths.length * 3);
+      const sum = colWidths.reduce((s, w) => s + w, 0);
+      if (sum > 0) {
+        colWidths = colWidths.map(w => Math.max(3, Math.floor(w * budget / sum)));
+      }
+    }
+  }
+  return { headers, aligns, rows, colWidths };
+}
+
+function tableBorderLine(colWidths: number[], edge: 'top' | 'mid' | 'bot'): string {
+  const [l, j, r] = edge === 'top' ? ['┌', '┬', '┐']
+    : edge === 'mid' ? ['├', '┼', '┤']
+    : ['└', '┴', '┘'];
+  return l + colWidths.map(w => '─'.repeat(w + 2)).join(j) + r;
+}
+
+function TableDataRow({ cells, colWidths, aligns, isHeader, color }: {
+  cells: string[];
+  colWidths: number[];
+  aligns: TableAlign[];
+  isHeader?: boolean;
+  color?: string;
+}) {
+  const fg = isHeader ? theme.inkSoft : color;
+  return (
+    <Box flexDirection="row">
+      <Text color={theme.line}>│</Text>
+      {colWidths.map((cw, ci) => {
+        const raw  = cells[ci] ?? '';
+        const vis  = Math.min(stripMd(raw).length, cw);
+        const align = aligns[ci] ?? 'l';
+        const excess = Math.max(0, cw - vis);
+        const preN  = align === 'r' ? excess + 1 : align === 'c' ? Math.floor(excess / 2) + 1 : 1;
+        const postN = align === 'r' ? 1 : align === 'c' ? (excess - Math.floor(excess / 2)) + 1 : excess + 1;
+        return (
+          <React.Fragment key={ci}>
+            <Text color={fg}>{' '.repeat(preN)}</Text>
+            {isHeader
+              ? <Text bold color={fg}>{raw.slice(0, cw)}</Text>
+              : <InlineMd text={raw.slice(0, cw)} color={fg} />}
+            <Text color={fg}>{' '.repeat(postN)}</Text>
+            <Text color={theme.line}>│</Text>
+          </React.Fragment>
+        );
+      })}
+    </Box>
+  );
+}
+
+function MdTable({ data, color }: { data: TableData; color?: string }) {
+  const { headers, aligns, rows, colWidths } = data;
+  return (
+    <Box flexDirection="column">
+      <Text color={theme.line}>{tableBorderLine(colWidths, 'top')}</Text>
+      <TableDataRow cells={headers} colWidths={colWidths} aligns={aligns} isHeader color={color} />
+      <Text color={theme.line}>{tableBorderLine(colWidths, 'mid')}</Text>
+      {rows.map((row, ri) => (
+        <TableDataRow key={ri} cells={row} colWidths={colWidths} aligns={aligns} color={color} />
+      ))}
+      <Text color={theme.line}>{tableBorderLine(colWidths, 'bot')}</Text>
+    </Box>
+  );
+}
+
+function parseBlocks(raw: string, cols?: number): MdBlock[] {
+  const out: MdBlock[] = [];
+  const lines = raw.split('\n');
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i]!;
+
+    const fence = line.match(/^\s*```(\w*)\s*$/);
+    if (fence) {
+      const lang = fence[1] ?? '';
+      const body: string[] = [];
+      i++;
+      while (i < lines.length && !/^\s*```\s*$/.test(lines[i]!)) { body.push(lines[i]!); i++; }
+      i++; // consume closing fence
+      out.push({ k: 'code', lang, lines: body });
+      continue;
+    }
+
+    const h = line.match(/^(#{1,3})\s+(.+)/);
+    if (h) { out.push({ k: 'heading', level: h[1]!.length as 1 | 2 | 3, text: h[2]! }); i++; continue; }
+
+    if (/^\s*([-*_])(?:\s*\1){2,}\s*$/.test(line)) { out.push({ k: 'hr' }); i++; continue; }
+
+    const q = line.match(/^>\s?(.*)/);
+    if (q) { out.push({ k: 'quote', text: q[1]! }); i++; continue; }
+
+    const li = line.match(/^(\s*)([-*+]|\d+[.)])\s+(.+)/);
+    if (li) {
+      const indent = Math.min(4, Math.floor(li[1]!.length / 2));
+      const marker = /\d/.test(li[2]!) ? li[2]!.replace(/[.)]/, '.') + ' ' : '• ';
+      out.push({ k: 'li', indent, marker, text: li[3]! });
+      i++; continue;
+    }
+
+    // Table: header starts with | and the very next line is a separator row
+    if (line.trimStart().startsWith('|') && i + 1 < lines.length && isSepRow(lines[i + 1]!)) {
+      const start = i;
+      const tableLines: string[] = [];
+      while (i < lines.length && lines[i]!.trimStart().startsWith('|')) {
+        tableLines.push(lines[i]!);
+        i++;
+      }
+      const data = buildTableData(tableLines, cols);
+      if (data) { out.push({ k: 'table', data }); continue; }
+      i = start; // backtrack if parse failed
+    }
+
+    if (line.trim() === '') { out.push({ k: 'blank' }); i++; continue; }
+
+    out.push({ k: 'p', text: line }); i++;
+  }
+  return out;
+}
+
+function MarkdownBlock({ text, color, cols }: { text: string; color?: string; cols?: number }) {
+  const blocks = useMemo(() => parseBlocks(text, cols), [text, cols]);
+  return (
+    <Box flexDirection="column">
+      {blocks.map((b, i) => {
+        switch (b.k) {
+          case 'code':
+            return (
+              <Box
+                key={i}
+                flexDirection="column"
+                borderStyle="round"
+                borderColor={theme.line}
+                paddingX={1}
+                marginTop={1}
+              >
+                {b.lang || b.lines.length > 1 ? (
+                  <Box justifyContent="space-between" marginBottom={1}>
+                    <Text color={theme.accent2} bold>{b.lang || ' '}</Text>
+                    {b.lines.length > 1
+                      ? <Text color={theme.muted} dimColor>{b.lines.length} lines</Text>
+                      : null}
+                  </Box>
+                ) : null}
+                {(b.lines.length ? b.lines : ['']).map((l, j) => (
+                  <Text key={j} color={theme.plus}>{l || ' '}</Text>
+                ))}
+              </Box>
+            );
+          case 'heading':
+            return (
+              <Text
+                key={i}
+                bold
+                color={b.level === 1 ? theme.accent : b.level === 2 ? theme.inkSoft : color}
+              >
+                {b.text}
+              </Text>
+            );
+          case 'quote':
+            return (
+              <Box key={i}>
+                <Text color={theme.line}>│ </Text>
+                <InlineMd text={b.text} color={theme.inkSoft} />
+              </Box>
+            );
+          case 'hr':
+            return <Text key={i} color={theme.line}>{'─'.repeat(24)}</Text>;
+          case 'table':
+            return <MdTable key={i} data={b.data} color={color} />;
+          case 'li':
+            return (
+              <Box key={i} paddingLeft={b.indent * 2}>
+                <Text color={theme.accent}>{b.marker}</Text>
+                <InlineMd text={b.text} color={color} />
+              </Box>
+            );
+          case 'blank':
+            return <Text key={i}> </Text>;
+          default:
+            return (
+              <Box key={i}>
+                <InlineMd text={b.text} color={color} />
+              </Box>
+            );
+        }
+      })}
+    </Box>
+  );
 }
 
 // ── Tool group rendering ──────────────────────────────────────────────
@@ -49,20 +398,29 @@ function ToolGroupRow({ tools, verbose }: { tools: ToolMsg[]; verbose?: boolean 
   );
 }
 
-// ── Turn divider ──────────────────────────────────────────────────────
+// ── Elapsed timer (1s tick) ───────────────────────────────────────────
 
-function TurnDivider({ cols }: { cols: number }) {
-  const w = Math.max(4, cols - 4);
-  return (
-    <Box marginTop={1}>
-      <Text color={theme.line}>{'─'.repeat(w)}</Text>
-    </Box>
-  );
+function ElapsedTimer({ startedAt }: { startedAt: number }) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => tick(n => n + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const secs = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+  if (secs < 1) return null;
+  return <Text color={theme.muted}> {secs}s</Text>;
 }
 
-function TurnMetaRule({ summary, cols }: { summary: string; cols: number }) {
-  const label = ` ${summary} `;
-  const rest = Math.max(2, cols - 4 - label.length);
+// ── Turn divider ──────────────────────────────────────────────────────
+
+function TurnDivider({ cols, turnNum }: { cols: number; turnNum: number }) {
+  const timeStr = useMemo(() => {
+    const d = new Date();
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  }, []);
+  const label = ` ${timeStr}  #${turnNum} `;
+  const w = Math.max(4, cols - 4);
+  const rest = Math.max(0, w - label.length);
   const left = Math.floor(rest / 2);
   const right = rest - left;
   return (
@@ -74,14 +432,63 @@ function TurnMetaRule({ summary, cols }: { summary: string; cols: number }) {
   );
 }
 
-function ReasoningRow({ text, verbose }: { text: string; verbose?: boolean }) {
+function TurnMetaRule({ summary, cols }: { summary: string; cols: number }) {
+  // Extract cost from summary like "3 tools · 12.4k tok · $0.03" and colour it
+  const costMatch = summary.match(/\$(\d+\.\d+)/);
+  const cost = costMatch ? parseFloat(costMatch[1]!) : 0;
+  const costColor = cost > 0.5 ? theme.danger : cost > 0.1 ? theme.warn : theme.plus;
+
+  const label = ` ${summary} `;
+  const rest = Math.max(2, cols - 4 - label.length);
+  const left = Math.floor(rest / 2);
+  const right = rest - left;
+
+  if (costMatch) {
+    const [before, after] = summary.split(costMatch[0]);
+    const labelBefore = ` ${before ?? ''}`;
+    const labelAfter = `${after ?? ''} `;
+    const totalLen = labelBefore.length + costMatch[0].length + labelAfter.length;
+    const r = Math.max(2, cols - 4 - totalLen);
+    const l2 = Math.floor(r / 2);
+    const r2 = r - l2;
+    return (
+      <Box marginTop={1}>
+        <Text color={theme.line}>{'─'.repeat(l2)}</Text>
+        <Text color={theme.muted}>{labelBefore}</Text>
+        <Text color={costColor}>{costMatch[0]}</Text>
+        <Text color={theme.muted}>{labelAfter}</Text>
+        <Text color={theme.line}>{'─'.repeat(r2)}</Text>
+      </Box>
+    );
+  }
+
+  return (
+    <Box marginTop={1}>
+      <Text color={theme.line}>{'─'.repeat(left)}</Text>
+      <Text color={theme.muted}>{label}</Text>
+      <Text color={theme.line}>{'─'.repeat(right)}</Text>
+    </Box>
+  );
+}
+
+const SPINNER = '⠋⠙⠹⠸⠼⠴⠦⠧';
+
+function ReasoningRow({ text, verbose, spinning }: { text: string; verbose?: boolean; spinning?: boolean }) {
+  const [frame, setFrame] = useState(0);
+  useEffect(() => {
+    if (!spinning) return;
+    const timer = setInterval(() => setFrame(f => (f + 1) % SPINNER.length), 80);
+    return () => clearInterval(timer);
+  }, [spinning]);
+
   const lines = text.split('\n').filter(l => l.trim() !== '');
   const tail = verbose ? lines.slice(-6) : lines.slice(-1);
+  const icon = spinning ? (SPINNER[frame % SPINNER.length] ?? '◇') : '◇';
   return (
     <Box flexDirection="column" marginTop={1}>
       <Box paddingLeft={2}>
-        <Text color={theme.accent2}>◇ </Text>
-        <Text color={theme.muted}>thinking · {lines.length} line{lines.length === 1 ? '' : 's'}{verbose ? '' : '  (verbose to expand)'}</Text>
+        <Text color={theme.accent2}>{icon} </Text>
+        <Text color={theme.muted}>thinking · {lines.length} line{lines.length === 1 ? '' : 's'}{verbose ? '' : '  (ctrl+r to expand)'}</Text>
       </Box>
       {tail.map((l, i) => (
         <Box key={i} paddingLeft={4}>
@@ -93,189 +500,51 @@ function ReasoningRow({ text, verbose }: { text: string; verbose?: boolean }) {
 }
 
 // ── Render item types ─────────────────────────────────────────────────
+//
+// A RenderItem is one printable unit of scrollback. `lastMsgIndex` records
+// the highest underlying message index so the stream can be partitioned
+// into a committed (Static) prefix and a live tail without breaking the
+// turn-divider / tool-grouping logic.
 
-type RenderItem =
-  | { id: string; kind: 'msg';       msg: Message }
-  | { id: string; kind: 'toolgroup'; tools: ToolMsg[] }
-  | { id: string; kind: 'divider' };
+type RenderItem = (
+  | { kind: 'msg';       msg: Message }
+  | { kind: 'toolgroup'; tools: ToolMsg[] }
+  | { kind: 'divider';   turnNum: number }
+) & { id: string; lastMsgIndex: number };
 
 function buildRenderItems(msgs: Message[]): RenderItem[] {
   const items: RenderItem[] = [];
   let toolBuf: ToolMsg[] = [];
+  let toolBufIdx = -1;
+  let turnCount = 0;
 
   const flushTools = () => {
     if (!toolBuf.length) return;
-    items.push({ id: `tg:${toolBuf[0]!.id}`, kind: 'toolgroup', tools: toolBuf });
+    items.push({ id: `tg:${toolBuf[0]!.id}`, kind: 'toolgroup', tools: toolBuf, lastMsgIndex: toolBufIdx });
     toolBuf = [];
+    toolBufIdx = -1;
   };
 
   for (let i = 0; i < msgs.length; i++) {
     const msg = msgs[i]!;
     if (msg.type === 'tool') {
       toolBuf.push(msg as ToolMsg);
+      toolBufIdx = i;
       continue;
     }
     flushTools();
-    if (msg.type === 'user' && i > 0) {
-      const prev = items[items.length - 1];
-      const prevIsMeta = prev?.kind === 'msg' && prev.msg.type === 'turnmeta';
-      if (!prevIsMeta) items.push({ id: `div:${msg.id}`, kind: 'divider' });
+    if (msg.type === 'user') {
+      turnCount++;
+      if (i > 0) {
+        const prev = items[items.length - 1];
+        const prevIsMeta = prev?.kind === 'msg' && prev.msg.type === 'turnmeta';
+        if (!prevIsMeta) items.push({ id: `div:${msg.id}`, kind: 'divider', turnNum: turnCount, lastMsgIndex: i });
+      }
     }
-    items.push({ id: msg.id, kind: 'msg', msg });
+    items.push({ id: msg.id, kind: 'msg', msg, lastMsgIndex: i });
   }
   flushTools();
   return items;
-}
-
-// ── Height estimation (for virtual scroll) ────────────────────────────
-
-function estimateItemHeight(item: RenderItem, cols: number): number {
-  const w = Math.max(20, cols - 6);
-  if (item.kind === 'divider') return 2;
-  if (item.kind === 'toolgroup') return 2 + item.tools.length;
-  const msg = item.msg;
-  switch (msg.type) {
-    case 'user': {
-      const lines = msg.text.split('\n').reduce((acc, l) =>
-        acc + Math.max(1, Math.ceil(l.length / w)), 0);
-      return 2 + lines;
-    }
-    case 'assistant': {
-      const lines = msg.text.split('\n').reduce((acc, l) =>
-        acc + Math.max(1, Math.ceil(l.length / w)), 0);
-      return 2 + lines;
-    }
-    case 'system':     return 2; // <Box marginTop={1}> + 1 content row
-    case 'tool':       return 1;
-    case 'turnmeta':   return 2;
-    case 'error':      return 3 + Math.min(6, msg.error.lines?.length ?? 0);
-    case 'diff':       return 3 + Math.min(12, msg.diff.lines?.length ?? 0);
-    case 'chips':      return 2;
-    case 'permission': return 7;
-    default:           return 2;
-  }
-}
-
-// ── Viewport calculator ───────────────────────────────────────────────
-
-function buildViewport(
-  items: RenderItem[],
-  viewportH: number,
-  scrollOffset: number,
-  cols: number,
-): { visible: RenderItem[]; linesAbove: number; totalLines: number } {
-  if (viewportH <= 0 || items.length === 0) {
-    return { visible: [], linesAbove: 0, totalLines: 0 };
-  }
-
-  const heights = items.map(it => Math.max(1, estimateItemHeight(it, cols)));
-  const totalLines = heights.reduce((a, b) => a + b, 0);
-
-  if (totalLines <= viewportH) {
-    return { visible: items, linesAbove: 0, totalLines };
-  }
-
-  // bottomEdge = the last line index (0-based) we want to show
-  const clampedOffset = Math.max(0, Math.min(scrollOffset, totalLines - viewportH));
-  const bottomEdge = totalLines - clampedOffset;
-  const topEdge = Math.max(0, bottomEdge - viewportH);
-
-  let cum = 0;
-  const visible: RenderItem[] = [];
-  let linesAbove = 0;
-
-  for (let i = 0; i < items.length; i++) {
-    const h = heights[i]!;
-    const end = cum + h;
-    if (end <= topEdge) {
-      linesAbove += h;
-    } else if (cum >= topEdge + viewportH) {
-      break;
-    } else {
-      visible.push(items[i]!);
-    }
-    cum += h;
-  }
-
-  return { visible, linesAbove, totalLines };
-}
-
-// ── Markdown rendering ────────────────────────────────────────────────
-
-type MdSpan = { k: 't' | 'b' | 'i' | 'c'; v: string };
-
-function parseInlineMd(text: string): MdSpan[] {
-  const spans: MdSpan[] = [];
-  const re = /\*\*(.+?)\*\*|\*(.+?)\*|`(.+?)`/g;
-  let last = 0;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > last) spans.push({ k: 't', v: text.slice(last, m.index) });
-    if (m[1] !== undefined) spans.push({ k: 'b', v: m[1] });
-    else if (m[2] !== undefined) spans.push({ k: 'i', v: m[2] });
-    else spans.push({ k: 'c', v: m[3]! });
-    last = m.index + m[0].length;
-  }
-  if (last < text.length) spans.push({ k: 't', v: text.slice(last) });
-  return spans;
-}
-
-function InlineMd({ text, color }: { text: string; color?: string }) {
-  const spans = useMemo(() => parseInlineMd(text), [text]);
-  return (
-    <Text>
-      {spans.map((s, i) =>
-        s.k === 'b' ? <Text key={i} bold color={color}>{s.v}</Text>
-        : s.k === 'i' ? <Text key={i} italic color={color}>{s.v}</Text>
-        : s.k === 'c' ? <Text key={i} color={theme.accent2}>{s.v}</Text>
-        : <Text key={i} color={color}>{s.v}</Text>
-      )}
-    </Text>
-  );
-}
-
-type MdLine =
-  | { k: 'code'; t: string }
-  | { k: 'h1' | 'h2' | 'h3'; t: string }
-  | { k: 'li'; prefix: string; t: string }
-  | { k: 'text'; t: string };
-
-function parseMdLines(raw: string): MdLine[] {
-  const result: MdLine[] = [];
-  let inCode = false;
-  for (const line of raw.split('\n')) {
-    if (line.startsWith('```')) { inCode = !inCode; continue; }
-    if (inCode) { result.push({ k: 'code', t: line }); continue; }
-    const h = line.match(/^(#{1,3}) (.+)/);
-    if (h) { result.push({ k: `h${h[1]!.length}` as 'h1' | 'h2' | 'h3', t: h[2]! }); continue; }
-    const ul = line.match(/^[-*] (.+)/);
-    if (ul) { result.push({ k: 'li', prefix: '• ', t: ul[1]! }); continue; }
-    const ol = line.match(/^(\d+)\. (.+)/);
-    if (ol) { result.push({ k: 'li', prefix: ol[1]! + '. ', t: ol[2]! }); continue; }
-    result.push({ k: 'text', t: line });
-  }
-  return result;
-}
-
-function MarkdownBlock({ text, color }: { text: string; color?: string }) {
-  const lines = useMemo(() => parseMdLines(text), [text]);
-  return (
-    <Box flexDirection="column">
-      {lines.map((line, i) => {
-        if (line.k === 'code') return <Text key={i} color={theme.accent2}>{line.t}</Text>;
-        if (line.k === 'h1')   return <Text key={i} bold color={theme.accent}>{line.t}</Text>;
-        if (line.k === 'h2')   return <Text key={i} bold color={theme.inkSoft}>{line.t}</Text>;
-        if (line.k === 'h3')   return <Text key={i} bold>{line.t}</Text>;
-        if (line.k === 'li')   return (
-          <Box key={i}>
-            <Text color={theme.muted}>{line.prefix}</Text>
-            <InlineMd text={line.t} color={color} />
-          </Box>
-        );
-        return <Box key={i}><InlineMd text={line.t} color={color} /></Box>;
-      })}
-    </Box>
-  );
 }
 
 // ── Single message renderer ───────────────────────────────────────────
@@ -287,10 +556,10 @@ const MessageRow = React.memo(function MessageRow({ msg, cols, verbose }: {
     case 'user':
       return (
         <Box marginTop={1}>
-          <RoleGutter color={theme.accent} />
+          <RoleGutter role="you" />
           <Box flexDirection="column" flexGrow={1}>
-            <RoleLabel label="you" color={theme.accent} />
-            <Text color={theme.ink}>{msg.text}</Text>
+            <RoleLabel role="you" />
+            <UserText text={msg.text} />
           </Box>
         </Box>
       );
@@ -298,10 +567,10 @@ const MessageRow = React.memo(function MessageRow({ msg, cols, verbose }: {
     case 'assistant':
       return (
         <Box marginTop={1}>
-          <RoleGutter color={theme.inkSoft} />
+          <RoleGutter role="mimo" />
           <Box flexDirection="column" flexGrow={1}>
-            <RoleLabel label="mimo" color={theme.inkSoft} />
-            <MarkdownBlock text={msg.text} color={theme.ink} />
+            <RoleLabel role="mimo" />
+            <MarkdownBlock text={msg.text} color={theme.ink} cols={cols} />
           </Box>
         </Box>
       );
@@ -309,6 +578,7 @@ const MessageRow = React.memo(function MessageRow({ msg, cols, verbose }: {
     case 'system': {
       const c = msg.tone === 'warn' ? theme.warn
               : msg.tone === 'ok'   ? theme.plus
+              : msg.tone === 'info' ? theme.accent
               : theme.muted;
       return (
         <Box marginTop={1} paddingLeft={3}>
@@ -336,9 +606,9 @@ const MessageRow = React.memo(function MessageRow({ msg, cols, verbose }: {
     case 'error':
       return (
         <Box marginTop={1}>
-          <RoleGutter color={theme.danger} />
+          <RoleGutter role="error" />
           <Box flexDirection="column" flexGrow={1}>
-            <RoleLabel label="error" color={theme.danger} />
+            <RoleLabel role="error" />
             <ErrorBlock error={msg.error} />
           </Box>
         </Box>
@@ -352,147 +622,142 @@ const MessageRow = React.memo(function MessageRow({ msg, cols, verbose }: {
 // ── Render item dispatcher ────────────────────────────────────────────
 
 function RenderItemRow({ item, cols, verbose }: { item: RenderItem; cols: number; verbose?: boolean }) {
-  if (item.kind === 'divider') return <TurnDivider cols={cols} />;
+  if (item.kind === 'divider') return <TurnDivider cols={cols} turnNum={item.turnNum} />;
   if (item.kind === 'toolgroup') return <ToolGroupRow tools={item.tools} verbose={verbose} />;
   return <MessageRow msg={item.msg} cols={cols} verbose={verbose} />;
 }
 
 // ── ChatStream ────────────────────────────────────────────────────────
 //
-// Full-viewport chat area. No <Static>: every message lives in the live
-// region, and a virtual-scroll window selects which items to render.
-// scrollOffset=0 pins to the bottom (latest messages); positive values
-// scroll upward through history.
+// Claude Code style conversation flow. Completed messages — those in
+// [0, committedCount) — are emitted once through <Static>, so the terminal
+// writes them into its own scrollback and the user scrolls history with the
+// terminal's native scrollback (mouse / trackpad / PgUp). The live tail
+// (uncommitted messages of the current turn + the streaming frame) is the
+// only region repainted in place.
+
+type StaticEntry =
+  | { id: '__header__'; kind: 'header' }
+  | RenderItem;
 
 export const ChatStream = React.memo(function ChatStream({
   stepLabel,
   messages,
+  committedCount,
   streaming,
   reasoning,
   activeTool,
   verbose,
-  scrollOffset,
-  chatHeight,
   cols,
+  maxRows,
+  header,
 }: {
   stepLabel?: string;
   messages: Message[];
+  committedCount: number;
   streaming?: string | null;
   reasoning?: string | null;
   activeTool?: ToolProgressType | null;
   verbose?: boolean;
-  scrollOffset: number;
-  chatHeight: number;
   cols: number;
+  maxRows: number;
+  header?: ReactNode;
 }) {
   const allItems = useMemo(() => buildRenderItems(messages), [messages]);
 
-  // Estimate live-frame height so we don't let it crowd the history pane.
+  // Partition into the committed prefix (Static scrollback) and the live tail.
+  const { staticEntries, liveItems } = useMemo(() => {
+    const committed: RenderItem[] = [];
+    const live: RenderItem[] = [];
+    for (const it of allItems) {
+      if (it.lastMsgIndex < committedCount) committed.push(it);
+      else live.push(it);
+    }
+    const entries: StaticEntry[] = header
+      ? [{ id: '__header__', kind: 'header' }, ...committed]
+      : committed;
+    return { staticEntries: entries, liveItems: live };
+  }, [allItems, committedCount, header]);
+
+  // Live streaming frame (the only thing repainted on every token). Its
+  // height is capped so the whole dynamic region stays *strictly* below the
+  // terminal height — otherwise Ink falls back to clearTerminal, which both
+  // flickers and wipes the scrollback (\x1b[3J), destroying history.
+  // `reserved` overestimates everything else in the repainting region
+  // (plan + pipeline + toast + input + status + box chrome + margins, plus
+  // reasoning, a running tool, and any uncommitted tail items).
+  const reserved =
+    15
+    + liveItems.length * 3
+    + (reasoning ? (verbose ? 6 : 2) : 0)
+    + (activeTool ? 1 : 0);
+  const streamCap = Math.max(3, maxRows - reserved - 1);
   const streamText = streaming ?? '';
-  const streamViewport = streamText.split('\n').slice(-STREAM_MAX_LINES).join('\n');
+  const streamViewport = streamText.split('\n').slice(-streamCap).join('\n');
   const hasLive = !!stepLabel || !!activeTool || !!reasoning || !!streamViewport;
 
-  const liveH = hasLive
-    ? 2                                           // border top+bottom
-    + (stepLabel ? 1 : 0)
-    + (activeTool ? 1 : 0)
-    + (reasoning ? (verbose ? 4 : 2) : 0)
-    + (streamViewport ? 3 : 0)
-    : 0;
-
-  // One row for the scroll indicator, reserved whenever there are items above.
-  const indicatorH = 1;
-  const historyH = Math.max(4, chatHeight - liveH - indicatorH);
-
-  const { visible, linesAbove, totalLines } = useMemo(
-    () => buildViewport(allItems, historyH, scrollOffset, cols),
-    [allItems, historyH, scrollOffset, cols],
-  );
-
-  const isScrolled = scrollOffset > 0;
-  const canScrollDown = isScrolled;
-
   return (
-    <Box flexDirection="column" flexGrow={1}>
+    <Box flexDirection="column">
+      {/* ── committed history → terminal scrollback (printed once) ───── */}
+      <Static items={staticEntries}>
+        {(entry) =>
+          entry.kind === 'header'
+            ? <Box key="__header__">{header}</Box>
+            : <RenderItemRow key={entry.id} item={entry} cols={cols} verbose={verbose} />
+        }
+      </Static>
 
-      {/* ── scroll-up indicator ─────────────────────────────────────── */}
-      {linesAbove > 0 ? (
-        <Box paddingLeft={2}>
-          <Text color={theme.muted}>
-            {'↑ '}
-            <Text color={theme.inkSoft}>{Math.round(linesAbove / 2)}</Text>
-            {' messages above · '}
-            <Text color={theme.accent}>PgUp</Text>
-          </Text>
-        </Box>
-      ) : (
-        // Always keep one blank indicator row so the layout height is stable.
-        <Box paddingLeft={2}><Text> </Text></Box>
-      )}
-
-      {/* ── visible history ─────────────────────────────────────────── */}
-      {visible.map(item => (
+      {/* ── live tail of the current turn ───────────────────────────── */}
+      {liveItems.map(item => (
         <RenderItemRow key={item.id} item={item} cols={cols} verbose={verbose} />
       ))}
 
-      {/* ── scroll-down indicator (shown when scrolled up) ──────────── */}
-      {canScrollDown ? (
-        <Box paddingLeft={2} marginTop={1}>
-          <Text color={theme.muted}>
-            {'↓ '}
-            {hasLive
-              ? <Text color={theme.accent}>turn in progress</Text>
-              : <Text color={theme.inkSoft}>latest messages</Text>}
-            {' · '}
-            <Text color={theme.accent}>PgDn</Text>
-          </Text>
-        </Box>
-      ) : null}
-
-      {/* ── live frame ──────────────────────────────────────────────── */}
+      {/* ── live streaming frame ────────────────────────────────────── */}
       {hasLive ? (
-        <Box
-          flexDirection="column"
-          borderStyle="single"
-          borderColor={theme.line}
-          paddingX={1}
-          marginTop={1}
-        >
-          {stepLabel ? (
-            <Box marginBottom={1}>
+        <Box flexDirection="row" marginTop={1}>
+          <Text color={streamText ? theme.accent2 : activeTool?.status === 'running' ? theme.warn : theme.muted}>▎ </Text>
+          <Box flexDirection="column" flexGrow={1}>
+            {stepLabel ? (
               <Text color={theme.muted}>{stepLabel}</Text>
-            </Box>
-          ) : null}
+            ) : null}
 
-          {activeTool ? (
-            <Box paddingLeft={1}>
-              <Text color={
-                activeTool.status === 'err' ? theme.danger
-                : activeTool.status === 'ok' ? theme.plus
-                : theme.accent
-              }>
-                {activeTool.status === 'running' ? '⟳' : activeTool.status === 'ok' ? '✓' : '✗'}{' '}
-              </Text>
-              <Text color={theme.ink} bold>{activeTool.name} </Text>
-              <Text color={theme.inkSoft}>{activeTool.args}</Text>
-            </Box>
-          ) : null}
-
-          {reasoning ? <ReasoningRow text={reasoning} verbose={verbose} /> : null}
-
-          {streamViewport ? (
-            <Box marginTop={1}>
-              <RoleGutter color={theme.inkSoft} />
-              <Box flexDirection="column" flexGrow={1}>
-                <RoleLabel label="mimo" color={theme.inkSoft} />
-                <MarkdownBlock text={streamViewport} color={theme.inkSoft} />
-                <Text color={theme.muted}>▍</Text>
+            {activeTool ? (
+              <Box>
+                <Text color={
+                  activeTool.status === 'err' ? theme.danger
+                  : activeTool.status === 'ok' ? theme.plus
+                  : theme.accent
+                }>
+                  {activeTool.status === 'running' ? '⟳' : activeTool.status === 'ok' ? '✓' : '✗'}{' '}
+                </Text>
+                <Text color={theme.ink} bold>{activeTool.name} </Text>
+                <Text color={theme.inkSoft}>{activeTool.args}</Text>
+                {activeTool.status === 'running'
+                  ? <ElapsedTimer startedAt={activeTool.startedAt} />
+                  : activeTool.meta
+                  ? <Text color={theme.muted}> · {activeTool.meta}</Text>
+                  : null}
               </Box>
-            </Box>
-          ) : null}
+            ) : null}
+
+            {reasoning ? <ReasoningRow text={reasoning} verbose={verbose} spinning /> : null}
+
+            {streamViewport ? (
+              <Box marginTop={(activeTool || reasoning) ? 1 : 0}>
+                <RoleGutter role="mimo" />
+                <Box flexDirection="column" flexGrow={1}>
+                  <RoleLabel role="mimo" />
+                  <MarkdownBlock text={streamViewport} color={theme.inkSoft} cols={cols} />
+                  <Box>
+                    <Text color={theme.muted}>▍</Text>
+                    <Text color={theme.muted} dimColor>  ~{Math.round(streamText.length / 4)}tok</Text>
+                  </Box>
+                </Box>
+              </Box>
+            ) : null}
+          </Box>
         </Box>
       ) : null}
-
     </Box>
   );
 });

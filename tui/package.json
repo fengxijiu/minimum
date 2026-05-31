@@ -9,7 +9,8 @@
   "scripts": {
     "dev": "tsx src/cli.tsx",
     "build": "tsc",
-    "start": "node dist/cli.js"
+    "start": "node dist/cli.js",
+    "verify": "tsc && node verify.mjs"
   },
   "engines": {
     "node": ">=18"

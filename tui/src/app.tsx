@@ -3,7 +3,6 @@ import { Box, useApp } from 'ink';
 import { TitleBar }       from './components/TitleBar.js';
 import { PlanStrip }      from './components/PlanStrip.js';
 import { PipelinePanel }  from './components/PipelinePanel.js';
-import { ContextRail }    from './components/ContextRail.js';
 import { ChatStream }     from './components/ChatStream.js';
 import { StatusBar }      from './components/StatusBar.js';
 import { WelcomeScreen }  from './components/WelcomeScreen.js';
@@ -47,6 +46,16 @@ function extractFileArg(args: string): string | null {
 
 const DEFAULT_ENGINE_INFO: EngineInfo = { mode: 'mock', reason: 'not-built' };
 
+// ── Loop-guard tunables ───────────────────────────────────────────────
+/** Abort turn when the same tool+args fires this many times in a row. */
+const STORM_THRESHOLD = 3;
+/** Cap on accumulated reasoning text (~2 k tokens) to keep state bounded. */
+const REASONING_CHAR_CAP = 8_000;
+/** Context-fill ratios at which a warning toast fires (each fires once per session). */
+const CTX_WARN_THRESHOLDS = [0.75, 0.90] as const;
+/** Errors whose message matches any of these strings are retried (up to 2 extra attempts). */
+const RETRYABLE_PATTERNS = ['timeout', '503', '529', 'rate limit', 'rate_limit', 'overload', 'econnreset', 'network error'];
+
 // ── Zone components — pure props, no state object ──────────────────────
 
 /** TitleBar zone — only re-renders on path/branch/mode changes. */
@@ -70,38 +79,30 @@ const PipelineZone = React.memo(function PipelineZone({ phases }: {
   return <PipelinePanel phases={phases} />;
 });
 
-/** ContextRail zone — only re-renders on files/edits/mode changes. */
-const ContextZone = React.memo(function ContextZone({ files, edits, mode }: {
-  files: FileEntry[]; edits: AppState['edits']; mode: Mode;
-}) {
-  return <ContextRail files={files} edits={edits} mode={mode} />;
-});
-
 /** ChatStream zone — only re-renders on messages/stepLabel/activeTool/streaming changes. */
 const ChatZone = React.memo(function ChatZone({
-  messages, path, engineInfo, stepLabel, activeTool, helpOpen,
-  streaming, reasoning, verbose, scrollOffset, chatHeight, cols,
+  messages, committedCount, stepLabel, activeTool,
+  streaming, reasoning, verbose, cols, maxRows, header,
 }: {
-  messages: Message[]; path: string; engineInfo: EngineInfo;
-  stepLabel: string; activeTool: AppState['activeTool']; helpOpen: boolean;
+  messages: Message[]; committedCount: number;
+  stepLabel: string; activeTool: AppState['activeTool'];
   streaming?: string | null; reasoning?: string | null; verbose?: boolean;
-  scrollOffset: number; chatHeight: number; cols: number;
+  cols: number; maxRows: number; header: React.ReactNode;
 }) {
-  const hasConversation = messages.some(m => m.type !== 'system');
-  const showWelcome = !hasConversation && !helpOpen;
-  return showWelcome
-    ? <WelcomeScreen path={path} engine={engineInfo} />
-    : <ChatStream
-        stepLabel={stepLabel}
-        messages={messages}
-        streaming={streaming}
-        reasoning={reasoning}
-        activeTool={activeTool}
-        verbose={verbose}
-        scrollOffset={scrollOffset}
-        chatHeight={chatHeight}
-        cols={cols}
-      />;
+  return (
+    <ChatStream
+      stepLabel={stepLabel}
+      messages={messages}
+      committedCount={committedCount}
+      streaming={streaming}
+      reasoning={reasoning}
+      activeTool={activeTool}
+      verbose={verbose}
+      cols={cols}
+      maxRows={maxRows}
+      header={header}
+    />
+  );
 });
 
 /** StatusBar zone — only re-renders on status/usage changes. */
@@ -133,32 +134,16 @@ export function App({
   engineInfo = DEFAULT_ENGINE_INFO,
 }: { runner?: Runner; pipelineRunner?: Runner; engineInfo?: EngineInfo } = {}) {
   const { exit } = useApp();
-  // ── Terminal dimensions — updated on resize ───────────────────────
-  const [termRows, setTermRows] = useState(() => process.stdout.rows ?? 40);
+  // ── Terminal size — width drives text wrap, height caps the live frame ─
   const [termCols, setTermCols] = useState(() => process.stdout.columns ?? 80);
+  const [termRows, setTermRows] = useState(() => process.stdout.rows ?? 40);
   useEffect(() => {
     const onResize = () => {
-      setTermRows(process.stdout.rows ?? 40);
       setTermCols(process.stdout.columns ?? 80);
+      setTermRows(process.stdout.rows ?? 40);
     };
     process.stdout.on('resize', onResize);
     return () => { process.stdout.off('resize', onResize); };
-  }, []);
-
-  // ── Mouse wheel scroll (SGR format: ESC [ < btn ; col ; row M) ───────
-  useEffect(() => {
-    const onData = (chunk: Buffer) => {
-      const s = chunk.toString('binary');
-      const re = /\x1b\[<(\d+);\d+;\d+M/g;
-      let m: RegExpMatchArray | null;
-      while ((m = re.exec(s)) !== null) {
-        const btn = parseInt(m[1]!, 10);
-        if (btn === 64) setScrollOffset(p => p + 3);       // wheel up
-        else if (btn === 65) setScrollOffset(p => Math.max(0, p - 3)); // wheel down
-      }
-    };
-    process.stdin.on('data', onData);
-    return () => { process.stdin.off('data', onData); };
   }, []);
 
   const [state, dispatch] = useAgentStore(() => createInitialState(process.cwd()));
@@ -172,16 +157,12 @@ export function App({
   const lastToolIdRef = useRef<string | null>(null);
   // Remembers the active tool's name + display args so a failure can attribute itself.
   const lastToolDescRef = useRef<string | null>(null);
+  // Per-turn storm map: "toolName\x00argsPrefix" → call count.
+  const stormMapRef = useRef(new Map<string, number>());
 
   // ── Per-turn telemetry (reset on turn.start, drained into turnmeta) ──
   const turnToolCountRef = useRef(0);
   const turnUsageRef = useRef<{ totalTokens: number; toolCalls: number; steps: number; totalCostUsd: number } | null>(null);
-
-  // ── Chat scroll state ────────────────────────────────────────────────
-  // 0 = pinned to bottom; positive = lines scrolled up through history.
-  const [scrollOffset, setScrollOffset] = useState(0);
-  const handleScrollUp   = useCallback((lines: number) => setScrollOffset(p => p + lines), []);
-  const handleScrollDown = useCallback((lines: number) => setScrollOffset(p => Math.max(0, p - lines)), []);
 
   // ── Streaming chunk buffer (adaptive ~120ms coalescing flush) ────────
   // Buffers both answer text and reasoning text, draining them together on an
@@ -191,11 +172,13 @@ export function App({
   const reasoningBufferRef = useRef('');
   const chunkFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chunkLastFlushRef = useRef(0);
+  const chunkCountRef = useRef(0);
   const flushChunks = useCallback(() => {
     if (chunkFlushTimerRef.current) {
       clearTimeout(chunkFlushTimerRef.current);
       chunkFlushTimerRef.current = null;
     }
+    chunkCountRef.current = 0;
     if (chunkBufferRef.current) {
       dispatch({ type: 'assistant.chunk', text: chunkBufferRef.current });
       chunkBufferRef.current = '';
@@ -209,7 +192,11 @@ export function App({
   const scheduleChunkFlush = useCallback(() => {
     if (chunkFlushTimerRef.current) return;
     const elapsed = Date.now() - chunkLastFlushRef.current;
-    const delay = Math.max(0, 120 - elapsed);
+    // Adaptive target delay: fast streams (many chunks per ms) → longer window to
+    // reduce redraws; slow streams → shorter window for responsiveness.
+    const rate = elapsed > 0 ? chunkCountRef.current / elapsed : 0; // chunks/ms
+    const target = rate > 0.08 ? 80 : rate > 0.03 ? 40 : 20;
+    const delay = Math.max(0, target - elapsed);
     chunkFlushTimerRef.current = setTimeout(flushChunks, delay);
   }, [flushChunks]);
   const startChunkFlusher = useCallback(() => {
@@ -251,6 +238,13 @@ export function App({
       case 'quit': exit(); return;
       case 'help': dispatch({ type: 'help.toggle' }); return;
       case 'note': dispatch({ type: 'system.push', text: o.note, tone: o.tone }); return;
+      case 'copy': {
+        // OSC 52: write base64-encoded text to the terminal clipboard.
+        const b64 = Buffer.from(o.text, 'utf-8').toString('base64');
+        process.stdout.write(`\x1b]52;c;${b64}\x07`);
+        dispatch({ type: 'toast.show', text: 'Copied last reply', tone: 'ok', ttlMs: 2000 });
+        return;
+      }
       case 'permission':
         dispatch({ type: 'permission.show', perm: o.perm });
         return;
@@ -350,8 +344,19 @@ export function App({
       startChunkFlusher();
       turnToolCountRef.current = 0;
       turnUsageRef.current = null;
+      stormMapRef.current.clear();
       if (isPipeline) dispatch({ type: 'pipeline.start' });
       try {
+        // ── Auto-retry wrapper (transient network / rate-limit errors) ──────
+        let lastErr: unknown = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          if (attempt > 0) {
+            const delayMs = 500 * Math.pow(2, attempt - 1);
+            dispatch({ type: 'system.push', text: `Network error — retrying in ${(delayMs / 1000).toFixed(1)}s (attempt ${attempt + 1}/3)…`, tone: 'warn' });
+            await new Promise<void>(r => setTimeout(r, delayMs));
+            stormMapRef.current.clear();
+          }
+          try {
         for await (const ev of activeRunner.send(trimmed)) {
           if (ev.kind === 'pipeline') {
             if (W_PHASES.has(ev.phase)) {
@@ -383,6 +388,17 @@ export function App({
               dispatch({ type: 'files.set', files: touch(stateRef.current.files, { name: fname, meta: ev.name }) });
             }
             turnToolCountRef.current += 1;
+            // ── Storm detection ────────────────────────────────────────────
+            const stormKey = `${ev.name}\x00${ev.args.slice(0, 120)}`;
+            const stormCount = (stormMapRef.current.get(stormKey) ?? 0) + 1;
+            stormMapRef.current.set(stormKey, stormCount);
+            if (stormCount >= STORM_THRESHOLD) {
+              dispatch({ type: 'error.push', title: `Loop detected — turn aborted`, lines: [
+                `${ev.name} called ${stormCount}× with identical args.`,
+                'The model may be stuck in a loop. Try rephrasing your request.',
+              ], hint: '/clear to reset · u to undo last edit' });
+              break;
+            }
             const toolId = tid();
             const displayArgs = summarizeTool(ev.name, ev.args);
             lastToolIdRef.current = toolId;
@@ -414,6 +430,10 @@ export function App({
           }
           if (ev.kind === 'streaming_reasoning') {
             reasoningBufferRef.current += ev.text;
+            // Cap accumulated reasoning to keep the live region bounded.
+            if (reasoningBufferRef.current.length > REASONING_CHAR_CAP) {
+              reasoningBufferRef.current = reasoningBufferRef.current.slice(-REASONING_CHAR_CAP);
+            }
             scheduleChunkFlush();
             continue;
           }
@@ -445,17 +465,44 @@ export function App({
           }
           if (ev.kind === 'streaming') {
             chunkBufferRef.current += ev.text;
-            scheduleChunkFlush();
+            chunkCountRef.current++;
+            if (chunkCountRef.current >= 8) {
+              flushChunks();
+            } else {
+              scheduleChunkFlush();
+            }
             continue;
           }
           const msgs = uiEventToMessages(ev);
           for (const msg of msgs) {
             if (msg.type === 'system') dispatch({ type: 'system.push', text: msg.text, tone: msg.tone });
-            else if (msg.type === 'assistant') dispatch({ type: 'assistant.final', text: msg.text });
+            else if (msg.type === 'assistant') {
+              // The final event carries the complete text, so any chunks still
+              // buffered are superseded. Drop them (and cancel the pending
+              // flush) so they can't resurrect a stray streaming frame after
+              // the message is committed.
+              if (chunkFlushTimerRef.current) {
+                clearTimeout(chunkFlushTimerRef.current);
+                chunkFlushTimerRef.current = null;
+              }
+              chunkBufferRef.current = '';
+              dispatch({ type: 'assistant.final', text: msg.text });
+            }
             else if (msg.type === 'error') dispatch({ type: 'error.push', title: msg.error.title, lines: msg.error.lines });
             else if (msg.type === 'tool') dispatch({ type: 'tool.start', id: msg.id, name: msg.tool.kind, args: msg.tool.args });
           }
         }
+            lastErr = null;
+            break; // success — exit retry loop
+          } catch (err: unknown) {
+            const msg = String((err as any)?.message ?? err).toLowerCase();
+            const retryable = RETRYABLE_PATTERNS.some(p => msg.includes(p));
+            if (retryable && attempt < 2) { lastErr = err; continue; }
+            lastErr = err;
+            break;
+          }
+        } // end retry loop
+        if (lastErr) throw lastErr;
       } catch (err: any) {
         dispatch({ type: 'error.push', title: 'runner error', lines: [String(err?.message ?? err)] });
       } finally {
@@ -505,7 +552,6 @@ export function App({
     const trimmed = text.trim();
     if (!trimmed) return;
     if (st.pending) dispatch({ type: 'pending.clear' });
-    setScrollOffset(0); // jump to bottom on new submit
 
     if (st.mode === 'orchestrate') {
       if (!pipelineRunner) {
@@ -536,6 +582,7 @@ export function App({
   const sFiles = useSlice(state, s => s.files);
   const sEdits = useSlice(state, s => s.edits);
   const sMessages  = useSlice(state, s => s.messages);
+  const sCommittedCount = useSlice(state, s => s.committedCount);
   const sHelpOpen  = useSlice(state, s => s.helpOpen);
   const sStepLabel = useSlice(state, s => s.currentStepLabel);
   const sActiveTool = useSlice(state, s => s.activeTool);
@@ -555,17 +602,50 @@ export function App({
     [sMessages],
   );
 
-  // ── Chat area height / width estimates (for virtual scroll) ─────────
-  // These estimates tell ChatStream how many lines the viewport has.
-  // Exact value doesn't matter — a few rows off is fine.
-  // PlanStrip: 0 when empty · 2 (header+steps-row) when 1-4 steps · 1 compact when >4
-  const planH = sPlanSteps.length === 0 ? 0 : sPlanSteps.length > 4 ? 1 : 2;
-  const pipeH = sPipeline && sPipeline.length > 0 ? 4 : 0;
-  const toastH = sToasts.length > 0 ? 1 : 0;
-  // overhead = titlebar(1) + plan + pipe + statusbar(1) + prompt(1) + toast + safety(1)
-  const chatH  = Math.max(8, termRows - 1 - planH - pipeH - 1 - 1 - toastH - 1);
-  // ContextRail is exactly 28 cols wide (fixed); leave 2 cols right margin
-  const chatCols = Math.max(40, termCols - 30);
+  // ── Keep the live (repainting) region minimal ───────────────────────
+  // Continuously commit the longest *settled* prefix of messages into the
+  // <Static> scrollback — even mid-turn. The repainting region then only
+  // ever holds the in-flight tail (a running tool + the streaming frame),
+  // so its height stays far below the terminal height and Ink never falls
+  // back to clearing + reprinting the whole screen (the flicker path).
+  //
+  // A message is settled unless it's a tool whose tool.end hasn't fired
+  // yet (status undefined). We stop at the first such tool so a still
+  // mutating row is never frozen into Static (tool.end mutates by id). The
+  // streaming assistant text lives in `streaming`, not in messages, so it
+  // never blocks the prefix.
+  const settledCount = useMemo(() => {
+    let n = 0;
+    for (; n < sMessages.length; n++) {
+      const m = sMessages[n]!;
+      if (m.type === 'tool' && m.tool.status === undefined) break;
+    }
+    return n;
+  }, [sMessages]);
+  useEffect(() => {
+    if (settledCount > sCommittedCount) {
+      dispatch({ type: 'messages.commit', count: settledCount });
+    }
+  }, [settledCount, sCommittedCount, dispatch]);
+
+  // ── Context-window pressure warnings ───────────────────────────────
+  // Fires a toast at each threshold once per session so the user knows
+  // to consider /clear before the window fills and costs spike.
+  const ctxWarnedRef = useRef(new Set<number>());
+  useEffect(() => {
+    if (!sCtxMax || !sCtxUsed) return;
+    const ratio = sCtxUsed / sCtxMax;
+    for (const t of CTX_WARN_THRESHOLDS) {
+      if (ratio >= t && !ctxWarnedRef.current.has(t)) {
+        ctxWarnedRef.current.add(t);
+        dispatch({ type: 'toast.show', text: `Context ${Math.round(t * 100)}% full — /clear to reset`, tone: 'warn', ttlMs: 8000 });
+      }
+    }
+  }, [sCtxUsed, sCtxMax, dispatch]);
+
+  // ── Text-wrap width for dividers / turn-meta rules ──────────────────
+  // No sidebar any more: the chat uses (nearly) the full terminal width.
+  const chatCols = Math.max(40, termCols - 2);
 
   const titleMode =
     sPending === 'permission' ? 'agent · paused'
@@ -577,61 +657,64 @@ export function App({
     : sMode === 'orchestrate' ? 'orchestrate'
     : sMode === 'agent' ? 'agent' : 'mimo';
 
-  // ── Render: zone-based layout ───────────────────────────────────────
+  // ── Render: Claude Code style inline conversation flow ──────────────
+  // The conversation (ChatZone) owns the terminal scrollback; the plan,
+  // pipeline, toast, input and status bar form the live frame anchored at
+  // the bottom of the terminal and repainted in place.
   return (
-    <Box flexDirection="column" height={termRows}>
-      <TitleZone path={sPath} branch={sBranch} mode={titleMode} />
+    <Box flexDirection="column">
+      <ChatZone
+        messages={sMessages}
+        committedCount={sCommittedCount}
+        stepLabel={sStepLabel}
+        activeTool={sActiveTool}
+        streaming={sStreaming}
+        reasoning={sReasoning}
+        verbose={sVerbose}
+        cols={chatCols}
+        maxRows={termRows}
+        header={
+          <Box flexDirection="column">
+            <TitleZone path={sPath} branch={sBranch} mode={titleMode} />
+            {!sHasMessages && <WelcomeScreen path={sPath} engine={engineInfo} />}
+          </Box>
+        }
+      />
+
       <PlanZone title={sPlanTitle} steps={sPlanSteps} />
       <PipelineZone phases={sPipeline} />
-      <Box flexDirection="row" flexGrow={1}>
-        <ContextZone files={sFiles} edits={sEdits} mode={sMode} />
-        <Box flexDirection="column" flexGrow={1}>
-          <ChatZone
-            messages={sMessages}
-            path={sPath}
-            engineInfo={engineInfo}
-            stepLabel={sStepLabel}
-            activeTool={sActiveTool}
-            helpOpen={sHelpOpen}
-            streaming={sStreaming}
-            reasoning={sReasoning}
-            verbose={sVerbose}
-            scrollOffset={scrollOffset}
-            chatHeight={chatH}
-            cols={chatCols}
-          />
 
-          <ToastBar toasts={sToasts} onDismiss={handleToastDismiss} />
+      <ToastBar toasts={sToasts} onDismiss={handleToastDismiss} />
 
-          <InputArea
-            files={sFiles}
-            helpOpen={sHelpOpen}
-            pending={sPending}
-            hasMessages={sHasMessages}
-            mode={sMode}
-            editMode={sEditMode}
-            verbose={sVerbose}
-            hasEdits={sHasEdits}
-            onSubmit={handleSubmit}
-            onPermAllow={allowPermission}
-            onPermAlwaysAllow={allowPermissionAlways}
-            onPermDeny={dismissPending}
-            onApplyFix={applyFix}
-            dispatch={dispatch}
-            cmdCtx={cmdCtx}
-            chatHeight={chatH}
-            onScrollUp={handleScrollUp}
-            onScrollDown={handleScrollDown}
-          />
-        </Box>
-      </Box>
+      <InputArea
+        files={sFiles}
+        helpOpen={sHelpOpen}
+        pending={sPending}
+        hasMessages={sHasMessages}
+        mode={sMode}
+        editMode={sEditMode}
+        verbose={sVerbose}
+        hasEdits={sHasEdits}
+        onSubmit={handleSubmit}
+        onPermAllow={allowPermission}
+        onPermAlwaysAllow={allowPermissionAlways}
+        onPermDeny={dismissPending}
+        onApplyFix={applyFix}
+        dispatch={dispatch}
+        cmdCtx={cmdCtx}
+      />
+
       <StatusZone
         statusState={statusState}
         approvalMode={sApprovalMode}
         editMode={sEditMode}
         ctxUsed={sCtxUsed}
         ctxMax={sCtxMax}
-        hint={`${sEdits.length} staged · ${sBranch}`}
+        hint={[
+          sMessages.length > 0 && `${sMessages.length}msg`,
+          sEdits.length > 0 && `${sEdits.length} staged`,
+          sBranch,
+        ].filter(Boolean).join(' · ')}
         usage={sUsage}
         mcpLoading={sMcpLoading}
       />

@@ -4,36 +4,67 @@ import { render } from 'ink';
 import { App } from './app.js';
 import { createEngineRunner } from './engine.js';
 
-// ── Alternate screen + mouse tracking ────────────────────────────────
-process.stdout.write('\x1b[?1049h'); // alternate screen
-process.stdout.write('\x1b[?1000h'); // mouse button/wheel tracking
-process.stdout.write('\x1b[?1006h'); // SGR extended mouse (large coords)
+// ── Inline (non-fullscreen) rendering ────────────────────────────────
+// Claude Code style: no alternate screen and no mouse capture, so the
+// terminal's own scrollback owns the conversation history. Completed
+// messages are printed once (via <Static>) and scroll away naturally;
+// only the live turn + input box are repainted in place at the bottom.
 
-// ── Synchronized output (DEC mode 2026) ──────────────────────────────
-// Wraps each stdout.write in a BSU/ESU pair so the terminal renders frames
-// atomically — eliminates partial-repaint flicker on every keypress.
-// Terminals that don't support mode 2026 silently ignore the sequences.
+// ── Buffered + diffed synchronized output ────────────────────────────
+// A single Ink render fires several stdout writes — log.clear(), the
+// <Static> chunk, the dynamic frame, plus cli-cursor hide/show. Writing
+// each one immediately (and wrapping each in its own synchronized-update
+// pair) tears one logical frame across several terminal repaints.
+//
+// Instead we BUFFER every write that lands in the same tick and emit them
+// as ONE frame wrapped in a single BSU/ESU (DEC mode 2026) pair, so the
+// terminal swaps the whole frame in atomically — no partial-repaint
+// flicker. We also DIFF against the last emitted frame and drop it when
+// nothing changed, avoiding redundant repaints. Terminals that don't
+// support mode 2026 ignore the sequences and still get correct output.
 const _origWrite = process.stdout.write.bind(process.stdout);
-(process.stdout as any).write = (chunk: any, enc?: any, cb?: any): boolean => {
-  _origWrite('\x1b[?2026h'); // begin synchronized update
-  const r = _origWrite(chunk, enc, cb);
-  _origWrite('\x1b[?2026l'); // end synchronized update
-  return r;
+
+let pending: string[] = [];          // writes accumulated during this tick
+let scheduled = false;               // is a flush queued?
+let lastFrame: string | null = null; // last frame actually emitted (diff guard)
+
+const emit = (frame: string): void => {
+  if (frame === '') return;          // diff: nothing buffered
+  if (frame === lastFrame) return;   // diff: identical to last frame → skip
+  lastFrame = frame;
+  // One synchronized-update pair around the entire batched frame.
+  _origWrite('\x1b[?2026h' + frame + '\x1b[?2026l');
 };
 
-let _altRestored = false;
-const restoreAlt = () => {
-  if (_altRestored) return;
-  _altRestored = true;
-  process.stdout.write('\x1b[?1006l'); // disable SGR mouse
-  process.stdout.write('\x1b[?1000l'); // disable mouse tracking
-  process.stdout.write('\x1b[?1049l'); // exit alternate screen
+const flush = (): void => {
+  scheduled = false;
+  if (pending.length === 0) return;
+  const frame = pending.join('');
+  pending = [];
+  emit(frame);
 };
-process.on('exit', restoreAlt);
-process.on('SIGINT', () => { restoreAlt(); process.exit(0); });
-process.on('SIGTERM', () => { restoreAlt(); process.exit(0); });
+
+(process.stdout as any).write = (chunk: any, enc?: any, cb?: any): boolean => {
+  const text = typeof chunk === 'string'
+    ? chunk
+    : Buffer.from(chunk).toString(typeof enc === 'string' ? (enc as BufferEncoding) : 'utf8');
+  pending.push(text);
+  if (!scheduled) {
+    scheduled = true;
+    setImmediate(flush);
+  }
+  // Honour the write callback contract (chunk[, encoding][, callback]).
+  const done = typeof enc === 'function' ? enc : cb;
+  if (typeof done === 'function') done();
+  return true;
+};
+
+// Flush any buffered frame synchronously on exit so the final paint —
+// including cli-cursor's "show cursor" sequence — is never dropped.
+const flushSync = (): void => { if (pending.length) flush(); };
+process.on('exit', flushSync);
 
 const { runner, pipelineRunner, info } = await createEngineRunner(process.cwd());
 const { waitUntilExit } = render(<App runner={runner} pipelineRunner={pipelineRunner} engineInfo={info} />);
 await waitUntilExit();
-restoreAlt();
+flushSync();

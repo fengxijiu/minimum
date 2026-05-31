@@ -131,15 +131,29 @@ export function describePermissionArgs(rawArgs: Record<string, unknown>): string
 /** Build a brief result summary for display in tool meta. */
 export function summarizeToolResult(ok: boolean, content: string): string {
   if (!ok) return '';
-  const lines = content.split('\n').filter(l => l.trim() !== '');
+  const trimmed = content.trim();
+  if (!trimmed) return '✓';
+  const lines = trimmed.split('\n').filter(l => l.trim() !== '');
   if (lines.length === 0) return '✓';
+  // Single-line result — show verbatim (truncated).
   if (lines.length === 1) return lines[0]!.slice(0, 80);
+  // Diff output — count +/- lines.
   const added   = lines.filter(l => l.startsWith('+')).length;
   const removed = lines.filter(l => l.startsWith('-')).length;
   if (added > 0 || removed > 0) return `+${added} −${removed}`;
+  // Exit code.
   const exitM = content.match(/exit\s+(\d+)/i);
   if (exitM) return `exit ${exitM[1]}`;
-  return `${lines.length} ln`;
+  // JSON object — surface top-level keys so the user knows what was returned.
+  if (trimmed.startsWith('{')) {
+    try {
+      const keys = Object.keys(JSON.parse(trimmed)).slice(0, 4);
+      if (keys.length) return `{${keys.join(', ')}}`;
+    } catch { /* not JSON */ }
+  }
+  // Multi-line plain text — first meaningful line + overflow count.
+  const first = lines[0]!.trim().slice(0, 60);
+  return `${first}  +${lines.length - 1}`;
 }
 
 /** Translate one normalized engine event into chat messages. */

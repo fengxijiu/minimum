@@ -31,7 +31,7 @@ export class ContextManager implements IContextManager {
 		this.messageFolder = new MessageFolder();
 		this.summaryGenerator = new SummaryGenerator();
 
-		this.foldThreshold = options?.foldThreshold ?? 0.7;
+		this.foldThreshold = options?.foldThreshold ?? 0.8;
 		this.aggressiveThreshold = options?.aggressiveThreshold ?? 0.75;
 		this.tailFraction = options?.tailFraction ?? 0.25;
 	}
@@ -112,13 +112,10 @@ export class ContextManager implements IContextManager {
 	}
 
 	countTokens(messages: ChatMessage[]): number {
-		return countMessagesTokens(
-			messages.map((m) => ({
-				role: m.role,
-				content: m.content,
-				tool_calls: m.tool_calls,
-			})),
-		);
+		// 直接透传，不重建对象：
+		// (1) 保留 reasoning_content —— MiMo thinking 每轮回传，漏算会让折叠触发偏晚；
+		// (2) 保持消息对象身份不变，命中 countMessagesTokens 的 WeakMap memo。
+		return countMessagesTokens(messages);
 	}
 
 	shouldFold(currentTokens: number, maxTokens: number): boolean {
