@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef, useMemo, useEffect } from 'react';
-import { useInput, useApp } from 'ink';
+import { Box, Text, useInput, useApp } from 'ink';
 import { CommandPalette } from './CommandPalette.js';
 import { FilePicker } from './FilePicker.js';
 import { HelpOverlay } from './HelpOverlay.js';
@@ -8,8 +8,40 @@ import { filterCommands, filterFiles, type CommandContext, type CmdMatch, type F
 import { loadHistory, appendHistory } from '../inputHistory.js';
 import type { FileEntry, PendingState, Mode, EditMode } from '../types.js';
 import type { Dispatch } from '../state/store.js';
+import { theme } from '../theme.js';
 
 type Overlay = 'none' | 'cmd' | 'file';
+
+const PERM_OPTIONS = [
+  { label: 'Allow once', key: '⏎ / y', tone: 'ok' },
+  { label: 'Always allow', key: 'a', tone: 'warn' },
+  { label: 'Deny', key: 'n', tone: 'danger' },
+] as const;
+
+function PermissionChoiceBar({ selected }: { selected: number }) {
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor={theme.warn} paddingX={1}>
+      <Box justifyContent="space-between">
+        <Text color={theme.warn} bold>permission required</Text>
+        <Text color={theme.muted}>←/→ select · ⏎ confirm</Text>
+      </Box>
+      <Box>
+        {PERM_OPTIONS.map((opt, i) => {
+          const active = i === selected;
+          const color = opt.tone === 'danger' ? theme.danger : opt.tone === 'warn' ? theme.warn : theme.accent;
+          return (
+            <Box key={opt.label} marginRight={1}>
+              <Text backgroundColor={active ? color : undefined} color={active ? theme.bg : color} bold={active}>
+                {' '}{active ? '❯ ' : ''}{opt.label}{' '}
+              </Text>
+              <Text color={theme.muted}>{opt.key}</Text>
+            </Box>
+          );
+        })}
+      </Box>
+    </Box>
+  );
+}
 
 export interface InputAreaProps {
   files: FileEntry[];
@@ -210,8 +242,11 @@ export const InputArea = React.memo(function InputArea({
     }
 
     if (pending === 'permission' && !inputRef.current) {
-      if (key.leftArrow)  { setPermSel(s => (s - 1 + 3) % 3); return; }
-      if (key.rightArrow) { setPermSel(s => (s + 1) % 3); return; }
+      if (input === 'y') { onPermAllow(); return; }
+      if (input === 'a') { onPermAlwaysAllow(); return; }
+      if (input === 'n') { onPermDeny('Permission denied.'); return; }
+      if (key.leftArrow)  { setPermSel(s => (s - 1 + PERM_OPTIONS.length) % PERM_OPTIONS.length); return; }
+      if (key.rightArrow) { setPermSel(s => (s + 1) % PERM_OPTIONS.length); return; }
     }
 
     if (key.escape) {
@@ -243,11 +278,8 @@ export const InputArea = React.memo(function InputArea({
     }
   });
 
-  const PERM_OPTS = ['allow once', 'always', 'deny'] as const;
-  const permPlaceholder = PERM_OPTS.map((o, i) => i === permSel ? `[${o}]` : o).join(' | ') + '  ← →  ⏎';
-
   const placeholder =
-    pending === 'permission' ? permPlaceholder
+    pending === 'permission' ? 'choose a permission action below…'
     : pending === 'error'    ? 'redirect, or ⏎ to accept the fix'
     : overlay === 'cmd'      ? 'filter commands…'
     : overlay === 'file'     ? 'filter files…'
@@ -260,6 +292,7 @@ export const InputArea = React.memo(function InputArea({
       {helpOpen ? <HelpOverlay /> : null}
       {!helpOpen && overlay === 'cmd' ? <CommandPalette items={cmdItems} selected={clampedSel} /> : null}
       {!helpOpen && overlay === 'file' ? <FilePicker items={fileItems} selected={clampedSel} /> : null}
+      {!helpOpen && pending === 'permission' && !inputValue ? <PermissionChoiceBar selected={permSel} /> : null}
       <Prompt
         value={inputValue}
         onChange={handleChange}
