@@ -46,6 +46,16 @@ function extractFileArg(args: string): string | null {
 
 const DEFAULT_ENGINE_INFO: EngineInfo = { mode: 'mock', reason: 'not-built' };
 
+// ── Loop-guard tunables ───────────────────────────────────────────────
+/** Abort turn when the same tool+args fires this many times in a row. */
+const STORM_THRESHOLD = 3;
+/** Cap on accumulated reasoning text (~2 k tokens) to keep state bounded. */
+const REASONING_CHAR_CAP = 8_000;
+/** Context-fill ratios at which a warning toast fires (each fires once per session). */
+const CTX_WARN_THRESHOLDS = [0.75, 0.90] as const;
+/** Errors whose message matches any of these strings are retried (up to 2 extra attempts). */
+const RETRYABLE_PATTERNS = ['timeout', '503', '529', 'rate limit', 'rate_limit', 'overload', 'econnreset', 'network error'];
+
 // ── Zone components — pure props, no state object ──────────────────────
 
 /** TitleBar zone — only re-renders on path/branch/mode changes. */
@@ -147,6 +157,8 @@ export function App({
   const lastToolIdRef = useRef<string | null>(null);
   // Remembers the active tool's name + display args so a failure can attribute itself.
   const lastToolDescRef = useRef<string | null>(null);
+  // Per-turn storm map: "toolName\x00argsPrefix" → call count.
+  const stormMapRef = useRef(new Map<string, number>());
 
   // ── Per-turn telemetry (reset on turn.start, drained into turnmeta) ──
   const turnToolCountRef = useRef(0);
@@ -180,7 +192,11 @@ export function App({
   const scheduleChunkFlush = useCallback(() => {
     if (chunkFlushTimerRef.current) return;
     const elapsed = Date.now() - chunkLastFlushRef.current;
-    const delay = Math.max(0, 40 - elapsed);
+    // Adaptive target delay: fast streams (many chunks per ms) → longer window to
+    // reduce redraws; slow streams → shorter window for responsiveness.
+    const rate = elapsed > 0 ? chunkCountRef.current / elapsed : 0; // chunks/ms
+    const target = rate > 0.08 ? 80 : rate > 0.03 ? 40 : 20;
+    const delay = Math.max(0, target - elapsed);
     chunkFlushTimerRef.current = setTimeout(flushChunks, delay);
   }, [flushChunks]);
   const startChunkFlusher = useCallback(() => {
@@ -328,8 +344,19 @@ export function App({
       startChunkFlusher();
       turnToolCountRef.current = 0;
       turnUsageRef.current = null;
+      stormMapRef.current.clear();
       if (isPipeline) dispatch({ type: 'pipeline.start' });
       try {
+        // ── Auto-retry wrapper (transient network / rate-limit errors) ──────
+        let lastErr: unknown = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          if (attempt > 0) {
+            const delayMs = 500 * Math.pow(2, attempt - 1);
+            dispatch({ type: 'system.push', text: `Network error — retrying in ${(delayMs / 1000).toFixed(1)}s (attempt ${attempt + 1}/3)…`, tone: 'warn' });
+            await new Promise<void>(r => setTimeout(r, delayMs));
+            stormMapRef.current.clear();
+          }
+          try {
         for await (const ev of activeRunner.send(trimmed)) {
           if (ev.kind === 'pipeline') {
             if (W_PHASES.has(ev.phase)) {
@@ -361,6 +388,17 @@ export function App({
               dispatch({ type: 'files.set', files: touch(stateRef.current.files, { name: fname, meta: ev.name }) });
             }
             turnToolCountRef.current += 1;
+            // ── Storm detection ────────────────────────────────────────────
+            const stormKey = `${ev.name}\x00${ev.args.slice(0, 120)}`;
+            const stormCount = (stormMapRef.current.get(stormKey) ?? 0) + 1;
+            stormMapRef.current.set(stormKey, stormCount);
+            if (stormCount >= STORM_THRESHOLD) {
+              dispatch({ type: 'error.push', title: `Loop detected — turn aborted`, lines: [
+                `${ev.name} called ${stormCount}× with identical args.`,
+                'The model may be stuck in a loop. Try rephrasing your request.',
+              ], hint: '/clear to reset · u to undo last edit' });
+              break;
+            }
             const toolId = tid();
             const displayArgs = summarizeTool(ev.name, ev.args);
             lastToolIdRef.current = toolId;
@@ -392,6 +430,10 @@ export function App({
           }
           if (ev.kind === 'streaming_reasoning') {
             reasoningBufferRef.current += ev.text;
+            // Cap accumulated reasoning to keep the live region bounded.
+            if (reasoningBufferRef.current.length > REASONING_CHAR_CAP) {
+              reasoningBufferRef.current = reasoningBufferRef.current.slice(-REASONING_CHAR_CAP);
+            }
             scheduleChunkFlush();
             continue;
           }
@@ -450,6 +492,17 @@ export function App({
             else if (msg.type === 'tool') dispatch({ type: 'tool.start', id: msg.id, name: msg.tool.kind, args: msg.tool.args });
           }
         }
+            lastErr = null;
+            break; // success — exit retry loop
+          } catch (err: unknown) {
+            const msg = String((err as any)?.message ?? err).toLowerCase();
+            const retryable = RETRYABLE_PATTERNS.some(p => msg.includes(p));
+            if (retryable && attempt < 2) { lastErr = err; continue; }
+            lastErr = err;
+            break;
+          }
+        } // end retry loop
+        if (lastErr) throw lastErr;
       } catch (err: any) {
         dispatch({ type: 'error.push', title: 'runner error', lines: [String(err?.message ?? err)] });
       } finally {
@@ -574,6 +627,21 @@ export function App({
       dispatch({ type: 'messages.commit', count: settledCount });
     }
   }, [settledCount, sCommittedCount, dispatch]);
+
+  // ── Context-window pressure warnings ───────────────────────────────
+  // Fires a toast at each threshold once per session so the user knows
+  // to consider /clear before the window fills and costs spike.
+  const ctxWarnedRef = useRef(new Set<number>());
+  useEffect(() => {
+    if (!sCtxMax || !sCtxUsed) return;
+    const ratio = sCtxUsed / sCtxMax;
+    for (const t of CTX_WARN_THRESHOLDS) {
+      if (ratio >= t && !ctxWarnedRef.current.has(t)) {
+        ctxWarnedRef.current.add(t);
+        dispatch({ type: 'toast.show', text: `Context ${Math.round(t * 100)}% full — /clear to reset`, tone: 'warn', ttlMs: 8000 });
+      }
+    }
+  }, [sCtxUsed, sCtxMax, dispatch]);
 
   // ── Text-wrap width for dividers / turn-meta rules ──────────────────
   // No sidebar any more: the chat uses (nearly) the full terminal width.
