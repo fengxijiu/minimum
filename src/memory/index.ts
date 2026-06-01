@@ -13,3 +13,7 @@ export {
 	VolatileScratch,
 } from "./RuntimeMemory.js";
 export type { LogEntry } from "./RuntimeMemory.js";
+
+export { MemoryWriter, decideMemory } from "./single/MemoryWriter.js";
+export type { MemoryWriterOptions, MemoryWriteResult, WriteMemoryOptions } from "./single/MemoryWriter.js";
+export type { MemoryDecision } from "./governance/types.js";
