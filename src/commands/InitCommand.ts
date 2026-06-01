@@ -120,6 +120,16 @@ interface MinimumConfig {
 		memory: {
 			enabled: boolean;
 			path: string;
+			injection: {
+				maxTokens: number;
+			};
+			writeback: {
+				autoMergeProject: boolean;
+				autoMergeGlobal: boolean;
+			};
+			compaction: {
+				enabled: boolean;
+			};
 		};
 		skills: {
 			enabled: boolean;
@@ -469,6 +479,12 @@ export class InitCommand implements Command {
 				memory: {
 					enabled: enableMemory.toLowerCase() !== "n",
 					path: memoryPath,
+					injection: { maxTokens: 2500 },
+					writeback: {
+						autoMergeProject: true,
+						autoMergeGlobal: false,
+					},
+					compaction: { enabled: true },
 				},
 				skills: {
 					enabled: enableSkills.toLowerCase() !== "n",
@@ -536,6 +552,12 @@ export class InitCommand implements Command {
 				memory: {
 					enabled: opts.enableMemory !== false,
 					path: "~/.minimum/memory",
+					injection: { maxTokens: 2500 },
+					writeback: {
+						autoMergeProject: true,
+						autoMergeGlobal: false,
+					},
+					compaction: { enabled: true },
 				},
 				skills: { enabled: opts.enableSkills !== false, path: "./skills" },
 				optimization: {
@@ -586,6 +608,12 @@ export class InitCommand implements Command {
 				memory: {
 					enabled: true,
 					path: "~/.minimum/memory",
+					injection: { maxTokens: 2500 },
+					writeback: {
+						autoMergeProject: true,
+						autoMergeGlobal: false,
+					},
+					compaction: { enabled: true },
 				},
 				skills: {
 					enabled: true,
@@ -625,6 +653,20 @@ export class InitCommand implements Command {
 			approvalMode: config.minimum.approval.mode as MiMoConfig["approvalMode"],
 			validation: { enabled: opt.validation },
 			completeness: { enabled: opt.completeness },
+			memory: {
+				enabled: config.minimum.memory.enabled,
+				injection: {
+					maxTokens: config.minimum.memory.injection.maxTokens,
+				},
+				writeback: {
+					autoMergeProject:
+						config.minimum.memory.writeback.autoMergeProject,
+					autoMergeGlobal: config.minimum.memory.writeback.autoMergeGlobal,
+				},
+				compaction: {
+					enabled: config.minimum.memory.compaction.enabled,
+				},
+			},
 			context: {
 				foldThreshold: opt.context.foldThreshold,
 				aggressiveThreshold: opt.context.aggressiveThreshold,
