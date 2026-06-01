@@ -23,3 +23,6 @@ export {
 	type SingleAgentMemoryScope,
 	type SingleAgentMemoryScore,
 } from "./single/index.js";
+export { MemoryWriter, decideMemory } from "./single/MemoryWriter.js";
+export type { MemoryWriterOptions, MemoryWriteResult, WriteMemoryOptions } from "./single/MemoryWriter.js";
+export type { MemoryDecision } from "./governance/types.js";

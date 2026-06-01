@@ -64,11 +64,34 @@ export { SessionMemory } from "./memory/SessionMemory.js";
 export type { SessionData } from "./memory/SessionMemory.js";
 export { ProjectMemory } from "./memory/ProjectMemory.js";
 export type { ProjectMemoryEntry } from "./memory/ProjectMemory.js";
+export { MemoryWriter, decideMemory } from "./memory/single/MemoryWriter.js";
+export type { MemoryWriterOptions, MemoryWriteResult, WriteMemoryOptions } from "./memory/single/MemoryWriter.js";
+export type { MemoryDecision } from "./memory/governance/types.js";
 export {
 	AppendOnlyLog,
 	VolatileScratch,
 	RuntimeMemory,
 } from "./memory/RuntimeMemory.js";
+export {
+	SingleAgentMemoryManager,
+	MemoryRetriever,
+	MemoryResolver,
+	MemoryPreludeBuilder,
+	MemoryExtractor,
+	SingleAgentMemoryScorer,
+	MemoryWriter,
+	MemoryCompactor,
+} from "./memory/single/SingleAgentMemoryManager.js";
+export type {
+	SingleAgentMemoryManagerOptions,
+	MemoryManagerRequest,
+	MemoryScope,
+	MemoryCandidate,
+	ScoredMemory,
+	ExtractedMemory,
+	MemoryInjectionResult,
+	MemoryWritebackResult,
+} from "./memory/single/SingleAgentMemoryManager.js";
 
 // Commands system
 export { CommandRegistry, createDefaultRegistry } from "./commands/index.js";
