@@ -68,7 +68,16 @@ describe("renderMemoryReport", () => {
 	it("renders canonical and staging sections", () => {
 		const out = renderMemoryReport(
 			[{ key: "project", path: ".minimum/project.md", exists: true, bytes: 10 }],
-			[{ sourceTask: "T1", persona: "vision", scope: "ui", confidence: "medium", relatedFiles: [] }],
+			[
+				{
+					id: "T1.vision",
+					sourceTask: "T1",
+					persona: "vision",
+					scope: "ui",
+					confidence: "medium",
+					relatedFiles: [],
+				},
+			],
 		);
 		expect(out).toContain("Canonical memory:");
 		expect(out).toContain("project");
@@ -111,9 +120,13 @@ describe("MemoryCommand", () => {
 		await refreshMemoryIndex(dir);
 		const r = await new MemoryCommand().execute(["status"], ctx());
 		expect(r.success).toBe(true);
-		expect(r.output).toContain("Canonical memory:");
-		expect(r.output).toContain("Staging (1 candidate)");
-		expect(r.output).toContain("Index:");
+		expect(r.output).toContain("Memory status:");
+		expect(r.output).toContain("Project canonical:");
+		expect(r.output).toContain("Global canonical:");
+		expect(r.output).toContain("Staging: 1 candidate");
+		expect(r.output).toContain("Index entries:");
+		expect(r.output).toContain("Last compacted:");
+		expect(r.output).toContain("Injection budget:");
 	});
 
 	it("inspectMemoryIndex reports generated index stats", async () => {
@@ -126,7 +139,39 @@ describe("MemoryCommand", () => {
 	it("defaults to status with no args", async () => {
 		const r = await new MemoryCommand().execute([], ctx());
 		expect(r.success).toBe(true);
-		expect(r.output).toContain("Canonical memory:");
+		expect(r.output).toContain("Memory status:");
+	});
+
+	it("staging reports empty staging", async () => {
+		const r = await new MemoryCommand().execute(["staging"], ctx());
+		expect(r.success).toBe(true);
+		expect(r.output).toContain("Staging (0 candidates)");
+		expect(r.output).toContain("(empty)");
+	});
+
+	it("approves and rejects staged candidates by id", async () => {
+		await writeCandidate(
+			dir,
+			mkCandidate({ sourceTask: "T1", persona: "code_executor", body: "approved note" }),
+		);
+		await writeCandidate(
+			dir,
+			mkCandidate({ sourceTask: "T2", persona: "reviewer", body: "rejected note" }),
+		);
+
+		const approve = await new MemoryCommand().execute(["approve", "T1.code_executor"], ctx());
+		expect(approve.success).toBe(true);
+		expect(approve.output).toContain("Approved staged memory candidate T1.code_executor");
+		expect(
+			fs.readFileSync(path.join(dir, ".minimum", "project.md"), "utf-8"),
+		).toContain("approved note");
+
+		const reject = await new MemoryCommand().execute(["reject", "T2.reviewer"], ctx());
+		expect(reject.success).toBe(true);
+		expect(reject.output).toContain("Rejected staged memory candidate T2.reviewer");
+
+		const staging = await inspectStaging(dir);
+		expect(staging).toEqual([]);
 	});
 
 	it("rejects an unknown subcommand", async () => {
