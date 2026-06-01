@@ -1,5 +1,40 @@
 import type { AppState, ApprovalMode, Message, PlanStep, Permission, FileEntry } from './types.js';
 
+export interface SkillEntry {
+  name: string;
+  description: string;
+  tags: string[];
+  prompt: string;
+}
+
+/** Built-in skill catalog — each entry defines the pipeline prompt injected on `/skill run`. */
+export const SKILL_CATALOG: SkillEntry[] = [
+  {
+    name: 'code-review',
+    description: 'Review code for issues: completeness, correctness, error handling, and type safety',
+    tags: ['code', 'review', 'quality'],
+    prompt: 'Review the code in the current project for issues including completeness, correctness, error handling, and TypeScript type safety. Group findings by severity (error / warning / info) and suggest concrete fixes.',
+  },
+  {
+    name: 'refactor',
+    description: 'Suggest the most impactful refactoring improvements',
+    tags: ['code', 'refactor', 'improvement'],
+    prompt: 'Analyze the code in the current project and identify the most impactful refactoring opportunities. For each suggestion explain the benefit, the files involved, and provide a concrete before/after example.',
+  },
+  {
+    name: 'test-generator',
+    description: 'Generate unit tests following existing project patterns',
+    tags: ['testing', 'unit-test', 'automation'],
+    prompt: 'Generate comprehensive unit tests for the source files in this project. Follow the existing test framework and conventions you find. Cover the happy path, edge cases, and error paths for each exported function or class.',
+  },
+  {
+    name: 'documentation',
+    description: 'Generate clear documentation with signatures, params, and examples',
+    tags: ['docs', 'documentation', 'generation'],
+    prompt: 'Generate clear and concise documentation for the public API of this project. Include function/method signatures, parameter and return type descriptions, thrown errors, and a usage example for each exported symbol.',
+  },
+];
+
 export interface CommandContext {
   model?: string;
   tools?: string[];
@@ -49,7 +84,7 @@ export const COMMANDS: TuiCommand[] = [
   { name: 'status', desc: 'Show session status',            category: 'system' },
   { name: 'tools',  desc: 'List available tools',           category: 'system' },
   { name: 'model',  desc: 'Show the active model',          category: 'system' },
-  { name: 'skill',  desc: 'Manage skills',                  category: 'system', usage: '/skill [list|run]' },
+  { name: 'skill',  desc: 'Run built-in skills',             category: 'system', usage: '/skill [list|info <name>|run <name>|<name>]' },
   { name: 'config', desc: 'View configuration',             category: 'system', aliases: ['cfg'] },
   { name: 'init',   desc: 'Initialize .minimum/config.json for this project', category: 'system' },
   { name: 'help',   desc: 'Show keys & commands',           category: 'system', aliases: ['?'] },
@@ -361,8 +396,30 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
       return { kind: 'note', note: `Config — ${lines}` };
     }
 
-    case 'skill':
-      return { kind: 'note', note: 'Skills: type `/skill list` (none registered).' };
+    case 'skill': {
+      const sub = parts[1]?.toLowerCase();
+      if (!sub || sub === 'list') {
+        const lines = SKILL_CATALOG.map(s => `  ${s.name.padEnd(18)} ${s.description}`);
+        return { kind: 'note', note: `Available skills (${SKILL_CATALOG.length}):\n${lines.join('\n')}\n\nUsage: /skill run <name>` };
+      }
+      if (sub === 'info') {
+        const skillName = parts[2]?.toLowerCase();
+        const skill = SKILL_CATALOG.find(s => s.name === skillName);
+        if (!skill) {
+          const names = SKILL_CATALOG.map(s => s.name).join(', ');
+          return { kind: 'note', note: `Unknown skill: "${skillName}". Available: ${names}`, tone: 'warn' };
+        }
+        return { kind: 'note', note: `Skill: ${skill.name}\n${skill.description}\nTags: ${skill.tags.join(', ')}` };
+      }
+      // `/skill run <name>` or `/skill <name>` shorthand
+      const runName = (sub === 'run' ? parts[2] : sub)?.toLowerCase();
+      const skill = SKILL_CATALOG.find(s => s.name === runName);
+      if (!skill) {
+        const names = SKILL_CATALOG.map(s => s.name).join(', ');
+        return { kind: 'note', note: `Unknown skill: "${runName}". Available: ${names}`, tone: 'warn' };
+      }
+      return { kind: 'pipeline', text: skill.prompt };
+    }
 
     case 'sessions':
       return { kind: 'session.list' };
