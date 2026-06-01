@@ -1,12 +1,15 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { Message } from './types.js';
+import type { ChatHistoryMessage } from './engine.js';
 
 export interface TuiSession {
   id: string;
   name: string;
   projectPath: string;
   messages: Message[];
+  /** Engine ChatMessage[] for AI context restoration on /load. */
+  chatHistory?: ChatHistoryMessage[];
   createdAt: number;
   updatedAt: number;
 }

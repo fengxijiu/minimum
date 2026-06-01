@@ -300,6 +300,7 @@ export function App({
           name,
           projectPath: s.path,
           messages: s.messages,
+          chatHistory: runner.getHistory?.(),
           createdAt: sessionCreatedAtRef.current,
           updatedAt: Date.now(),
         }).then(() => {
@@ -325,8 +326,14 @@ export function App({
           }
           sessionIdRef.current = session.id;
           sessionCreatedAtRef.current = session.createdAt;
+          // Restore engine conversation history so the AI has full prior context.
+          if (session.chatHistory?.length) {
+            runner.loadHistory?.(session.chatHistory);
+          }
           dispatch({ type: 'session.restore', messages: session.messages, sessionName: session.name });
-          dispatch({ type: 'system.push', text: `Loaded session "${session.name}" (${session.messages.filter(m => m.type === 'user' || m.type === 'assistant').length} messages).`, tone: 'ok' });
+          const msgCount = session.messages.filter(m => m.type === 'user' || m.type === 'assistant').length;
+          const ctxNote = session.chatHistory?.length ? ` · AI context restored (${session.chatHistory.length} turns)` : '';
+          dispatch({ type: 'system.push', text: `Loaded "${session.name}" (${msgCount} messages${ctxNote}).`, tone: 'ok' });
         }).catch(() => {
           dispatch({ type: 'system.push', text: `Failed to load session "${name}".`, tone: 'warn' });
         });
@@ -704,6 +711,7 @@ export function App({
       name: s.sessionName ?? sessionIdRef.current,
       projectPath: s.path,
       messages: sMessages,
+      chatHistory: runner.getHistory?.(),
       createdAt: sessionCreatedAtRef.current,
       updatedAt: Date.now(),
     }).catch(() => {/* best-effort */});

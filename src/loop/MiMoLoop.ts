@@ -208,6 +208,11 @@ export class MiMoLoop {
 		this.snapshotManager = new SnapshotManager();
 	}
 
+	/** Seed the loop with a prior conversation history (e.g. after /load). */
+	loadHistory(messages: ChatMessage[]): void {
+		this.messages = messages.map(m => ({ ...m }));
+	}
+
 	/**
 	 * 主执行循环 — 参考 Reasonix 的 step()
 	 */
@@ -1150,7 +1155,7 @@ export class MiMoLoop {
 	}
 
 	getMessages(): ChatMessage[] {
-		return [...this.messages];
+		return this.getMessagesWithoutMemoryPrelude();
 	}
 
 	addSystemMessage(content: string): void {

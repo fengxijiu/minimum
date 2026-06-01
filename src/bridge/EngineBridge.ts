@@ -75,6 +75,8 @@ export function parsePlanFromTodoResult(content: string): UiPlanStep[] | null {
 
 export interface EngineLoop {
 	run(userInput: string): AsyncGenerator<LoopEvent>;
+	getMessages?(): import("../types/common.js").ChatMessage[];
+	loadHistory?(messages: import("../types/common.js").ChatMessage[]): void;
 }
 
 /** Translate a single engine event into zero or one UI events. */
@@ -170,6 +172,14 @@ export class EngineBridge {
 		opts?: { approvalManager?: ApprovalManager },
 	) {
 		opts?.approvalManager?.setPrompter(async (req) => this.askUser(req));
+	}
+
+	getHistory(): import("../types/common.js").ChatMessage[] {
+		return this.loop.getMessages?.() ?? [];
+	}
+
+	loadHistory(messages: import("../types/common.js").ChatMessage[]): void {
+		this.loop.loadHistory?.(messages);
 	}
 
 	/** Forward an approval decision from the frontend back into the engine. */
