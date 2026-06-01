@@ -1,5 +1,8 @@
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import { MemoryStore, type MemoryEntry } from "../MemoryStore.js";
 import { ProjectMemory, type ProjectMemoryEntry } from "../ProjectMemory.js";
+import { readMemoryIndex } from "../governance/MemoryIndex.js";
 import type { ChatMessage } from "../../types/common.js";
 import { estimateTokens, truncateToTokens } from "../../utils/token-counter.js";
 
@@ -62,12 +65,14 @@ export async function buildPrelude(
 	const tokenBudget = Math.max(0, request.tokenBudget || DEFAULT_TOKEN_BUDGET);
 	if (tokenBudget <= 0) return emptyResult();
 
-	const records = await loadRecords(request);
-	if (records.length === 0) return emptyResult();
-
+	const kvRecords = await loadRecords(request);
 	const query = buildQuery(request.userInput, request.messages);
 	const queryTerms = tokenize(query);
 	const now = Date.now();
+	const govRecords = await loadGovernanceRecords(request.workingDirectory, now);
+	const records = mergeRecords(kvRecords, govRecords);
+	if (records.length === 0) return emptyResult();
+
 	const ranked = records
 		.map((record) => rankRecord(record, queryTerms, now))
 		.filter(
@@ -314,4 +319,51 @@ function renderPrelude(records: RankedRecord[]): string {
 
 function emptyResult(): MemoryPreludeResult {
 	return { prelude: "", includedRecordIds: [], records: [] };
+}
+
+/** Load canonical + compressed governance records as unranked RankedRecord entries. */
+async function loadGovernanceRecords(workingDirectory: string, now: number): Promise<RankedRecord[]> {
+	try {
+		const index = await readMemoryIndex(workingDirectory);
+		if (!index) return [];
+		const out: RankedRecord[] = [];
+		for (const entry of index.entries) {
+			if (!entry.exists) continue;
+			if (entry.kind !== "canonical" && entry.kind !== "compressed") continue;
+			const abs = path.join(workingDirectory, entry.path);
+			let content = "";
+			try {
+				content = await fs.readFile(abs, "utf-8");
+			} catch {
+				continue;
+			}
+			const key = entry.key ?? entry.id ?? entry.path;
+			const value = content.trim().slice(0, 1000);
+			if (!value) continue;
+			const confidence = entry.tags.includes("high") ? 0.9 : entry.tags.includes("low") ? 0.3 : 0.65;
+			out.push({
+				id: `governance:${key}`,
+				layer: "project",
+				key,
+				value,
+				description: entry.headings[0],
+				confidence,
+				updatedAt: entry.mtimeMs || 0,
+				relevance: 0,
+				recentness: recentnessScore(entry.mtimeMs || 0, now),
+				layerPriority: 1,
+				score: 0,
+			});
+		}
+		return out;
+	} catch {
+		return [];
+	}
+}
+
+/** Merge KV and governance records; KV takes precedence on duplicate normalized keys. */
+function mergeRecords(kvRecords: RankedRecord[], govRecords: RankedRecord[]): RankedRecord[] {
+	const seen = new Set(kvRecords.map((r) => r.id));
+	const deduped = govRecords.filter((r) => !seen.has(r.id));
+	return [...kvRecords, ...deduped];
 }

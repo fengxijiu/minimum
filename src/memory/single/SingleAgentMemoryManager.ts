@@ -1,7 +1,9 @@
+import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { ChatMessage } from "../../types/common.js";
 import { MemoryStore, type MemoryEntry } from "../MemoryStore.js";
 import { ProjectMemory, type ProjectMemoryEntry } from "../ProjectMemory.js";
+import { readMemoryIndex } from "../governance/MemoryIndex.js";
 import type {
 	ISingleAgentMemoryManager,
 	MemoryInjectionRequest,
@@ -275,8 +277,13 @@ export class SingleAgentMemoryManager implements ISingleAgentMemoryManager {
 	async buildPrelude(request: MemoryInjectionRequest): Promise<MemoryInjectionResult> {
 		const input = request.userInput ??
 			request.messages.map((m) => typeof m.content === "string" ? m.content : "").join("\n");
-		const stores = await this.getStores(request.workingDirectory);
-		const candidates = await this.retriever.retrieve(stores);
+		const projectRoot = path.resolve(request.workingDirectory ?? this.options.projectRoot);
+		const stores = await this.getStores(projectRoot);
+		const [kvCandidates, govCandidates] = await Promise.all([
+			this.retriever.retrieve(stores),
+			retrieveGovernanceCandidates(projectRoot),
+		]);
+		const candidates = mergeMemoryCandidates(kvCandidates, govCandidates);
 		const entries = this.resolver.resolve(input, candidates, this.maxPreludeEntries);
 		const prelude = this.preludeBuilder.build(entries);
 		return { prelude };
@@ -377,4 +384,44 @@ function dedupeExtracted(entries: ExtractedMemory[]): ExtractedMemory[] {
 		seen.add(id);
 		return true;
 	});
+}
+
+/** Read canonical/compressed governance markdown entries as MemoryCandidate[]. */
+async function retrieveGovernanceCandidates(projectRoot: string): Promise<MemoryCandidate[]> {
+	try {
+		const index = await readMemoryIndex(projectRoot);
+		if (!index) return [];
+		const out: MemoryCandidate[] = [];
+		for (const entry of index.entries) {
+			if (!entry.exists) continue;
+			if (entry.kind !== "canonical" && entry.kind !== "compressed") continue;
+			const abs = path.join(projectRoot, entry.path);
+			let content = "";
+			try {
+				content = await fs.readFile(abs, "utf-8");
+			} catch {
+				continue;
+			}
+			const value = content.trim().slice(0, 600);
+			if (!value) continue;
+			const key = `governance:${entry.key ?? entry.id ?? entry.path}`;
+			out.push({
+				scope: "project",
+				key,
+				value,
+				description: entry.headings[0],
+				updatedAt: entry.mtimeMs || 0,
+				metadata: { source: "governance", kind: entry.kind },
+			});
+		}
+		return out;
+	} catch {
+		return [];
+	}
+}
+
+/** Merge KV and governance candidates; KV takes precedence on duplicate keys. */
+function mergeMemoryCandidates(kv: MemoryCandidate[], gov: MemoryCandidate[]): MemoryCandidate[] {
+	const seen = new Set(kv.map((c) => c.key));
+	return [...kv, ...gov.filter((c) => !seen.has(c.key))];
 }
