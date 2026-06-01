@@ -57,39 +57,6 @@ export {
 export { TodoWriteTool } from "./tools/todo/index.js";
 export type { TodoItem, TodoStatus } from "./tools/todo/index.js";
 
-// Memory system
-export { MemoryStore } from "./memory/MemoryStore.js";
-export type { MemoryEntry, MemoryStoreOptions } from "./memory/MemoryStore.js";
-export { SessionMemory } from "./memory/SessionMemory.js";
-export type { SessionData } from "./memory/SessionMemory.js";
-export { ProjectMemory } from "./memory/ProjectMemory.js";
-export type { ProjectMemoryEntry } from "./memory/ProjectMemory.js";
-export {
-	AppendOnlyLog,
-	VolatileScratch,
-	RuntimeMemory,
-} from "./memory/RuntimeMemory.js";
-
-// Commands system
-export { CommandRegistry, createDefaultRegistry } from "./commands/index.js";
-export type {
-	Command,
-	CommandContext,
-	CommandResult,
-} from "./commands/index.js";
-export {
-	InitCommand,
-	NewCommand,
-	SaveCommand,
-	LoadCommand,
-	CompactCommand,
-	UndoCommand,
-	RedoCommand,
-	SkillCommand,
-	MemoryCommand,
-	ConfigCommand,
-	StatusCommand,
-} from "./commands/index.js";
 
 // Hooks system
 export { HookManager } from "./hooks/index.js";
@@ -116,17 +83,6 @@ export type {
 export { CheckpointManager, SessionManager } from "./session/index.js";
 export type { Checkpoint, SessionState } from "./session/index.js";
 
-// Transcript system
-export { TranscriptManager } from "./transcript/index.js";
-export type {
-	Transcript,
-	TranscriptEntry,
-	ReplayOptions,
-} from "./transcript/index.js";
-
-// Telemetry system
-export { TelemetryManager } from "./telemetry/index.js";
-export type { UsageStats, TurnStats, SessionStats } from "./telemetry/index.js";
 
 // Skills system
 export { Skill } from "./skills/Skill.js";
@@ -161,13 +117,6 @@ export type {
 	McpToolResult,
 } from "./mcp/index.js";
 
-// Sub-agent system
-export { SubAgent, SubAgentManager } from "./subagent/index.js";
-export type {
-	SubAgentConfig,
-	SubAgentState,
-	SubAgentMessage,
-} from "./subagent/index.js";
 
 // Capacity controller
 export { CapacityController } from "./capacity/index.js";
@@ -190,17 +139,3 @@ export type {
 	TaskHandler,
 } from "./tasks/index.js";
 
-// Semantic Index
-export {
-	SemanticIndex,
-	Chunker,
-	LocalEmbeddingProvider,
-	OpenAIEmbeddingProvider,
-} from "./index/index.js";
-export type {
-	IndexedDocument,
-	SearchResult,
-	IndexConfig,
-	EmbeddingProvider,
-	EmbeddingVector,
-} from "./index/index.js";

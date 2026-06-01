@@ -8,6 +8,7 @@ import type { ICompletenessChecker } from "../types/completeness.js";
 import type { IContextManager, TaskState } from "../types/context.js";
 import type { IToolCallRepair } from "../types/repair.js";
 import type { ICodeValidator } from "../types/validator.js";
+import { repairTruncatedJson } from "../utils/json-repair.js";
 import { countMessagesTokens } from "../utils/token-counter.js";
 import { healMessages } from "./healing.js";
 import { buildAssistantMessage, buildSyntheticAssistantMessage } from "./messages.js";
@@ -161,6 +162,8 @@ export class MiMoLoop {
 	private steerConsumed = false;
 	/** First all-suppressed storm → self-correct; second → force summary. */
 	private selfCorrectedThisTurn = false;
+	/** Whether canonical project memory has been loaded into messages. */
+	private memoryLoaded = false;
 
 	constructor(config: MiMoLoopConfig) {
 		this.config = config;
@@ -199,6 +202,15 @@ export class MiMoLoop {
 		this.steerConsumed = false;
 
 		try {
+			// Load project memory on first turn
+			if (!this.memoryLoaded) {
+				this.memoryLoaded = true;
+				const memoryText = await this.loadProjectMemory();
+				if (memoryText) {
+					this.messages.push({ role: "system", content: memoryText });
+				}
+			}
+
 			// 1. 添加用户消息
 			this.messages.push({ role: "user", content: userInput });
 
@@ -783,6 +795,16 @@ export class MiMoLoop {
 			this.messages = result.messages;
 		}
 		return result;
+	}
+
+	private async loadProjectMemory(): Promise<string | null> {
+		try {
+			const { loadCanonicalMemory } = await import("../memory/governance/MemoryLoader.js");
+			const result = await loadCanonicalMemory(this.config.workingDirectory, "mixed");
+			return result.text.trim() || null;
+		} catch {
+			return null;
+		}
 	}
 
 	private repairToolCalls(toolCalls: ToolCall[]): {
