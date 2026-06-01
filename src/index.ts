@@ -204,3 +204,17 @@ export type {
 	EmbeddingProvider,
 	EmbeddingVector,
 } from "./index/index.js";
+
+export {
+	MEMORY_PRELUDE_MARKER,
+	buildPrelude,
+	filterMemoryPreludeMessages,
+	injectMemoryPreludeMessage,
+	isMemoryPreludeMessage,
+} from "./memory/single/MemoryPreludeBuilder.js";
+export type {
+	IncludedMemoryRecord,
+	MemoryLayer,
+	MemoryPreludeRequest,
+	MemoryPreludeResult,
+} from "./memory/single/MemoryPreludeBuilder.js";

@@ -13,3 +13,17 @@ export {
 	VolatileScratch,
 } from "./RuntimeMemory.js";
 export type { LogEntry } from "./RuntimeMemory.js";
+
+export {
+	MEMORY_PRELUDE_MARKER,
+	buildPrelude,
+	filterMemoryPreludeMessages,
+	injectMemoryPreludeMessage,
+	isMemoryPreludeMessage,
+} from "./single/MemoryPreludeBuilder.js";
+export type {
+	IncludedMemoryRecord,
+	MemoryLayer,
+	MemoryPreludeRequest,
+	MemoryPreludeResult,
+} from "./single/MemoryPreludeBuilder.js";
