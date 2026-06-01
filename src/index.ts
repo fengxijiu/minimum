@@ -64,6 +64,9 @@ export { SessionMemory } from "./memory/SessionMemory.js";
 export type { SessionData } from "./memory/SessionMemory.js";
 export { ProjectMemory } from "./memory/ProjectMemory.js";
 export type { ProjectMemoryEntry } from "./memory/ProjectMemory.js";
+export { MemoryWriter, decideMemory } from "./memory/single/MemoryWriter.js";
+export type { MemoryWriterOptions, MemoryWriteResult, WriteMemoryOptions } from "./memory/single/MemoryWriter.js";
+export type { MemoryDecision } from "./memory/governance/types.js";
 export {
 	AppendOnlyLog,
 	VolatileScratch,
@@ -76,6 +79,47 @@ export type {
 	ExtractedMemoryLayer,
 	MemoryExtractorContext,
 } from "./memory/single/MemoryExtractor.js";
+export {
+	MemoryRetriever,
+	retrieveMemory,
+	extractKeywords,
+	extractRecentFiles,
+} from "./memory/single/index.js";
+export type {
+	MemoryLayer,
+	MemoryMessage,
+	MemoryRetrieverOptions,
+	RetrievedMemory,
+	RetrievedMemoryEntry,
+	RetrieveMemoryQuery,
+} from "./memory/single/index.js";
+export { MemoryCompactor } from "./memory/single/MemoryCompactor.js";
+export type {
+	CompressionMetrics,
+	CompressionReport,
+	DeepCompressionDecision,
+	MemoryCompactorOptions,
+} from "./memory/single/MemoryCompactor.js";
+export {
+	SingleAgentMemoryManager,
+	MemoryRetriever,
+	MemoryResolver,
+	MemoryPreludeBuilder,
+	MemoryExtractor,
+	SingleAgentMemoryScorer,
+	MemoryWriter,
+	MemoryCompactor,
+} from "./memory/single/SingleAgentMemoryManager.js";
+export type {
+	SingleAgentMemoryManagerOptions,
+	MemoryManagerRequest,
+	MemoryScope,
+	MemoryCandidate,
+	ScoredMemory,
+	ExtractedMemory,
+	MemoryInjectionResult,
+	MemoryWritebackResult,
+} from "./memory/single/SingleAgentMemoryManager.js";
 
 // Commands system
 export { CommandRegistry, createDefaultRegistry } from "./commands/index.js";
@@ -211,3 +255,15 @@ export type {
 	EmbeddingProvider,
 	EmbeddingVector,
 } from "./index/index.js";
+
+export {
+	scoreCandidate,
+	shouldInject,
+	shouldWrite,
+} from "./memory/single/index.js";
+export type {
+	SingleAgentMemoryCandidate,
+	SingleAgentMemoryRecord,
+	SingleAgentMemoryScope,
+	SingleAgentMemoryScore,
+} from "./memory/single/index.js";

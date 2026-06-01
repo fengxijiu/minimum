@@ -22,6 +22,8 @@ export interface StagingInfo {
 	scope: string;
 	confidence: string;
 	relatedFiles: string[];
+	decision?: string;
+	reviewReason?: string;
 }
 
 export interface MemoryIndexInfo {
@@ -66,6 +68,8 @@ export async function inspectStaging(projectRoot: string): Promise<StagingInfo[]
 		scope: c.scope,
 		confidence: c.confidence,
 		relatedFiles: c.relatedFiles,
+		...(c.decision && { decision: c.decision }),
+		...(c.reviewReason && { reviewReason: c.reviewReason }),
 	}));
 }
 
@@ -111,7 +115,9 @@ export function renderMemoryReport(
 		lines.push("  (empty)");
 	} else {
 		for (const s of staging) {
-			lines.push(`  • ${s.sourceTask}.${s.persona} [${s.confidence}] ${s.scope}`);
+			const decision = s.decision ? ` ${s.decision}` : "";
+			const reason = s.reviewReason ? ` — ${s.reviewReason}` : "";
+			lines.push(`  • ${s.sourceTask}.${s.persona} [${s.confidence}${decision}] ${s.scope}${reason}`);
 		}
 	}
 	if (index) {
