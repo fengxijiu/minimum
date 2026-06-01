@@ -45,7 +45,10 @@ function mergeProjectOverGlobal(
 	}
 	if (project.context) out.context = { ...global.context, ...project.context };
 	if (project.capacity) out.capacity = { ...global.capacity, ...project.capacity };
-	if (project.validation) out.validation = { ...global.validation, ...project.validation };
+	if (project.validation) {
+		out.validation = { ...global.validation, ...project.validation };
+	}
+	if (project.memory) out.memory = { ...global.memory, ...project.memory };
 	return out;
 }
 

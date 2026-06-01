@@ -8,7 +8,8 @@ export type MemoryIndexKind =
 	| "canonical"
 	| "staging"
 	| "context_pack"
-	| "pipeline_artifact";
+	| "pipeline_artifact"
+	| "compressed";
 
 export interface MemoryIndexEntry {
 	kind: MemoryIndexKind;
@@ -57,6 +58,13 @@ export async function buildMemoryIndex(
 			relatedFiles: candidate.relatedFiles,
 		}));
 	}
+
+	const compressedPath = path.join(projectRoot, m.memoryRoot, "compressed.md");
+	entries.push(await indexFile(projectRoot, compressedPath, {
+		kind: "compressed",
+		id: "compressed",
+		tags: ["compressed", "canonical"],
+	}));
 
 	const taskRoot = path.join(projectRoot, m.memoryRoot, "tasks");
 	for (const filePath of await listFiles(taskRoot)) {

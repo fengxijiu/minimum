@@ -21,3 +21,62 @@ export type {
 	MemoryLayer,
 	MemoryRecord,
 } from "./single/index.js";
+export {
+	getGlobalMemoryRoot,
+	getMemoryFile,
+	getMemoryIndexPath,
+	getProjectMemoryRoot,
+	globalMemoryLayer,
+	projectMemoryLayer,
+	sanitizeMemoryKey,
+} from "./single/MemoryPaths.js";
+export type {
+	GlobalMemoryLayer,
+	MemoryLayer,
+	MemoryLayerScope,
+	ProjectMemoryLayer,
+} from "./single/MemoryPaths.js";
+	MEMORY_PRELUDE_MARKER,
+	buildPrelude,
+	filterMemoryPreludeMessages,
+	injectMemoryPreludeMessage,
+	isMemoryPreludeMessage,
+} from "./single/MemoryPreludeBuilder.js";
+export type {
+	IncludedMemoryRecord,
+	MemoryLayer,
+	MemoryPreludeRequest,
+	MemoryPreludeResult,
+} from "./single/MemoryPreludeBuilder.js";
+	MemoryRetriever,
+	retrieveMemory,
+	extractKeywords,
+	extractRecentFiles,
+} from "./single/index.js";
+export type {
+	MemoryLayer,
+	MemoryMessage,
+	MemoryRetrieverOptions,
+	RetrievedMemory,
+	RetrievedMemoryEntry,
+	RetrieveMemoryQuery,
+} from "./single/index.js";
+export { MemoryCompactor } from "./single/MemoryCompactor.js";
+export type {
+	CompressionMetrics,
+	CompressionReport,
+	DeepCompressionDecision,
+	MemoryCompactorOptions,
+} from "./single/MemoryCompactor.js";
+export {
+	scoreCandidate,
+	shouldInject,
+	shouldWrite,
+	type SingleAgentMemoryCandidate,
+	type SingleAgentMemoryRecord,
+	type SingleAgentMemoryScope,
+	type SingleAgentMemoryScore,
+} from "./single/index.js";
+export { MemoryWriter, decideMemory } from "./single/MemoryWriter.js";
+export type { MemoryWriterOptions, MemoryWriteResult, WriteMemoryOptions } from "./single/MemoryWriter.js";
+export type { MemoryDecision } from "./governance/types.js";
