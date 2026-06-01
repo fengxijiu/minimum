@@ -13,3 +13,11 @@ export {
 	VolatileScratch,
 } from "./RuntimeMemory.js";
 export type { LogEntry } from "./RuntimeMemory.js";
+
+export type {
+	ISingleAgentMemoryManager,
+	MemoryInjectionRequest,
+	MemoryInjectionResult,
+	MemoryLayer,
+	MemoryWritebackRequest,
+} from "./single/index.js";
