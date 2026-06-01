@@ -14,5 +14,12 @@ export {
 } from "./RuntimeMemory.js";
 export type { LogEntry } from "./RuntimeMemory.js";
 
+export type {
+	ISingleAgentMemoryManager,
+	MemoryInjectionRequest,
+	MemoryInjectionResult,
+	MemoryLayer,
+	MemoryWritebackRequest,
+} from "./single/index.js";
 export { SingleAgentMemoryManager } from "./SingleAgentMemoryManager.js";
 export type { SingleAgentMemoryManagerOptions } from "./SingleAgentMemoryManager.js";
