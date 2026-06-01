@@ -82,13 +82,13 @@ const PipelineZone = React.memo(function PipelineZone({ phases }: {
 /** ChatStream zone — only re-renders on messages/stepLabel/activeTool/streaming changes. */
 const ChatZone = React.memo(function ChatZone({
   messages, committedCount, stepLabel, activeTool,
-  streaming, reasoning, verbose, petVisible, cols, maxRows, resizeRevision, header,
+  streaming, reasoning, verbose, petVisible, cols, maxRows, reservedRows, resizeRevision, header,
 }: {
   messages: Message[]; committedCount: number;
   stepLabel: string; activeTool: AppState['activeTool'];
   streaming?: string | null; reasoning?: string | null; verbose?: boolean;
   petVisible: boolean;
-  cols: number; maxRows: number; resizeRevision: number; header: React.ReactNode;
+  cols: number; maxRows: number; reservedRows: number; resizeRevision: number; header: React.ReactNode;
 }) {
   return (
     <ChatStream
@@ -102,6 +102,7 @@ const ChatZone = React.memo(function ChatZone({
       petVisible={petVisible}
       cols={cols}
       maxRows={maxRows}
+      reservedRows={reservedRows}
       resizeRevision={resizeRevision}
       header={header}
     />
@@ -659,6 +660,20 @@ export function App({
   // No sidebar any more: the chat uses (nearly) the full terminal width.
   const chatCols = Math.max(40, termSize.cols - 2);
 
+  // ── Bottom chrome height for streamCap calculation ───────────────────
+  // Rows consumed by UI below ChatStream so ChatStream can compute an
+  // accurate streamCap.  Compact plan (> 4 steps) = 1 row; card plan = 2;
+  // no plan = 0.  Pipeline adds 1 row per phase + 1 header.
+  const bottomReserved = useMemo(() => {
+    const CHROME = 8; // TitleBar(1) + InputArea(3) + StatusBar(1) + box chrome
+    const planRows = sPlanSteps.length === 0 ? 0
+      : sPlanSteps.length > 4 ? 1    // compact single-line strip
+      : 2;                            // title row + steps row
+    const pipelineRows = sPipeline ? sPipeline.length + 1 : 0;
+    const toastRows = sToasts.length;
+    return CHROME + planRows + pipelineRows + toastRows;
+  }, [sPlanSteps, sPipeline, sToasts]);
+
   const titleMode =
     sPending === 'permission' ? 'agent · paused'
     : sPending === 'error' ? 'agent · interrupted'
@@ -686,6 +701,7 @@ export function App({
         verbose={sVerbose}
         cols={chatCols}
         maxRows={termSize.rows}
+        reservedRows={bottomReserved}
         resizeRevision={termSize.revision}
         header={
           <Box flexDirection="column">

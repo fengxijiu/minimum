@@ -628,6 +628,50 @@ function RenderItemRow({ item, cols, verbose }: { item: RenderItem; cols: number
   return <MessageRow msg={item.msg} cols={cols} verbose={verbose} />;
 }
 
+// ── Live-region height estimator ─────────────────────────────────────
+//
+// Returns the number of terminal rows a RenderItem will occupy.  The
+// estimate intentionally over-shoots by a small margin so streamCap never
+// allows the live region to exceed terminal height and trigger Ink's
+// clearTerminal path (flicker + \x1b[3J scrollback wipe).
+
+function estimateItemRows(item: RenderItem, verbose?: boolean): number {
+  if (item.kind === 'divider') return 2; // marginTop + rule line
+  if (item.kind === 'toolgroup') {
+    // summary header (1) + one row per tool call (+ output lines in verbose)
+    const toolRows = item.tools.reduce((sum, t) => {
+      const out = verbose ? Math.min(t.tool.output?.length ?? 0, 12) : 0;
+      return sum + 1 + out;
+    }, 0);
+    return 1 + toolRows;
+  }
+  const m = item.msg;
+  switch (m.type) {
+    case 'user':
+      return 3 + Math.min(m.text.split('\n').length - 1, 10);
+    case 'assistant':
+      return 3 + Math.min(m.text.split('\n').length - 1, 20);
+    case 'tool': {
+      const out = verbose ? Math.min(m.tool.output?.length ?? 0, 12) : 0;
+      return 1 + out;
+    }
+    case 'diff':
+      return 3 + Math.min(m.diff.lines.length, 18);
+    case 'error':
+      return 3 + Math.min(m.error.lines.length, 10);
+    case 'permission':
+      return 5;
+    case 'system':
+      return 2;
+    case 'chips':
+      return 1;
+    case 'turnmeta':
+      return 2;
+    default:
+      return 3;
+  }
+}
+
 // ── ChatStream ────────────────────────────────────────────────────────
 //
 // Claude Code style conversation flow. Completed messages — those in
@@ -652,6 +696,7 @@ export const ChatStream = React.memo(function ChatStream({
   petVisible,
   cols,
   maxRows,
+  reservedRows,
   resizeRevision,
   header,
 }: {
@@ -665,6 +710,9 @@ export const ChatStream = React.memo(function ChatStream({
   petVisible?: boolean;
   cols: number;
   maxRows: number;
+  /** Rows consumed by chrome below ChatStream (plan + pipeline + toasts + input + status).
+   *  Replaces the old hard-coded 15 so callers can reflect actual UI state. */
+  reservedRows?: number;
   resizeRevision?: number;
   header?: ReactNode;
 }) {
@@ -692,17 +740,33 @@ export const ChatStream = React.memo(function ChatStream({
     };
   }, [allItems, committedCount, header, hasConversationContent, resizeRevision]);
 
+  // P2: hide toolgroups whose every tool is still running — they are
+  // already shown in the activeTool display inside the streaming frame,
+  // so rendering them here too would produce double display and inflate
+  // the live-region height unnecessarily.
+  const filteredLiveItems = useMemo(() =>
+    activeTool
+      ? liveItems.filter(item =>
+          item.kind !== 'toolgroup' ||
+          item.tools.some(t => t.tool.status !== undefined),
+        )
+      : liveItems,
+  [liveItems, activeTool]);
+
   // Live streaming frame (the only thing repainted on every token). Its
   // height is capped so the whole dynamic region stays *strictly* below the
   // terminal height — otherwise Ink falls back to clearTerminal, which both
   // flickers and wipes the scrollback (\x1b[3J), destroying history.
-  // `reserved` overestimates everything else in the repainting region
-  // (plan + pipeline + toast + input + status + box chrome + margins, plus
-  // reasoning, a running tool, and any uncommitted tail items).
+  // P0: per-item type estimate replaces the old flat liveItems.length * 3.
+  // reservedRows covers plan + pipeline + toasts + input + status bar chrome
+  // and is supplied by the caller who can see those components' actual state.
+  const liveHeight = filteredLiveItems.reduce(
+    (sum, item) => sum + estimateItemRows(item, verbose), 0,
+  );
   const reserved =
-    15
-    + liveItems.length * 3
-    + (reasoning ? (verbose ? 6 : 2) : 0)
+    (reservedRows ?? 9)
+    + liveHeight
+    + (reasoning ? (verbose ? 7 : 2) : 0)
     + (activeTool ? 1 : 0);
   const streamCap = Math.max(3, maxRows - reserved - 1);
   const streamText = streaming ?? '';
@@ -728,7 +792,7 @@ export const ChatStream = React.memo(function ChatStream({
       </Static>
 
       {/* ── live tail of the current turn ───────────────────────────── */}
-      {liveItems.map(item => (
+      {filteredLiveItems.map(item => (
         <RenderItemRow key={item.id} item={item} cols={cols} verbose={verbose} />
       ))}
 

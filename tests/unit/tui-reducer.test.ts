@@ -439,9 +439,12 @@ describe("TUI reducer", () => {
 	it("messages.commit advances committedCount to current message length", () => {
 		let s = reduce(base, { type: "user.submit", text: "hello" });
 		s = reduce(s, { type: "assistant.final", text: "hi" });
-		expect(s.committedCount).toBe(0); // not committed yet
+		// pushMessage auto-advances committedCount via settledPrefix on every push so
+		// non-tool messages go directly to Static and never land in the live region
+		// (prevents clearTerminal flicker when a tall reply first appears).
+		expect(s.committedCount).toBe(2); // already auto-committed by pushMessage
 		s = reduce(s, { type: "messages.commit" });
-		expect(s.committedCount).toBe(2); // user + assistant
+		expect(s.committedCount).toBe(2); // idempotent — already at full length
 		expect(s.messages).toHaveLength(2); // messages still present for history
 	});
 
@@ -475,16 +478,19 @@ describe("TUI reducer", () => {
 		expect(s.committedCount).toBe(0);
 	});
 
-	it("new messages after commit appear in live tail (index >= committedCount)", () => {
+	it("non-tool messages are committed immediately; tool messages block the prefix", () => {
 		let s = reduce(base, { type: "user.submit", text: "turn 1" });
 		s = reduce(s, { type: "assistant.final", text: "reply 1" });
-		s = reduce(s, { type: "messages.commit" }); // committedCount = 2
+		s = reduce(s, { type: "messages.commit" }); // no-op: already auto-committed
+		// Another user message also goes directly to Static (auto-commit in pushMessage).
 		s = reduce(s, { type: "user.submit", text: "turn 2" });
-		expect(s.committedCount).toBe(2);
+		expect(s.committedCount).toBe(3); // user + assistant + user2, all settled
 		expect(s.messages).toHaveLength(3);
-		// live tail = messages.slice(2) = [turn 2 message]
-		expect(s.messages.slice(s.committedCount)).toHaveLength(1);
-		expect(s.messages[2]).toMatchObject({ type: "user", text: "turn 2" });
+		// A running tool blocks the prefix — only it stays in the live tail.
+		s = reduce(s, { type: "tool.start", id: "t1", name: "read_file", args: '{"path":"x"}' });
+		expect(s.committedCount).toBe(3); // stops at the unsettled tool
+		expect(s.messages.slice(s.committedCount)).toHaveLength(1); // only the tool
+		expect(s.messages[3]).toMatchObject({ type: "tool" });
 	});
 
 	// ── Tier 1: reasoning / tool output / turn telemetry ──────────────
