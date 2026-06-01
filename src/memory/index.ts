@@ -13,3 +13,11 @@ export {
 	VolatileScratch,
 } from "./RuntimeMemory.js";
 export type { LogEntry } from "./RuntimeMemory.js";
+
+export { MemoryCompactor } from "./single/MemoryCompactor.js";
+export type {
+	CompressionMetrics,
+	CompressionReport,
+	DeepCompressionDecision,
+	MemoryCompactorOptions,
+} from "./single/MemoryCompactor.js";
