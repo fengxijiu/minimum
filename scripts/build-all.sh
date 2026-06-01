@@ -46,17 +46,75 @@ ok()   { printf '\033[1;32m✓ %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m! %s\033[0m\n' "$*"; }
 die()  { printf '\033[1;31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 
+# NEW: detect the known vitest / coverage-v8 major-version mismatch so we can
+# skip the noisy failing install attempt and go straight to --legacy-peer-deps.
+has_known_peer_conflict() {
+  local prefix="$1"
+  local package_json="$prefix/package.json"
+
+  [ -f "$package_json" ] || return 1
+
+  node -e '
+    const fs = require("fs");
+    const pkg = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+    const vitest = deps.vitest;
+    const coverage = deps["@vitest/coverage-v8"];
+    const major = (value) => {
+      const match = String(value || "").match(/\d+/);
+      return match ? match[0] : "";
+    };
+    process.exit(vitest && coverage && major(vitest) !== major(coverage) ? 0 : 1);
+  ' "$package_json"
+}
+
 # npm install that tolerates the repo's known peer-dep conflict
-# (@vitest/coverage-v8 wants a newer vitest than the pinned one). Tries a
-# clean install first, then falls back to --legacy-peer-deps.
+# (@vitest/coverage-v8 wants a newer vitest than the pinned one). Uses
+# --legacy-peer-deps immediately for the known mismatch; otherwise retries with
+# it before doing a lightweight cleanup.
+npm_install_attempt() {
+  local prefix="$1"
+  shift || true
+  npm --prefix "$prefix" install "$@"
+}
+
 npm_install() {
   local prefix="$1"
-  if npm --prefix "$prefix" install; then
+  local prefer_legacy=0
+
+  if has_known_peer_conflict "$prefix"; then
+    warn "Detected known peer-dep conflict in $prefix — using --legacy-peer-deps"
+    prefer_legacy=1
+  fi
+
+  if [ "$prefer_legacy" -eq 1 ]; then
+    if npm_install_attempt "$prefix" --legacy-peer-deps; then
+      return 0
+    fi
+  else
+    if npm_install_attempt "$prefix"; then
+      return 0
+    fi
+
+    warn "Install failed — retrying with --legacy-peer-deps"
+    if npm_install_attempt "$prefix" --legacy-peer-deps; then
+      return 0
+    fi
+  fi
+
+  warn "Install still failed — clearing node_modules and retrying once"
+  rm -rf "$prefix/node_modules"
+
+  if [ "$prefer_legacy" -eq 1 ]; then
+    npm_install_attempt "$prefix" --legacy-peer-deps
+    return $?
+  fi
+
+  if npm_install_attempt "$prefix"; then
     return 0
   fi
-  warn "Install failed (peer-dep conflict?) — clearing state and retrying with --legacy-peer-deps"
-  rm -rf "$prefix/node_modules" "$prefix/package-lock.json"
-  npm --prefix "$prefix" install --legacy-peer-deps
+
+  npm_install_attempt "$prefix" --legacy-peer-deps
 }
 
 # ── Preflight ─────────────────────────────────────────────────────────────────

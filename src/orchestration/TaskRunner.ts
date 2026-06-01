@@ -1,3 +1,4 @@
+import { refreshMemoryIndex } from "../memory/governance/MemoryIndex.js";
 import { writeCandidate } from "../memory/governance/MemoryStaging.js";
 import type { MemoryCandidate, MemoryConfidence } from "../memory/governance/types.js";
 import type { PersonaId } from "../personas/Persona.js";
@@ -87,6 +88,7 @@ export async function runTask(
 		const candidate = parseMemoryCandidate(memBlock, contract);
 		try {
 			await writeCandidate(opts.projectRoot, candidate);
+			await refreshMemoryIndex(opts.projectRoot);
 		} catch (err) {
 			stagingError = err instanceof Error ? err.message : String(err);
 		}

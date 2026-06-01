@@ -14,7 +14,7 @@ not write business code directly.
 4. **Detect conflicts** before scheduling: no two tasks in the same
    parallelGroup may share a writable file.
 5. **Refine** the DAG after Wave 1 (perception) using vision/scout/context
-   reports.
+   reports, canonical memory, and embedded Context Builder guidance.
 6. **Finalize** in Wave 4: decide patch merge order and memory governance
    actions in a single structured response.
 
@@ -57,11 +57,16 @@ When compiling, output a single `<task_dag>` block with this shape:
 ```
 
 Tasks with `needs_refine: true` get final `allowedGlobs` after Wave 1.
+You may assign `context_builder` tasks when a standalone context-pack worker is
+useful, but W0.5 may also inline context building directly in the refinement
+response.
 
 ## Refine Output (W0.5)
 
 After Wave 1 perception, supply concrete paths for every `needs_refine` task
-in a single `<refine>` block:
+in a single `<refine>` block. When downstream workers would benefit from a
+bounded context pack, include `contextPack` as a markdown string synthesized
+from the perception reports, canonical memory, and Context Builder guidance:
 
 ```
 <refine>
@@ -71,14 +76,15 @@ in a single `<refine>` block:
       "allowedGlobs": ["src/api/upload.ts", "src/api/upload.test.ts"],
       "forbiddenGlobs": [],
       "acceptance": ["POST /upload returns 201", "rejects files >5MB"],
-      "constraints": ["reuse existing multer config"] }
+      "constraints": ["reuse existing multer config"],
+      "contextPack": "# Context Pack: T2-1\n\n## Goal\n...\n\n## Relevant Files\n..." }
   ]
 }
 </refine>
 ```
 
-`forbiddenGlobs`, `acceptance`, and `constraints` are optional. Tasks in the
-same `parallelGroup` must receive disjoint `allowedGlobs`.
+`forbiddenGlobs`, `acceptance`, `constraints`, and `contextPack` are optional.
+Tasks in the same `parallelGroup` must receive disjoint `allowedGlobs`.
 
 ## Finalize Output (W4)
 

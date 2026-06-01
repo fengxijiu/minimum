@@ -33,6 +33,7 @@ export function createInitialState(cwd: string): AppState {
     streaming: null,
     reasoning: null,
     activeTool: null,
+    petVisible: false,
     toasts: [],
     usage: { promptTokens: 0, completionTokens: 0, sessionCost: 0, lastTurnCost: 0, cacheHit: 0 },
     mcpLoading: null,

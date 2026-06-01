@@ -29,11 +29,23 @@ export {
 } from "./MemoryGovernor.js";
 export {
 	inspectCanonical,
+	inspectMemoryIndex,
 	inspectStaging,
 	renderMemoryReport,
 	type CanonicalFileInfo,
+	type MemoryIndexInfo,
 	type StagingInfo,
 } from "./MemoryInspector.js";
+export {
+	buildMemoryIndex,
+	memoryIndexPath,
+	readMemoryIndex,
+	refreshMemoryIndex,
+	writeMemoryIndex,
+	type MemoryIndex,
+	type MemoryIndexEntry,
+	type MemoryIndexKind,
+} from "./MemoryIndex.js";
 export {
 	canonicalPath,
 	defaultManifest,

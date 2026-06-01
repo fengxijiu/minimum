@@ -22,14 +22,8 @@ export const CommandPalette = React.memo(function CommandPalette({ items, select
     Math.max(0, items.length - MAX_ROWS),
   );
   const visible = items.slice(start, start + MAX_ROWS);
-
-  // Always pad to MAX_ROWS rows — stable height prevents Prompt from shifting
-  const rows: Array<CmdMatch | null> = [
-    ...visible,
-    ...Array(Math.max(0, MAX_ROWS - visible.length)).fill(null),
-  ];
-
   const empty = items.length === 0;
+  const hasScroll = items.length > MAX_ROWS;
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={empty ? theme.line : theme.accent} paddingX={1}>
@@ -38,62 +32,63 @@ export const CommandPalette = React.memo(function CommandPalette({ items, select
         <Text color={empty ? theme.muted : theme.accent} bold>/ commands</Text>
         <Text color={theme.muted}>
           {empty
-            ? 'no matches · esc dismiss · ⇥ fill'
+            ? 'no matches · esc close · ⇥ fill'
             : `${selected + 1}/${items.length}  ↑↓ select · ⏎ run · ⇥ fill`}
         </Text>
       </Box>
 
-      {/* item rows — always exactly MAX_ROWS */}
-      {rows.map((item, i) => {
-        if (!item) {
-          return <Box key={`pad-${i}`}><Text> </Text></Box>;
-        }
+      {empty ? (
+        <Text color={theme.muted}>  Type to filter commands</Text>
+      ) : visible.map((item, i) => {
         const { cmd, nameMatches, descMatches } = item;
         const idx = start + i;
         const active = idx === selected;
-        const bg = active ? theme.accent : undefined;
-        const fg = active ? theme.bg : theme.accent;
+        const commandBg = active ? theme.accent : undefined;
+        const commandFg = active ? theme.bg : theme.accent;
 
         return (
           <Box key={cmd.name} justifyContent="space-between">
             <Box flexShrink={1}>
-              <Text color={fg} backgroundColor={bg} bold={active}>
-                {active ? ' ❯ /' : '   /'}
+              <Text color={active ? theme.accent : theme.muted} bold={active}>
+                {active ? ' ❯ ' : '   '}
               </Text>
+              <Text color={commandFg} backgroundColor={commandBg} bold={active}>/</Text>
               <HighlightText
                 text={cmd.name}
                 positions={nameMatches}
-                color={active ? theme.bg : theme.accent}
+                color={commandFg}
                 matchColor={active ? theme.bg : theme.warn}
+                backgroundColor={commandBg}
               />
-              {cmd.aliases && cmd.aliases.length > 0 && !active && (
-                <Text color={theme.muted}>  {cmd.aliases.join(' ')}</Text>
+              {cmd.aliases && cmd.aliases.length > 0 && (
+                <Text color={active ? theme.inkSoft : theme.muted}>  {cmd.aliases.map(a => `/${a}`).join(' ')}</Text>
               )}
-              <Text color={active ? theme.bg : undefined} backgroundColor={bg}>  </Text>
+              <Text color={theme.muted}>  —  </Text>
               <HighlightText
                 text={cmd.desc}
                 positions={active ? [] : descMatches}
-                color={active ? theme.bg : theme.muted}
-                matchColor={active ? theme.bg : theme.inkSoft}
+                color={active ? theme.ink : theme.muted}
+                matchColor={theme.inkSoft}
               />
               {active && cmd.usage && (
-                <Text color={theme.bg} backgroundColor={bg}>  {cmd.usage}</Text>
+                <Text color={theme.inkSoft}>  {cmd.usage}</Text>
               )}
             </Box>
-            <Text color={active ? theme.bg : theme.muted} backgroundColor={bg}>
+            <Text color={active ? theme.accent : theme.muted} bold={active}>
               {'  '}{CAT_LABEL[cmd.category]}
             </Text>
           </Box>
         );
       })}
 
-      {/* scroll indicator row — always present for stable height */}
-      <Box justifyContent="center">
-        <Text color={theme.muted}>
-          {items.length > MAX_ROWS && start > 0 ? '↑ ' : '  '}
-          {items.length > MAX_ROWS && start + MAX_ROWS < items.length ? '↓' : ' '}
-        </Text>
-      </Box>
+      {hasScroll ? (
+        <Box justifyContent="center">
+          <Text color={theme.muted}>
+            {start > 0 ? '↑ ' : '  '}
+            {start + MAX_ROWS < items.length ? '↓' : ' '}
+          </Text>
+        </Box>
+      ) : null}
     </Box>
   );
 });

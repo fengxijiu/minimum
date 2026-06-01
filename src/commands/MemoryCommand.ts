@@ -1,5 +1,6 @@
 import {
 	inspectCanonical,
+	inspectMemoryIndex,
 	inspectStaging,
 	renderMemoryReport,
 } from "../memory/governance/index.js";
@@ -19,11 +20,12 @@ export class MemoryCommand implements Command {
 
 		switch (subcommand) {
 			case "status": {
-				const [canonical, staging] = await Promise.all([
+				const [canonical, staging, index] = await Promise.all([
 					inspectCanonical(root),
 					inspectStaging(root),
+					inspectMemoryIndex(root),
 				]);
-				return { success: true, output: renderMemoryReport(canonical, staging) };
+				return { success: true, output: renderMemoryReport(canonical, staging, index) };
 			}
 			case "canonical": {
 				const canonical = await inspectCanonical(root);

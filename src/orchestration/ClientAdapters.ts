@@ -1,5 +1,9 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { getPersona } from "../personas/PersonaRegistry.js";
 import type { ChatMessage } from "../types/common.js";
+import type { MissionCheckInput } from "./MissionChecker.js";
 import type { CoarseDag } from "./TaskContract.js";
 import type { TaskContract } from "./TaskContract.js";
 import type { PlannerBridge } from "./MiMoPipeline.js";
@@ -9,12 +13,23 @@ import type { TaskResult, WorkerExecutor } from "./TaskRunner.js";
  * ClientAdapters — turn a streaming chat client into the PlannerBridge and
  * WorkerExecutor that MiMoPipeline depends on.
  *
- * These are the LLM seams of the pipeline. The planner bridge issues the three
- * master_planner calls (compile / refine / finalize); the worker executor runs
+ * These are the LLM seams of the pipeline. The planner bridge issues the
+ * planner/checker calls (compile / refine / mission check / finalize); the worker executor runs
  * a single persona turn. Both are single-shot text completions — tool-using
  * worker loops are a future extension, but the contract/policy/staging
  * machinery is already in place to host them.
  */
+
+const PROMPTS_DIR = path.join(
+	path.dirname(fileURLToPath(import.meta.url)),
+	"..",
+	"personas",
+	"prompts",
+);
+
+function loadInlinePrompt(file: string): string {
+	return fs.readFileSync(path.join(PROMPTS_DIR, file), "utf-8");
+}
 
 /** Minimal structural client — MiMoClient satisfies this. */
 export interface CompletionClient {
@@ -48,7 +63,10 @@ export function createPlannerBridge(
 	opts: PlannerBridgeOptions = {},
 ): PlannerBridge {
 	const master = getPersona("master_planner");
+	const contextBuilder = getPersona("context_builder");
+	const missionCheckerPrompt = loadInlinePrompt("mission_checker.md");
 	const sys = (): ChatMessage => ({ role: "system", content: master.systemPrompt });
+	const missionSys = (): ChatMessage => ({ role: "system", content: missionCheckerPrompt });
 	const max = opts.maxTokens ?? master.maxTokens;
 
 	return {
@@ -64,14 +82,52 @@ export function createPlannerBridge(
 				],
 				max,
 			),
-		refine: (dag: CoarseDag, perception: TaskResult[]) =>
+		refine: (dag: CoarseDag, perception: TaskResult[], memoryPrefix: string) =>
 			collectText(
 				client,
 				[
 					sys(),
 					{
 						role: "user",
-						content: `# Coarse DAG\n${JSON.stringify(dag)}\n\n# Perception Reports\n${renderResults(perception)}\n\nRefine the needs_refine tasks. Output a single <refine> block.`,
+						content: [
+							`# Coarse DAG\n${JSON.stringify(dag)}`,
+							`# Perception Reports\n${renderResults(perception)}`,
+							`# Canonical Project Memory\n${memoryPrefix || "(none)"}`,
+							`# Context Builder Guidance\n${contextBuilder.systemPrompt}`,
+							[
+								"Refine the needs_refine tasks.",
+								"Use the context-builder guidance to synthesize concise per-task ContextPack markdown when it helps downstream workers.",
+								"Output a single <refine> block. Each task may include an optional string field named contextPack.",
+							].join(" "),
+						].join("\n\n"),
+					},
+				],
+				max,
+			),
+		checkMission: (input: MissionCheckInput) =>
+			collectText(
+				client,
+				[
+					missionSys(),
+					{
+						role: "user",
+						content: [
+							"# W3.5 Mission Check Input",
+							`## Original User Request\n${input.userRequest}`,
+							`## Loop State\nCurrent loop index: ${input.loopIndex}\nMax automatic repair loops: ${input.maxRepairLoops}`,
+							`## Coarse DAG\n${JSON.stringify(input.dag)}`,
+							`## Persisted Artifacts\n${renderArtifactPaths(input.artifactPaths)}`,
+							`## W0.5 Refinement Entries\n${renderRefinements(input.refinements)}`,
+							`## Task Results\n${renderResults(input.results)}`,
+							`## Known Issues\n${renderKnownIssues(input.knownIssues)}`,
+							`## Canonical Project Memory\n${input.canonicalMemory || "(none)"}`,
+							[
+								"Run the W3.5 acceptance loop now.",
+								"Keep the exact Markdown report shape required by your persona prompt.",
+								"Use Decision: APPROVED_TO_W4, LOOP_BACK_TO_W1, or NEEDS_HUMAN_CONFIRMATION.",
+								"When looping back, include concrete W1 tasks with suggested owner agent names from the existing worker roster.",
+							].join(" "),
+						].join("\n\n"),
 					},
 				],
 				max,
@@ -141,4 +197,36 @@ function renderResults(results: TaskResult[]): string {
 	return results
 		.map((r) => `## ${r.taskId} (${r.personaId}) — ${r.status}\n${r.report}`)
 		.join("\n\n");
+}
+
+function renderRefinements(refinements: MissionCheckInput["refinements"]): string {
+	if (refinements.length === 0) return "(none)";
+	return refinements
+		.map((r) => {
+			const lines = [
+				`## ${r.taskId}`,
+				`allowedGlobs: ${r.allowedGlobs.join(", ") || "(none)"}`,
+			];
+			if (r.acceptance?.length) lines.push(`acceptance: ${r.acceptance.join("; ")}`);
+			if (r.constraints?.length) lines.push(`constraints: ${r.constraints.join("; ")}`);
+			if (r.contextPackPath) lines.push(`contextPack: ${r.contextPackPath}`);
+			return lines.join("\n");
+		})
+		.join("\n\n");
+}
+
+function renderKnownIssues(issues: string[]): string {
+	if (issues.length === 0) return "(none)";
+	return issues.map((issue) => `- ${issue}`).join("\n");
+}
+
+function renderArtifactPaths(paths: MissionCheckInput["artifactPaths"]): string {
+	const lines: string[] = [];
+	if (paths.dag) lines.push(`- dag: ${paths.dag}`);
+	if (paths.memoryIndex) lines.push(`- memoryIndex: ${paths.memoryIndex}`);
+	for (const p of paths.refinements) lines.push(`- refinement: ${p}`);
+	for (const p of paths.contracts) lines.push(`- contracts: ${p}`);
+	for (const p of paths.repairDags) lines.push(`- repairDag: ${p}`);
+	for (const p of paths.missionChecks) lines.push(`- missionCheck: ${p}`);
+	return lines.length > 0 ? lines.join("\n") : "(none)";
 }

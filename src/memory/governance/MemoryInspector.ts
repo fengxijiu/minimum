@@ -1,5 +1,6 @@
 import * as fs from "node:fs/promises";
 import { canonicalPath, getOrInitManifest } from "./MemoryManifest.js";
+import { readMemoryIndex } from "./MemoryIndex.js";
 import { listCandidates } from "./MemoryStaging.js";
 import type { Manifest } from "./types.js";
 
@@ -21,6 +22,14 @@ export interface StagingInfo {
 	scope: string;
 	confidence: string;
 	relatedFiles: string[];
+}
+
+export interface MemoryIndexInfo {
+	path: string;
+	exists: boolean;
+	entryCount: number;
+	missingCount: number;
+	generatedAt?: string;
 }
 
 /** Summarize canonical files declared in the manifest. */
@@ -60,10 +69,31 @@ export async function inspectStaging(projectRoot: string): Promise<StagingInfo[]
 	}));
 }
 
+/** Summarize the generated deterministic memory index. */
+export async function inspectMemoryIndex(projectRoot: string): Promise<MemoryIndexInfo> {
+	const index = await readMemoryIndex(projectRoot);
+	if (!index) {
+		return {
+			path: ".minimum/index.json",
+			exists: false,
+			entryCount: 0,
+			missingCount: 0,
+		};
+	}
+	return {
+		path: `${index.memoryRoot}/index.json`,
+		exists: true,
+		entryCount: index.entries.length,
+		missingCount: index.entries.filter((entry) => !entry.exists).length,
+		generatedAt: index.generatedAt,
+	};
+}
+
 /** Render a compact text report for the `/memory` command. */
 export function renderMemoryReport(
 	canonical: CanonicalFileInfo[],
 	staging: StagingInfo[],
+	index?: MemoryIndexInfo,
 ): string {
 	const lines: string[] = [];
 	lines.push("Canonical memory:");
@@ -82,6 +112,16 @@ export function renderMemoryReport(
 	} else {
 		for (const s of staging) {
 			lines.push(`  • ${s.sourceTask}.${s.persona} [${s.confidence}] ${s.scope}`);
+		}
+	}
+	if (index) {
+		lines.push("");
+		lines.push("Index:");
+		if (!index.exists) {
+			lines.push(`  ○ ${index.path} (missing)`);
+		} else {
+			const missing = index.missingCount > 0 ? `, ${index.missingCount} missing` : "";
+			lines.push(`  ● ${index.path} (${index.entryCount} entries${missing})`);
 		}
 	}
 	return lines.join("\n");

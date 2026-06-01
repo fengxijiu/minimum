@@ -42,6 +42,16 @@ function stubPlanner(over: Partial<PlannerBridge> = {}): PlannerBridge {
 		compile: async () => `<task_dag>${DAG_JSON}</task_dag>`,
 		refine: async () =>
 			`<refine>{"tasks":[{"taskId":"T2-1","allowedGlobs":["src/upload.ts"],"acceptance":["returns 201"]}]}</refine>`,
+		checkMission: async () => `# W3.5 Loop Detection Report
+
+## 1. Final Decision
+
+Decision: APPROVED_TO_W4
+
+Reason:
+
+- Ready.
+`,
 		finalize: async () => `<finalize>{"memory_decisions":[]}</finalize>`,
 		...over,
 	};
@@ -64,7 +74,14 @@ describe("runPipeline", () => {
 		});
 		expect(result.ok).toBe(true);
 		const phases = events.filter((e) => e.type === "phase_start").map((e) => (e as any).phase);
-		expect(phases).toEqual(["W0", "W1", "W0.5", "W2/3", "W4"]);
+		expect(phases).toEqual(["W0", "W1", "W0.5", "W2/3", "W3.5", "W4"]);
+		expect(fs.existsSync(path.join(dir, ".minimum", "tasks", "image_upload", "dag.json"))).toBe(true);
+		expect(fs.existsSync(path.join(dir, ".minimum", "tasks", "image_upload", "refinements", "initial.json"))).toBe(true);
+		expect(fs.existsSync(path.join(dir, ".minimum", "tasks", "image_upload", "contracts", "initial.json"))).toBe(true);
+		expect(fs.existsSync(path.join(dir, ".minimum", "tasks", "image_upload", "mission-checks", "1.md"))).toBe(true);
+		expect(fs.existsSync(path.join(dir, ".minimum", "tasks", "image_upload", "mission-checks", "1.json"))).toBe(true);
+		const index = fs.readFileSync(path.join(dir, ".minimum", "index.json"), "utf-8");
+		expect(index).toContain("pipeline_artifact");
 	});
 
 	it("runs perception then implementation tasks", async () => {
@@ -172,5 +189,175 @@ describe("runPipeline", () => {
 		});
 		// needs_refine task without globs → refine errors, but pipeline still completes
 		expect(result.ok).toBe(true);
+	});
+
+	it("writes inline refine contextPack and passes its path to the worker", async () => {
+		const contextPack = "# Context Pack: T2-1\n\n## Goal\nImplement upload.";
+		const seenContextPacks = new Map<string, string | undefined>();
+		const executor: WorkerExecutor = {
+			run: async (contract) => {
+				seenContextPacks.set(contract.taskId, contract.inputs.contextPack);
+				return OK;
+			},
+		};
+		const planner = stubPlanner({
+			refine: async () =>
+				`<refine>${JSON.stringify({
+					tasks: [
+						{
+							taskId: "T2-1",
+							allowedGlobs: ["src/upload.ts"],
+							acceptance: ["returns 201"],
+							contextPack,
+						},
+					],
+				})}</refine>`,
+		});
+
+		const result = await runPipeline("image upload backend", {
+			projectRoot: dir,
+			planner,
+			executor,
+		});
+
+		expect(result.ok).toBe(true);
+		const contextPath = seenContextPacks.get("T2-1");
+		expect(contextPath).toBeTruthy();
+		expect(contextPath).toContain(path.join(".minimum", "tasks", "image_upload", "context-packs", "T2-1.md"));
+		expect(fs.readFileSync(contextPath!, "utf-8")).toContain("Implement upload.");
+	});
+
+	it("loops W3.5 repair tasks back through W1/W0.5/W2/3 once", async () => {
+		const ran: string[] = [];
+		const executor: WorkerExecutor = {
+			run: async (contract) => {
+				ran.push(contract.taskId);
+				return OK;
+			},
+		};
+		let checks = 0;
+		const planner = stubPlanner({
+			refine: async (dag) => {
+				const taskIds = dag.phases.flatMap((p) => p.tasks.map((t) => t.id));
+				return `<refine>${JSON.stringify({
+					tasks: taskIds
+						.filter((id) => id === "T2-1" || id.startsWith("T3.5-"))
+						.map((taskId) => ({
+							taskId,
+							allowedGlobs: [`src/${taskId}.ts`],
+							acceptance: [`${taskId} done`],
+						})),
+				})}</refine>`;
+			},
+			checkMission: async () => {
+				checks++;
+				if (checks === 1) {
+					return `# W3.5 Loop Detection Report
+
+## 1. Final Decision
+
+Decision: LOOP_BACK_TO_W1
+
+Reason:
+
+- One blocking gap remains.
+
+## 7. Loop-Back Tasks for W1
+
+### Task 1: Implement missing rejected-file handling
+
+- Priority: P1
+- Blocking: Yes
+- Reason: Rejected files are not covered.
+- Source issue: W3.5 found a missing path.
+- Expected outcome: Rejected files produce a clear error.
+- Suggested owner agent: code_executor
+- Acceptance criteria:
+  - Rejected files are handled.
+`;
+				}
+				return `Decision: APPROVED_TO_W4`;
+			},
+		});
+		const events: PipelineEvent[] = [];
+
+		const result = await runPipeline("image upload backend", {
+			projectRoot: dir,
+			planner,
+			executor,
+			onEvent: (e) => events.push(e),
+		});
+
+		expect(result.ok).toBe(true);
+		expect(checks).toBe(2);
+		expect(ran).toContain("T3.5-1-1");
+		expect(fs.existsSync(path.join(dir, ".minimum", "tasks", "image_upload", "repair-dags", "1.json"))).toBe(true);
+		expect(fs.existsSync(path.join(dir, ".minimum", "tasks", "image_upload", "contracts", "repair-1.json"))).toBe(true);
+		expect(fs.existsSync(path.join(dir, ".minimum", "tasks", "image_upload", "mission-checks", "2.md"))).toBe(true);
+		const phases = events.filter((e) => e.type === "phase_start").map((e) => (e as any).phase);
+		expect(phases).toEqual([
+			"W0",
+			"W1",
+			"W0.5",
+			"W2/3",
+			"W3.5",
+			"W1",
+			"W0.5",
+			"W2/3",
+			"W3.5",
+			"W4",
+		]);
+	});
+
+	it("stops when W3.5 asks for another loop after the repair cap", async () => {
+		const planner = stubPlanner({
+			refine: async (dag) => {
+				const taskIds = dag.phases.flatMap((p) => p.tasks.map((t) => t.id));
+				return `<refine>${JSON.stringify({
+					tasks: taskIds
+						.filter((id) => id === "T2-1" || id.startsWith("T3.5-"))
+						.map((taskId) => ({
+							taskId,
+							allowedGlobs: [`src/${taskId}.ts`],
+							acceptance: [`${taskId} done`],
+						})),
+				})}</refine>`;
+			},
+			checkMission: async () => `# W3.5 Loop Detection Report
+
+## 1. Final Decision
+
+Decision: LOOP_BACK_TO_W1
+
+Reason:
+
+- Still incomplete.
+
+## 7. Loop-Back Tasks for W1
+
+### Task 1: Keep fixing missing path
+
+- Priority: P1
+- Blocking: Yes
+- Reason: Still missing.
+- Source issue: W3.5 found a missing path.
+- Expected outcome: Missing path is fixed.
+- Suggested owner agent: code_executor
+- Acceptance criteria:
+  - Missing path works.
+`,
+		});
+		const events: PipelineEvent[] = [];
+
+		const result = await runPipeline("image upload backend", {
+			projectRoot: dir,
+			planner,
+			executor: okExecutor(),
+			onEvent: (e) => events.push(e),
+		});
+
+		expect(result.ok).toBe(false);
+		expect(result.error).toMatch(/another loop-back/);
+		expect(events.some((e) => e.type === "pipeline_error" && (e as any).phase === "W3.5")).toBe(true);
 	});
 });

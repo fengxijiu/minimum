@@ -131,13 +131,17 @@ describe("PersonaRegistry", () => {
 			expect(getPersona("master_planner").model).toBe("mimo-v2.5-pro");
 		});
 
-		it("vision uses omni model (image support)", () => {
-			expect(getPersona("vision").model).toBe("mimo-omni");
+		it("vision uses v2.5", () => {
+			expect(getPersona("vision").model).toBe("mimo-v2.5");
 		});
 
-		it("all non-master, non-vision workers use v2.5", () => {
+		it("context_builder uses v2.5-pro", () => {
+			expect(getPersona("context_builder").model).toBe("mimo-v2.5-pro");
+		});
+
+		it("remaining non-master workers use v2.5", () => {
 			for (const p of listPersonas()) {
-				if (p.id === "master_planner" || p.id === "vision") continue;
+				if (p.id === "master_planner" || p.id === "context_builder") continue;
 				expect(p.model).toBe("mimo-v2.5");
 			}
 		});

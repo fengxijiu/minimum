@@ -1,8 +1,13 @@
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import {
 	applyFinalize,
 	compileFinalize,
+	contextPackPath,
 	listCandidates,
 	loadCanonicalMemory,
+	memoryIndexPath,
+	refreshMemoryIndex,
 	type FinalizeReport,
 } from "../memory/governance/index.js";
 import type { MemoryCandidate } from "../memory/governance/types.js";
@@ -11,6 +16,21 @@ import { compileCoarse, classifyTaskType } from "./TaskCompiler.js";
 import { buildWaves } from "./TaskGraph.js";
 import type { CoarseDag, TaskContract, TaskInputs } from "./TaskContract.js";
 import { compileRefinement, refineDag, type RefinementEntry } from "./Refiner.js";
+import {
+	compileMissionCheck,
+	loopBackTasksToCoarseTasks,
+	type MissionCheckInput,
+	type MissionLoopBackTask,
+} from "./MissionChecker.js";
+import {
+	emptyArtifactPaths,
+	writeContracts,
+	writeDag,
+	writeMissionCheck,
+	writeRefinement,
+	writeRepairDag,
+	type ArtifactPaths,
+} from "./PipelineArtifactStore.js";
 import { schedule, type WaveEvent } from "./WaveScheduler.js";
 import type { TaskResult, WorkerExecutor } from "./TaskRunner.js";
 
@@ -18,14 +38,15 @@ import type { TaskResult, WorkerExecutor } from "./TaskRunner.js";
  * MiMoPipeline — drive a user request through the W0–W4 wave pipeline.
  *
  * This is the top-level wiring that ties the orchestration and memory layers
- * together. The master_planner's three LLM touchpoints (compile / refine /
- * finalize) are injected via a PlannerBridge so the control flow is unit-
+ * together. The planner/checker LLM touchpoints (compile / refine /
+ * mission check / finalize) are injected via a PlannerBridge so the control flow is unit-
  * testable with stubs; workers run through an injected WorkerExecutor.
  *
  *   W0   load canonical memory → master compiles coarse DAG
  *   W1   perception workers (vision / repo_scout / context_builder) run
  *   W0.5 master refines → final TaskContracts
  *   W2/3 implementation + validation workers run
+ *   W3.5 inline mission_checker accepts or routes repair tasks back to W1
  *   W4   master finalizes → memory governance applied, staging cleared
  */
 
@@ -35,7 +56,7 @@ export const PERCEPTION_PERSONAS: ReadonlySet<PersonaId> = new Set<PersonaId>([
 	"context_builder",
 ]);
 
-export type PipelinePhase = "W0" | "W1" | "W0.5" | "W2/3" | "W4";
+export type PipelinePhase = "W0" | "W1" | "W0.5" | "W2/3" | "W3.5" | "W4";
 
 export type PipelineEvent =
 	| { type: "phase_start"; phase: PipelinePhase; label: string }
@@ -47,12 +68,14 @@ export type PipelineEvent =
 	| { type: "pipeline_complete"; results: TaskResult[] }
 	| { type: "pipeline_error"; phase: PipelinePhase; error: string };
 
-/** The three master_planner LLM touchpoints. */
+/** Planner/checker LLM touchpoints used by the pipeline. */
 export interface PlannerBridge {
 	/** W0: returns master output containing a <task_dag> block. */
 	compile(userRequest: string, memoryPrefix: string): Promise<string>;
 	/** W0.5: returns master output containing a <refine> block. */
-	refine(dag: CoarseDag, perception: TaskResult[]): Promise<string>;
+	refine(dag: CoarseDag, perception: TaskResult[], memoryPrefix: string): Promise<string>;
+	/** W3.5: returns a mission checker Markdown report. */
+	checkMission(input: MissionCheckInput): Promise<string>;
 	/** W4: returns master output containing a <finalize> block. */
 	finalize(
 		results: TaskResult[],
@@ -66,6 +89,7 @@ export interface PipelineOptions {
 	planner: PlannerBridge;
 	executor: WorkerExecutor;
 	onEvent?: (event: PipelineEvent) => void;
+	maxMissionRepairLoops?: number;
 }
 
 export interface PipelineResult {
@@ -82,6 +106,12 @@ export async function runPipeline(
 	const emit = opts.onEvent ?? (() => {});
 	const taskType = classifyTaskType(userRequest);
 	const allResults: TaskResult[] = [];
+	const resolvedContracts: TaskContract[] = [];
+	const refinements: RefinementEntry[] = [];
+	const knownIssues: string[] = [];
+	const artifactPaths = emptyArtifactPaths();
+	artifactPaths.memoryIndex = memoryIndexPath(opts.projectRoot);
+	const maxMissionRepairLoops = opts.maxMissionRepairLoops ?? 1;
 
 	// ── W0: load memory, compile coarse DAG ──────────────────────────────────
 	emit({ type: "phase_start", phase: "W0", label: "compile" });
@@ -106,54 +136,122 @@ export async function runPipeline(
 	}
 	const dag = compiled.dag;
 	const taskCount = dag.phases.reduce((n, p) => n + p.tasks.length, 0);
+	try {
+		artifactPaths.dag = await writeDag(opts.projectRoot, dag.epicId, dag);
+		await refreshMemoryIndex(opts.projectRoot);
+	} catch (e) {
+		return fail(emit, "W0", e);
+	}
 	emit({ type: "dag_compiled", epicId: dag.epicId, taskCount });
 
 	const baseInputs: TaskInputs = { userGoal: userRequest, artifacts: [], constraints: [] };
 
-	// ── W1: perception ───────────────────────────────────────────────────────
-	emit({ type: "phase_start", phase: "W1", label: "perception" });
-	const perceptionDag = filterDag(dag, (p) => PERCEPTION_PERSONAS.has(p));
-	const { contracts: perceptionContracts } = refineDag(perceptionDag, {
-		inputs: baseInputs,
-		refinement: new Map(),
+	const initialPass = await runDagPass({
+		dag,
+		opts,
+		emit,
+		allResults,
+		resolvedContracts,
+		refinements,
+		knownIssues,
+		baseInputs,
+		memoryText: memory.text,
+		labelSuffix: "",
+		passId: "initial",
+		artifactPaths,
 	});
-	if (perceptionContracts.length > 0) {
-		try {
-			const perceptionResults = await runWaves(perceptionContracts, opts, emit);
-			allResults.push(...perceptionResults);
-		} catch (e) {
-			return fail(emit, "W1", e, allResults);
-		}
-	}
+	if (!initialPass.ok) return initialPass.result;
 
-	// ── W0.5: refine ──────────────────────────────────────────────────────────
-	emit({ type: "phase_start", phase: "W0.5", label: "refine" });
-	let refinement: Map<string, RefinementEntry> = new Map();
-	try {
-		const refineText = await opts.planner.refine(dag, allResults);
-		const parsed = compileRefinement(refineText);
-		if (parsed.ok) refinement = parsed.entries;
-	} catch (e) {
-		return fail(emit, "W0.5", e);
-	}
-	const { contracts: allContracts, errors: refineErrors } = refineDag(dag, {
-		inputs: baseInputs,
-		refinement,
-	});
-	emit({ type: "refine_done", contractCount: allContracts.length, errorCount: refineErrors.length });
-
-	// ── W2/3: implementation + validation (exclude perception, already run) ───
-	emit({ type: "phase_start", phase: "W2/3", label: "implement + validate" });
-	const implContracts = stripPerceptionDeps(
-		allContracts.filter((c) => !PERCEPTION_PERSONAS.has(c.personaId)),
-	);
-	if (implContracts.length > 0) {
+	let missionLoopIndex = 0;
+	while (true) {
+		emit({ type: "phase_start", phase: "W3.5", label: "mission check" });
+		let missionText: string;
 		try {
-			const implResults = await runWaves(implContracts, opts, emit);
-			allResults.push(...implResults);
+			missionText = await opts.planner.checkMission({
+				userRequest,
+				dag,
+				refinements,
+				results: allResults,
+				canonicalMemory: memory.text,
+				knownIssues,
+				loopIndex: missionLoopIndex,
+				maxRepairLoops: maxMissionRepairLoops,
+				artifactPaths,
+			});
 		} catch (e) {
-			return fail(emit, "W2/3", e, allResults);
+			return fail(emit, "W3.5", e, allResults);
 		}
+
+		const mission = compileMissionCheck(missionText);
+		if (!mission.ok) {
+			return fail(emit, "W3.5", mission.error, allResults);
+		}
+		try {
+			const written = await writeMissionCheck(
+				opts.projectRoot,
+				dag.epicId,
+				missionLoopIndex + 1,
+				missionText,
+				mission.report,
+			);
+			artifactPaths.missionChecks.push(written.markdownPath, written.jsonPath);
+			await refreshMemoryIndex(opts.projectRoot);
+		} catch (e) {
+			return fail(emit, "W3.5", e, allResults);
+		}
+
+		if (mission.report.decision === "APPROVED_TO_W4") {
+			break;
+		}
+		if (mission.report.decision === "NEEDS_HUMAN_CONFIRMATION") {
+			return fail(
+				emit,
+				"W3.5",
+				`mission checker requires human confirmation${mission.report.reason ? `: ${mission.report.reason}` : ""}`,
+				allResults,
+			);
+		}
+		if (missionLoopIndex >= maxMissionRepairLoops) {
+			return fail(
+				emit,
+				"W3.5",
+				`mission checker requested another loop-back after ${maxMissionRepairLoops} repair loop(s)`,
+				allResults,
+			);
+		}
+		if (mission.report.tasks.length === 0) {
+			return fail(emit, "W3.5", "mission checker requested loop-back but provided no tasks", allResults);
+		}
+
+		const repairDag = buildRepairDag(dag.epicId, missionLoopIndex, mission.report.tasks);
+		try {
+			const repairDagPath = await writeRepairDag(
+				opts.projectRoot,
+				dag.epicId,
+				missionLoopIndex + 1,
+				repairDag,
+			);
+			artifactPaths.repairDags.push(repairDagPath);
+			await refreshMemoryIndex(opts.projectRoot);
+		} catch (e) {
+			return fail(emit, "W3.5", e, allResults);
+		}
+		missionLoopIndex++;
+		const repairPass = await runDagPass({
+			dag: repairDag,
+			opts,
+			emit,
+			allResults,
+			resolvedContracts,
+			refinements,
+			knownIssues,
+			baseInputs,
+			memoryText: memory.text,
+			labelSuffix: " repair",
+			passId: `repair-${missionLoopIndex}`,
+			artifactPaths,
+		});
+		if (!repairPass.ok) return repairPass.result;
 	}
 
 	// ── W4: finalize + memory governance ──────────────────────────────────────
@@ -164,7 +262,7 @@ export async function runPipeline(
 		const finalizeText = await opts.planner.finalize(allResults, candidates, memory.text);
 		const fin = compileFinalize(finalizeText);
 		if (fin.ok) {
-			const epicTaskIds = allContracts.map((c) => c.taskId);
+			const epicTaskIds = resolvedContracts.map((c) => c.taskId);
 			finalizeReport = await applyFinalize(opts.projectRoot, fin.finalize, candidates, {
 				epicTaskIds,
 			});
@@ -180,6 +278,132 @@ export async function runPipeline(
 	return { ok: true, results: allResults, ...(finalizeReport && { finalize: finalizeReport }) };
 }
 
+interface DagPassOptions {
+	dag: CoarseDag;
+	opts: PipelineOptions;
+	emit: (e: PipelineEvent) => void;
+	allResults: TaskResult[];
+	resolvedContracts: TaskContract[];
+	refinements: RefinementEntry[];
+	knownIssues: string[];
+	baseInputs: TaskInputs;
+	memoryText: string;
+	labelSuffix: string;
+	passId: string;
+	artifactPaths: ArtifactPaths;
+}
+
+type DagPassResult = { ok: true } | { ok: false; result: PipelineResult };
+
+async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
+	const {
+		dag,
+		opts,
+		emit,
+		allResults,
+		resolvedContracts,
+		refinements,
+		knownIssues,
+		baseInputs,
+		memoryText,
+		labelSuffix,
+		passId,
+		artifactPaths,
+	} = args;
+
+	// ── W1: perception ───────────────────────────────────────────────────────
+	emit({ type: "phase_start", phase: "W1", label: `perception${labelSuffix}` });
+	const perceptionDag = filterDag(dag, (p) => PERCEPTION_PERSONAS.has(p));
+	const { contracts: perceptionContracts } = refineDag(perceptionDag, {
+		inputs: baseInputs,
+		refinement: new Map(),
+	});
+	if (perceptionContracts.length > 0) {
+		try {
+			const perceptionResults = await runWaves(perceptionContracts, opts, emit);
+			allResults.push(...perceptionResults);
+		} catch (e) {
+			return { ok: false, result: fail(emit, "W1", e, allResults) };
+		}
+	}
+
+	// ── W0.5: refine ──────────────────────────────────────────────────────────
+	emit({ type: "phase_start", phase: "W0.5", label: `refine${labelSuffix}` });
+	let refinement: Map<string, RefinementEntry> = new Map();
+	let refinementParsed = false;
+	try {
+		const refineText = await opts.planner.refine(dag, allResults, memoryText);
+		const parsed = compileRefinement(refineText);
+		if (parsed.ok) {
+			refinement = parsed.entries;
+			refinementParsed = true;
+			await writeInlineContextPacks(opts.projectRoot, dag.epicId, refinement);
+			refinements.push(...refinement.values());
+		} else {
+			knownIssues.push(`W0.5 refine parse failed for ${dag.epicId}: ${parsed.error}`);
+			const refinementPath = await writeRefinement(
+				opts.projectRoot,
+				dag.epicId,
+				passId,
+				[],
+				parsed.error,
+			);
+			artifactPaths.refinements.push(refinementPath);
+			await refreshMemoryIndex(opts.projectRoot);
+		}
+	} catch (e) {
+		return { ok: false, result: fail(emit, "W0.5", e, allResults) };
+	}
+	if (refinementParsed) {
+		try {
+			const refinementPath = await writeRefinement(
+				opts.projectRoot,
+				dag.epicId,
+				passId,
+				refinement.values(),
+			);
+			artifactPaths.refinements.push(refinementPath);
+			await refreshMemoryIndex(opts.projectRoot);
+		} catch (e) {
+			return { ok: false, result: fail(emit, "W0.5", e, allResults) };
+		}
+	}
+	const { contracts: allContracts, errors: refineErrors } = refineDag(dag, {
+		inputs: baseInputs,
+		refinement,
+	});
+	resolvedContracts.push(...allContracts);
+	if (refineErrors.length > 0) {
+		for (const error of refineErrors) {
+			knownIssues.push(`W0.5 ${error.taskId}: ${error.errors.join("; ")}`);
+		}
+	}
+	try {
+		const contractsPath = await writeContracts(opts.projectRoot, dag.epicId, passId, allContracts, refineErrors);
+		artifactPaths.contracts.push(contractsPath);
+		await refreshMemoryIndex(opts.projectRoot);
+	} catch (e) {
+		return { ok: false, result: fail(emit, "W0.5", e, allResults) };
+	}
+	emit({ type: "refine_done", contractCount: allContracts.length, errorCount: refineErrors.length });
+
+	// ── W2/3: implementation + validation (exclude perception, already run) ───
+	emit({ type: "phase_start", phase: "W2/3", label: `implement + validate${labelSuffix}` });
+	const implContracts = stripPerceptionDeps(
+		allContracts.filter((c) => !PERCEPTION_PERSONAS.has(c.personaId)),
+	);
+	if (implContracts.length > 0) {
+		try {
+			const implResults = await runWaves(implContracts, opts, emit);
+			allResults.push(...implResults);
+		} catch (e) {
+			return { ok: false, result: fail(emit, "W2/3", e, allResults) };
+		}
+	}
+
+	return { ok: true };
+}
+
 async function runWaves(
 	contracts: TaskContract[],
 	opts: PipelineOptions,
@@ -191,6 +415,40 @@ async function runWaves(
 		executor: opts.executor,
 		onEvent: (event) => emit({ type: "wave", event }),
 	});
+}
+
+async function writeInlineContextPacks(
+	projectRoot: string,
+	epicId: string,
+	refinement: Map<string, RefinementEntry>,
+): Promise<void> {
+	for (const entry of refinement.values()) {
+		const text = entry.contextPack?.trim();
+		if (!text) continue;
+
+		const filePath = contextPackPath(projectRoot, epicId, entry.taskId);
+		await fs.mkdir(path.dirname(filePath), { recursive: true });
+		await fs.writeFile(filePath, text.endsWith("\n") ? text : `${text}\n`, "utf-8");
+		entry.contextPackPath = filePath;
+	}
+	await refreshMemoryIndex(projectRoot);
+}
+
+function buildRepairDag(
+	epicId: string,
+	loopIndex: number,
+	tasks: MissionLoopBackTask[],
+): CoarseDag {
+	return {
+		epicId,
+		phases: [
+			{
+				id: `P3.5-repair-${loopIndex + 1}`,
+				name: "mission-check repair",
+				tasks: loopBackTasksToCoarseTasks(tasks, loopIndex),
+			},
+		],
+	};
 }
 
 /** Keep only tasks whose persona satisfies the predicate; drop empty phases. */

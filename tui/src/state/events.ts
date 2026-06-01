@@ -32,6 +32,7 @@ export type AgentEvent =
   | { type: 'approval.change'; mode: ApprovalMode }
   | { type: 'mode.change'; mode: Mode }
   | { type: 'ctx.update'; used: number; max?: number }
+  | { type: 'pet.toggle' }
   // plan
   | { type: 'plan.set'; title: string; steps: PlanStep[] }
   | { type: 'plan.step.update'; index: number; status: PlanStep['status'] }

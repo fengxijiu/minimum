@@ -270,7 +270,7 @@ export async function createEngineRunner(
     const sessionFlusher: SessionFlusher | undefined = sessionManager
       ? { flushSync: () => sessionManager.flushSync() }
       : undefined;
-    // Pipeline (orchestrator) runner — the W0–W4 multi-persona pipeline, run
+    // Pipeline (orchestrator) runner — the W0–W4 multi-persona pipeline with W3.5, run
     // through the same client behind the Runner contract. Optional: only wired
     // when the built engine exposes PipelineBridge.
     let pipelineRunner: Runner | undefined;

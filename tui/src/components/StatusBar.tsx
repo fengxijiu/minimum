@@ -62,7 +62,7 @@ export const StatusBar = React.memo(function StatusBar({ state, approvalMode, ed
         {badge && (
           <>
             <Text color={theme.muted}> </Text>
-            <Text color={badge.color}>[{badge.label}]</Text>
+            <Text color={badge.color}>[perm {badge.label}]</Text>
           </>
         )}
         {editBadge && (

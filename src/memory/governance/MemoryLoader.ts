@@ -1,5 +1,6 @@
 import * as fs from "node:fs/promises";
 import { CharBudget } from "../../utils/tokenBudget.js";
+import { refreshMemoryIndex } from "./MemoryIndex.js";
 import { canonicalPath, getOrInitManifest } from "./MemoryManifest.js";
 import type { Manifest } from "./types.js";
 
@@ -38,6 +39,7 @@ export async function loadCanonicalMemory(
 	opts: LoadOptions = {},
 ): Promise<LoadedMemory> {
 	const manifest = opts.manifest ?? (await getOrInitManifest(projectRoot));
+	await refreshMemoryIndex(projectRoot, manifest);
 	const budget = new CharBudget(opts.maxTokens ?? DEFAULT_MAX_TOKENS);
 
 	const keys = resolveLoadKeys(manifest, taskType);

@@ -72,7 +72,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 	out.set("vision", {
 		id: "vision",
 		kind: "worker",
-		model: "mimo-omni",
+		model: "mimo-v2.5",
 		systemPrompt: buildWorkerPrompt("vision.md", footer),
 		toolAllowlist: ["read_file", "list_directory"],
 		toolDenylist: ["write_file", "edit_file", "apply_patch", "exec_shell"],
@@ -115,7 +115,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 	out.set("context_builder", {
 		id: "context_builder",
 		kind: "worker",
-		model: "mimo-v2.5",
+		model: "mimo-v2.5-pro",
 		systemPrompt: buildWorkerPrompt("context-builder.md", footer),
 		toolAllowlist: ["read_file", "list_directory", "write_file"],
 		toolDenylist: ["edit_file", "apply_patch", "exec_shell"],
