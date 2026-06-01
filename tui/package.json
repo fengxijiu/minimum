@@ -3,9 +3,6 @@
   "version": "0.1.0",
   "description": "Interactive coding CLI · MiMo base model · Ink TUI",
   "type": "module",
-  "bin": {
-    "minimum": "./dist/cli.js"
-  },
   "scripts": {
     "dev": "tsx src/cli.tsx",
     "build": "tsc",

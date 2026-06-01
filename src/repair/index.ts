@@ -1,4 +1,3 @@
-export * from "./JsonRepair.js";
 export * from "./TypeRepair.js";
 export * from "./ValueRepair.js";
 export * from "./PathRepair.js";
