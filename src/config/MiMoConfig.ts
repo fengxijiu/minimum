@@ -64,6 +64,25 @@ export interface MemoryConfig {
 	maxPreludeEntries?: number;
 	/** 每个作用域保留的最大记忆条数（默认 200） */
 	maxStoredEntries?: number;
+	/** 是否启用单 Agent 记忆系统（默认 true） */
+	enabled?: boolean;
+	/** 记忆注入配置 */
+	injection?: {
+		/** 每次注入到上下文的最大 token 数（默认 2500） */
+		maxTokens?: number;
+	};
+	/** 记忆写回配置 */
+	writeback?: {
+		/** 自动合并项目级记忆（默认 true） */
+		autoMergeProject?: boolean;
+		/** 自动合并全局记忆（默认 false） */
+		autoMergeGlobal?: boolean;
+	};
+	/** 记忆压缩配置 */
+	compaction?: {
+		/** 是否启用记忆压缩（默认 true） */
+		enabled?: boolean;
+	};
 }
 
 export interface MiMoConfig {
@@ -147,6 +166,16 @@ export const DEFAULT_MIMO_CONFIG: Required<MiMoConfig> = {
 		globalBasePath: "",
 		maxPreludeEntries: 8,
 		maxStoredEntries: 200,
+		injection: {
+			maxTokens: 2500,
+		},
+		writeback: {
+			autoMergeProject: true,
+			autoMergeGlobal: false,
+		},
+		compaction: {
+			enabled: true,
+		},
 	},
 };
 
@@ -170,5 +199,25 @@ export function mergeConfig(user: MiMoConfig = {}): Required<MiMoConfig> {
 		validation: { ...DEFAULT_MIMO_CONFIG.validation, ...user.validation },
 		completeness: { ...DEFAULT_MIMO_CONFIG.completeness, ...user.completeness },
 		memory: { ...DEFAULT_MIMO_CONFIG.memory, ...user.memory },
+		completeness: {
+			...DEFAULT_MIMO_CONFIG.completeness,
+			...user.completeness,
+		},
+		memory: {
+			...DEFAULT_MIMO_CONFIG.memory,
+			...user.memory,
+			injection: {
+				...DEFAULT_MIMO_CONFIG.memory.injection,
+				...user.memory?.injection,
+			},
+			writeback: {
+				...DEFAULT_MIMO_CONFIG.memory.writeback,
+				...user.memory?.writeback,
+			},
+			compaction: {
+				...DEFAULT_MIMO_CONFIG.memory.compaction,
+				...user.memory?.compaction,
+			},
+		},
 	};
 }
