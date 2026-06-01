@@ -7,6 +7,14 @@ import {
 	PROJECT_CONFIG_PATH,
 	getGlobalConfigPath,
 } from "../config/loadMiMoConfig.js";
+import {
+	getGlobalMemoryRoot,
+	getMemoryFile,
+	getMemoryIndexPath,
+	getProjectMemoryRoot,
+	globalMemoryLayer,
+	projectMemoryLayer,
+} from "../memory/single/MemoryPaths.js";
 import type { Command, CommandContext, CommandResult } from "./types.js";
 
 // MiMo API 类型定义
@@ -661,21 +669,67 @@ export class InitCommand implements Command {
 
 	private async createDirectories(projectRoot: string): Promise<void> {
 		const home = os.homedir() || process.env.HOME || "~";
+		const projectMemoryRoot = getProjectMemoryRoot(projectRoot);
+		const globalMemoryRoot = getGlobalMemoryRoot(home);
 		const dirs = [
 			path.join(projectRoot, ".minimum"),
-			path.join(projectRoot, ".minimum", "memory"),
+			projectMemoryRoot,
 			path.join(projectRoot, ".minimum", "sessions"),
 			path.join(projectRoot, ".minimum", "checkpoints"),
 			path.join(projectRoot, ".minimum", "skills"),
 			path.join(projectRoot, ".minimum", "transcripts"),
 			path.join(home, ".minimum"),
-			path.join(home, ".minimum", "memory"),
+			globalMemoryRoot,
 			path.join(home, ".minimum", "sessions"),
 			path.join(home, ".minimum", "skills"),
 		];
 
 		for (const dir of dirs) {
 			await fs.mkdir(dir, { recursive: true });
+		}
+
+		await Promise.all([
+			this.ensureCanonicalMarkdownTemplates(projectRoot),
+			this.ensureGlobalMemoryIndex(home),
+		]);
+	}
+
+	private async ensureCanonicalMarkdownTemplates(projectRoot: string): Promise<void> {
+		const templates: Record<string, string> = {
+			project: "# Project Memory\n\n## Overview\n- Add stable project facts here.\n",
+			architecture:
+				"# Architecture Memory\n\n## Decisions\n- Record long-lived architectural decisions here.\n",
+			conventions:
+				"# Conventions Memory\n\n## Coding Standards\n- Record durable conventions here.\n",
+			"repo-map": "# Repo Map Memory\n\n## Key Paths\n- Document important paths here.\n",
+			tests: "# Test Memory\n\n## Commands\n- Record reliable test commands here.\n",
+		};
+
+		for (const [key, content] of Object.entries(templates)) {
+			await this.writeFileIfMissing(
+				getMemoryFile(projectMemoryLayer(projectRoot), key),
+				content,
+			);
+		}
+		await this.writeFileIfMissing(
+			getMemoryIndexPath(projectMemoryLayer(projectRoot)),
+			`${JSON.stringify({ version: 1, entries: [] }, null, 2)}\n`,
+		);
+	}
+
+	private async ensureGlobalMemoryIndex(home: string): Promise<void> {
+		await this.writeFileIfMissing(
+			getMemoryIndexPath(globalMemoryLayer(home)),
+			`${JSON.stringify({ version: 1, entries: [] }, null, 2)}\n`,
+		);
+	}
+
+	private async writeFileIfMissing(filePath: string, content: string): Promise<void> {
+		try {
+			await fs.access(filePath);
+		} catch {
+			await fs.mkdir(path.dirname(filePath), { recursive: true });
+			await fs.writeFile(filePath, content, "utf-8");
 		}
 	}
 
@@ -710,7 +764,7 @@ export class InitCommand implements Command {
 
 📂 Directories created:
    • .minimum/
-   • .minimum/memory/
+   • .minimum/memory/   (canonical markdown + auxiliary index.json)
    • .minimum/sessions/
    • .minimum/checkpoints/
    • .minimum/skills/
