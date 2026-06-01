@@ -2,6 +2,10 @@ import type { ApprovalRequest, ApprovalResponse } from "../approval/types.js";
 import { CapacityController } from "../capacity/CapacityController.js";
 import type { CapacityConfig, CapacitySnapshot } from "../capacity/types.js";
 import type { StreamChunk } from "../clients/MiMoClient.js";
+import type {
+	ISingleAgentMemoryManager,
+	MemoryInjectionResult,
+} from "../memory/single/types.js";
 import { StormBreaker } from "../repair/StormBreaker.js";
 import type { ChatMessage, ToolCall, ToolDefinition } from "../types/common.js";
 import type { ICompletenessChecker } from "../types/completeness.js";
@@ -46,6 +50,9 @@ const PRICE_INPUT_PER_M_USD = 0.4;
 const PRICE_CACHED_PER_M_USD = 0.04;
 const PRICE_OUTPUT_PER_M_USD = 1.6;
 
+const MEMORY_PRELUDE_START = "<!-- mimo-memory-prelude:start -->";
+const MEMORY_PRELUDE_END = "<!-- mimo-memory-prelude:end -->";
+
 // ============ Minimal collaborator interfaces ============
 
 export interface IStreamingClient {
@@ -82,6 +89,19 @@ export interface IApprovalManager {
 	checkApproval(request: ApprovalRequest): Promise<ApprovalResponse>;
 }
 
+export interface ILongTermMemoryManager {
+	buildPrelude(request: {
+		projectRoot?: string;
+		input?: string;
+		messages?: ChatMessage[];
+	}): Promise<{ injected: boolean; prelude: string }>;
+	writeback(request: {
+		projectRoot?: string;
+		input?: string;
+		messages?: ChatMessage[];
+	}): Promise<unknown>;
+}
+
 // ============ Types ============
 
 export interface MiMoLoopConfig {
@@ -91,6 +111,7 @@ export interface MiMoLoopConfig {
 	toolRepair?: IToolCallRepair;
 	completenessChecker?: ICompletenessChecker;
 	contextManager?: IContextManager;
+	memoryManager?: ISingleAgentMemoryManager;
 	hookManager?: IHookManager;
 	approvalManager?: IApprovalManager;
 	capacity?: Partial<CapacityConfig>;
@@ -118,6 +139,7 @@ export interface MiMoLoopConfig {
 		projectMemory?: MemoryPreludeRequest["projectMemory"];
 		globalMemory?: MemoryPreludeRequest["globalMemory"];
 	};
+	memoryManager?: ILongTermMemoryManager;
 }
 
 export interface LoopState {
@@ -172,6 +194,8 @@ export class MiMoLoop {
 	private steerQueue: string[] = [];
 	/** True when a steer was consumed this turn (avoids double-submit). */
 	private steerConsumed = false;
+	private currentUserInput = "";
+	private memoryWritebackDone = false;
 	/** First all-suppressed storm → self-correct; second → force summary. */
 	private selfCorrectedThisTurn = false;
 
@@ -210,9 +234,20 @@ export class MiMoLoop {
 		this.snapshotManager.reset();
 		this.selfCorrectedThisTurn = false;
 		this.steerConsumed = false;
+		this.currentUserInput = userInput;
+		this.memoryWritebackDone = false;
 
 		try {
-			// 1. 添加用户消息
+			// 1. 注入相关长期记忆，然后添加用户消息
+			if (this.config.memoryManager) {
+				const memory = await this.config.memoryManager.buildPrelude({
+					projectRoot: this.config.workingDirectory,
+					input: userInput,
+				});
+				if (memory.injected && memory.prelude) {
+					this.messages.push({ role: "system", content: memory.prelude });
+				}
+			}
 			this.messages.push({ role: "user", content: userInput });
 
 			// UserPromptSubmit hook
@@ -285,6 +320,8 @@ export class MiMoLoop {
 					yield { type: "capacity", snapshot };
 					await this.applyCapacityAction(snapshot, step);
 				}
+
+				await this.refreshMemoryPrelude();
 
 				// Healing：发送前修复消息（截断超大结果、修复配对）
 				const healed = healMessages(this.messages, MAX_TOOL_RESULT_CHARS);
@@ -602,6 +639,13 @@ export class MiMoLoop {
 			this.state.running = false;
 			const persistedMessages = filterMemoryPreludeMessages(this.messages);
 			this.config.sessionPersister?.persistFromLoop(persistedMessages, {
+			if (this.config.memoryManager) {
+				await this.config.memoryManager.writeback({
+					projectRoot: this.config.workingDirectory,
+					messages: this.messages,
+				}).catch(() => {});
+			}
+			this.config.sessionPersister?.persistFromLoop(this.messages, {
 				totalCostUsd: this.state.totalCostUsd,
 				totalTokens: this.state.totalTokens,
 				toolCalls: this.state.toolCalls,
@@ -628,6 +672,7 @@ export class MiMoLoop {
 		});
 
 		try {
+			await this.refreshMemoryPrelude();
 			const response = await this.callModel(this.abortController?.signal);
 			const summary = response.content || "No summary produced.";
 			this.messages.push(buildAssistantMessage(summary, [], response.reasoningContent));
@@ -768,6 +813,79 @@ export class MiMoLoop {
 		}
 	}
 
+	private isMemoryPreludeMessage(message: ChatMessage): boolean {
+		return (
+			message.role === "system" &&
+			typeof message.content === "string" &&
+			message.content.includes(MEMORY_PRELUDE_START)
+		);
+	}
+
+	private getMessagesWithoutMemoryPrelude(): ChatMessage[] {
+		return this.messages.filter((message) => !this.isMemoryPreludeMessage(message));
+	}
+
+	private async refreshMemoryPrelude(): Promise<void> {
+		const memoryManager = this.config.memoryManager;
+		if (!memoryManager) return;
+
+		let result: MemoryInjectionResult;
+		try {
+			result = await memoryManager.buildPrelude({
+				messages: this.getMessagesWithoutMemoryPrelude(),
+				workingDirectory: this.config.workingDirectory,
+				userInput: this.currentUserInput,
+				turnIndex: this.state.currentStep,
+				maxTokens: this.config.maxTokens,
+				signal: this.abortController?.signal,
+			});
+		} catch {
+			return;
+		}
+
+		const existingIndex = this.messages.findIndex((message) =>
+			this.isMemoryPreludeMessage(message),
+		);
+		const prelude = result.prelude.trim();
+
+		if (!prelude) {
+			if (existingIndex >= 0) this.messages.splice(existingIndex, 1);
+			return;
+		}
+
+		const content = [MEMORY_PRELUDE_START, prelude, MEMORY_PRELUDE_END].join("\n");
+		if (existingIndex >= 0) {
+			this.messages[existingIndex] = { ...this.messages[existingIndex]!, content };
+			return;
+		}
+
+		let insertAt = 0;
+		while (this.messages[insertAt]?.role === "system") insertAt++;
+		this.messages.splice(insertAt, 0, { role: "system", content });
+	}
+
+	private async writebackMemory(): Promise<void> {
+		const memoryManager = this.config.memoryManager;
+		if (!memoryManager || this.memoryWritebackDone) return;
+		this.memoryWritebackDone = true;
+
+		try {
+			await memoryManager.writeback({
+				messages: this.getMessagesWithoutMemoryPrelude(),
+				workingDirectory: this.config.workingDirectory,
+				userInput: this.currentUserInput,
+				turnIndex: this.state.currentStep,
+				totalCostUsd: this.state.totalCostUsd,
+				totalTokens: this.state.totalTokens,
+				toolCalls: this.state.toolCalls,
+				steps: this.state.currentStep,
+				signal: this.abortController?.signal,
+			});
+		} catch {
+			// Memory writeback is best-effort and must not change loop semantics.
+		}
+	}
+
 	private async runHooks(
 		event: "UserPromptSubmit" | "PreToolUse" | "PostToolUse" | "Stop",
 		ctx: {
@@ -807,12 +925,15 @@ export class MiMoLoop {
 		const firstUserMessage = this.messages.find((message) => message.role === "user");
 		const taskState: TaskState = {
 			objective: firstUserMessage?.content || "",
+		const messages = this.getMessagesWithoutMemoryPrelude();
+		const taskState: TaskState = {
+			objective: messages[0]?.content || "",
 			currentStep: this.state.currentStep,
 			completedSubtasks: [],
 			pendingSubtasks: [],
 		};
 		const result = await this.config.contextManager.optimize({
-			messages: this.messages,
+			messages,
 			taskState,
 			maxTokens: this.config.maxTokens || 131072,
 		});
