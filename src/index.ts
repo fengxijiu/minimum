@@ -69,6 +69,20 @@ export {
 	VolatileScratch,
 	RuntimeMemory,
 } from "./memory/RuntimeMemory.js";
+export {
+	MemoryRetriever,
+	retrieveMemory,
+	extractKeywords,
+	extractRecentFiles,
+} from "./memory/single/index.js";
+export type {
+	MemoryLayer,
+	MemoryMessage,
+	MemoryRetrieverOptions,
+	RetrievedMemory,
+	RetrievedMemoryEntry,
+	RetrieveMemoryQuery,
+} from "./memory/single/index.js";
 
 // Commands system
 export { CommandRegistry, createDefaultRegistry } from "./commands/index.js";
