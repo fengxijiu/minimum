@@ -19,7 +19,7 @@ import {
   type TuiSession,
 } from './session.js';
 import { useAgentStore, useSlice, type Dispatch } from './state/store.js';
-import type { AppState, Message, FileEntry, SessionState, Chip, PlanStep, PendingState, ApprovalMode, EditMode, UsageInfo, Mode, StagedEdit } from './types.js';
+import type { AppState, Message, FileEntry, SessionState, Chip, PlanStep, PendingState, ApprovalMode, UsageInfo, Mode, StagedEdit } from './types.js';
 
 const PLAN_STATUS: Record<UiPlanStatus, PlanStep['status']> = {
   pending: 'next',
@@ -115,16 +115,15 @@ const ChatZone = React.memo(function ChatZone({
 
 /** StatusBar zone — only re-renders on status/usage changes. */
 const StatusZone = React.memo(function StatusZone({
-  statusState, approvalMode, editMode, ctxUsed, ctxMax, hint, usage, mcpLoading,
+  statusState, approvalMode, ctxUsed, ctxMax, hint, usage, mcpLoading,
 }: {
-  statusState: SessionState; approvalMode?: ApprovalMode; editMode?: EditMode;
+  statusState: SessionState; approvalMode?: ApprovalMode;
   ctxUsed: number; ctxMax: number; hint: string; usage: UsageInfo; mcpLoading: AppState['mcpLoading'];
 }) {
   return (
     <StatusBar
       state={statusState}
       approvalMode={approvalMode}
-      editMode={editMode}
       ctxUsed={ctxUsed}
       ctxMax={ctxMax}
       hint={hint}
@@ -288,7 +287,6 @@ export function App({
         }
         if (o.patch.approvalMode) dispatch({ type: 'approval.change', mode: o.patch.approvalMode });
         if (o.patch.mode) dispatch({ type: 'mode.change', mode: o.patch.mode });
-        if (o.patch.editMode) dispatch({ type: 'edit.mode.change', mode: o.patch.editMode });
         if (o.note) dispatch({ type: 'system.push', text: o.note, tone: o.tone });
         return;
       case 'session.save': {
@@ -667,7 +665,6 @@ export function App({
   const sStreaming = useSlice(state, s => s.streaming);
   const sReasoning = useSlice(state, s => s.reasoning);
   const sApprovalMode = useSlice(state, s => s.approvalMode);
-  const sEditMode = useSlice(state, s => s.editMode);
   const sCtxUsed = useSlice(state, s => s.ctx.used);
   const sCtxMax = useSlice(state, s => s.ctx.max);
   const sUsage = useSlice(state, s => s.usage);
@@ -813,7 +810,6 @@ export function App({
         pending={sPending}
         hasMessages={sHasMessages}
         mode={sMode}
-        editMode={sEditMode}
         verbose={sVerbose}
         hasEdits={sHasEdits}
         onSubmit={handleSubmit}
@@ -828,7 +824,6 @@ export function App({
       <StatusZone
         statusState={statusState}
         approvalMode={sApprovalMode}
-        editMode={sEditMode}
         ctxUsed={sCtxUsed}
         ctxMax={sCtxMax}
         hint={[

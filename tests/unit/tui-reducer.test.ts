@@ -8,7 +8,6 @@ const base: AppState = {
 	branch: "main",
 	mode: "agent",
 	approvalMode: "auto-edit",
-	editMode: "review",
 	ctx: { used: 10, max: 200 },
 	files: [],
 	edits: [],
@@ -368,12 +367,6 @@ describe("TUI reducer", () => {
 		let s = reduce(base, { type: "usage.update", cost: 0.01 });
 		s = reduce(s, { type: "usage.update", cost: 0.02 });
 		expect(s.usage.sessionCost).toBeCloseTo(0.03);
-	});
-
-	// ── edit mode ─────────────────────────────────────────────────
-	it("edit.mode.change updates editMode", () => {
-		const s = reduce(base, { type: "edit.mode.change", mode: "auto" });
-		expect(s.editMode).toBe("auto");
 	});
 
 	it("edit.undo removes last edit and shows toast", () => {

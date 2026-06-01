@@ -44,7 +44,6 @@ export const COMMANDS: TuiCommand[] = [
   { name: 'verbose', desc: 'Toggle verbose mode',           category: 'view', aliases: ['v'] },
   // system
   { name: 'permission', desc: 'Set permission mode: read-only | auto-edit | full-auto', category: 'system', usage: '/permission <mode>', aliases: ['approval', 'appr', 'perm'] },
-  { name: 'editmode', desc: 'Set edit mode: review | auto | yolo', category: 'system', usage: '/editmode <mode>' },
   { name: 'run',    desc: 'Run a shell command (asks first)', category: 'system', usage: '/run <cmd>' },
   { name: 'mcp',    desc: 'Show MCP server status',         category: 'system' },
   { name: 'status', desc: 'Show session status',            category: 'system' },
@@ -380,15 +379,6 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
 
     case 'verbose':
       return { kind: 'event', event: { type: 'verbose.toggle' } };
-
-    case 'editmode': {
-      const MODES = ['review', 'auto', 'yolo'] as const;
-      const target = args[0] as typeof MODES[number] | undefined;
-      if (target && MODES.includes(target)) {
-        return { kind: 'event', event: { type: 'edit.mode.change', mode: target } };
-      }
-      return { kind: 'note', note: `Edit mode: ${state.editMode}. Usage: /editmode <review|auto|yolo>` };
-    }
 
     case 'mcp':
       return {

@@ -16,7 +16,6 @@ export function createInitialState(cwd: string): AppState {
     branch: detectBranch(cwd),
     mode: 'agent',
     approvalMode: 'auto-edit',
-    editMode: 'review',
     ctx: { used: 0, max: 200 },
     files: [],
     edits: [],

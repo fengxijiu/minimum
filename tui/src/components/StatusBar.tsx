@@ -2,7 +2,7 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import { theme } from '../theme.js';
 import { TokenMeter } from './atoms.js';
-import type { ApprovalMode, EditMode, SessionState, UsageInfo } from '../types.js';
+import type { ApprovalMode, SessionState, UsageInfo } from '../types.js';
 
 const PILL: Record<SessionState, { label: string; color: string }> = {
   agent:       { label: 'agent',       color: theme.accent },
@@ -18,12 +18,6 @@ const MODE_BADGE: Record<ApprovalMode, { label: string; color: string }> = {
   'full-auto': { label: 'full-auto', color: '#4dff91' },
 };
 
-const EDIT_BADGE: Record<EditMode, { label: string; color: string }> = {
-  review: { label: 'review', color: theme.warn },
-  auto:   { label: 'auto',   color: theme.accent },
-  yolo:   { label: 'yolo',   color: theme.danger },
-};
-
 function Key({ k, label }: { k: string; label: string }) {
   return (
     <Text>
@@ -33,10 +27,9 @@ function Key({ k, label }: { k: string; label: string }) {
   );
 }
 
-export const StatusBar = React.memo(function StatusBar({ state, approvalMode, editMode, ctxUsed, ctxMax, hint, usage, mcpLoading }: {
+export const StatusBar = React.memo(function StatusBar({ state, approvalMode, ctxUsed, ctxMax, hint, usage, mcpLoading }: {
   state: SessionState;
   approvalMode?: ApprovalMode;
-  editMode?: EditMode;
   ctxUsed: number;
   ctxMax: number;
   hint?: string;
@@ -45,7 +38,6 @@ export const StatusBar = React.memo(function StatusBar({ state, approvalMode, ed
 }) {
   const pill = PILL[state];
   const badge = approvalMode ? MODE_BADGE[approvalMode] : null;
-  const editBadge = editMode ? EDIT_BADGE[editMode] : null;
 
   // Keys shift with state, mirroring the design's per-state status bar.
   const keys =
@@ -63,12 +55,6 @@ export const StatusBar = React.memo(function StatusBar({ state, approvalMode, ed
           <>
             <Text color={theme.muted}> </Text>
             <Text color={badge.color}>[perm {badge.label}]</Text>
-          </>
-        )}
-        {editBadge && (
-          <>
-            <Text color={theme.muted}> </Text>
-            <Text color={editBadge.color}>({editBadge.label})</Text>
           </>
         )}
         {mcpLoading && (

@@ -1,4 +1,4 @@
-import type { ApprovalMode, Mode, PlanStep, EditMode } from '../types.js';
+import type { ApprovalMode, Mode, PlanStep } from '../types.js';
 
 /**
  * AgentEvent — every state mutation flows through a typed event.
@@ -57,7 +57,6 @@ export type AgentEvent =
   // usage / cost tracking
   | { type: 'usage.update'; promptTokens?: number; completionTokens?: number; cost?: number }
   // edit mode
-  | { type: 'edit.mode.change'; mode: EditMode }
   | { type: 'edit.undo' }
   // mcp
   | { type: 'mcp.loading'; ready: number; total: number }

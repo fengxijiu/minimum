@@ -373,10 +373,6 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
         },
       };
 
-    // ── edit mode ─────────────────────────────────────────────────
-    case 'edit.mode.change':
-      return { ...state, editMode: event.mode };
-
     case 'edit.undo': {
       if (!state.edits.length) return state;
       return {
