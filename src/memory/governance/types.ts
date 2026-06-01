@@ -21,6 +21,10 @@ export interface MemoryCandidate {
 	relatedFiles: string[];
 	/** Free-form markdown body (after frontmatter). */
 	body: string;
+	/** Scorer/operator decision attached to staged review entries. */
+	decision?: MemoryDecision;
+	/** Human-readable reason for candidates retained for review. */
+	reviewReason?: string;
 	/** Filesystem path the candidate was loaded from (if any). */
 	sourcePath?: string;
 }
@@ -36,8 +40,11 @@ export interface MemoryScore {
 	riskIfWrong: number;
 }
 
+/** Memory write/governance decision per candidate. */
+export type MemoryDecision = "merge" | "update" | "archive" | "reject" | "needs_review";
+
 /** Master_planner's W4 decision per candidate. */
-export type MergeAction = "merge" | "update" | "archive" | "reject";
+export type MergeAction = Exclude<MemoryDecision, "needs_review">;
 
 export interface MergeDecision {
 	candidateId: string; // "<sourceTask>.<persona>"

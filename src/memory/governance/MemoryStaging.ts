@@ -108,6 +108,8 @@ export function serializeCandidate(c: MemoryCandidate): string {
 		`persona: ${c.persona}`,
 		`scope: ${c.scope}`,
 		`confidence: ${c.confidence}`,
+		...(c.decision ? [`decision: ${c.decision}`] : []),
+		...(c.reviewReason ? [`review_reason: ${c.reviewReason.replace(/\n/g, " ")}`] : []),
 		"related_files:",
 		...c.relatedFiles.map((f) => `  - ${f}`),
 		FRONTMATTER_FENCE,
@@ -164,6 +166,9 @@ export function parseCandidate(rawText: string): Omit<MemoryCandidate, "sourcePa
 	const confidence = fm.confidence as MemoryConfidence;
 	if (!["high", "medium", "low"].includes(confidence)) return null;
 
+	const decision = typeof fm.decision === "string" ? fm.decision : undefined;
+	if (decision && !["merge", "update", "archive", "reject", "needs_review"].includes(decision)) return null;
+
 	return {
 		sourceTask: fm.source_task as string,
 		persona: fm.persona as PersonaId,
@@ -171,5 +176,7 @@ export function parseCandidate(rawText: string): Omit<MemoryCandidate, "sourcePa
 		confidence,
 		relatedFiles: Array.isArray(fm.related_files) ? (fm.related_files as string[]) : [],
 		body: body.trim(),
+		...(decision && { decision: decision as MemoryCandidate["decision"] }),
+		...(typeof fm.review_reason === "string" && { reviewReason: fm.review_reason }),
 	};
 }
