@@ -73,13 +73,26 @@ export {
 	VolatileScratch,
 	RuntimeMemory,
 } from "./memory/RuntimeMemory.js";
+export {
+	SingleAgentMemoryManager,
+	MemoryRetriever,
+	MemoryResolver,
+	MemoryPreludeBuilder,
+	MemoryExtractor,
+	SingleAgentMemoryScorer,
+	MemoryWriter,
+	MemoryCompactor,
+} from "./memory/single/SingleAgentMemoryManager.js";
 export type {
-	ISingleAgentMemoryManager,
-	MemoryInjectionRequest,
+	SingleAgentMemoryManagerOptions,
+	MemoryManagerRequest,
+	MemoryScope,
+	MemoryCandidate,
+	ScoredMemory,
+	ExtractedMemory,
 	MemoryInjectionResult,
-	MemoryLayer,
-	MemoryWritebackRequest,
-} from "./memory/single/index.js";
+	MemoryWritebackResult,
+} from "./memory/single/SingleAgentMemoryManager.js";
 
 // Commands system
 export { CommandRegistry, createDefaultRegistry } from "./commands/index.js";

@@ -56,6 +56,14 @@ export interface CompletenessConfig {
 }
 
 export interface MemoryConfig {
+	/** 是否启用单代理长期记忆（默认 true） */
+	enabled?: boolean;
+	/** 全局记忆存储路径（默认 ~/.minimum/memory） */
+	globalBasePath?: string;
+	/** 每轮最多注入的相关记忆条数（默认 8） */
+	maxPreludeEntries?: number;
+	/** 每个作用域保留的最大记忆条数（默认 200） */
+	maxStoredEntries?: number;
 	/** 是否启用单 Agent 记忆系统（默认 true） */
 	enabled?: boolean;
 	/** 记忆注入配置 */
@@ -113,7 +121,7 @@ export interface MiMoConfig {
 	validation?: ValidationConfig;
 	/** 完整性检查配置 */
 	completeness?: CompletenessConfig;
-	/** 单 Agent 记忆配置 */
+	/** 单代理长期记忆配置 */
 	memory?: MemoryConfig;
 }
 
@@ -155,6 +163,9 @@ export const DEFAULT_MIMO_CONFIG: Required<MiMoConfig> = {
 	},
 	memory: {
 		enabled: true,
+		globalBasePath: "",
+		maxPreludeEntries: 8,
+		maxStoredEntries: 200,
 		injection: {
 			maxTokens: 2500,
 		},
@@ -186,6 +197,8 @@ export function mergeConfig(user: MiMoConfig = {}): Required<MiMoConfig> {
 		capacity: { ...DEFAULT_MIMO_CONFIG.capacity, ...user.capacity },
 		storm: { ...DEFAULT_MIMO_CONFIG.storm, ...user.storm },
 		validation: { ...DEFAULT_MIMO_CONFIG.validation, ...user.validation },
+		completeness: { ...DEFAULT_MIMO_CONFIG.completeness, ...user.completeness },
+		memory: { ...DEFAULT_MIMO_CONFIG.memory, ...user.memory },
 		completeness: {
 			...DEFAULT_MIMO_CONFIG.completeness,
 			...user.completeness,

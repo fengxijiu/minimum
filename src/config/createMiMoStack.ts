@@ -2,7 +2,7 @@ import { ApprovalManager } from "../approval/ApprovalManager.js";
 import { CompletenessChecker } from "../completeness/CompletenessChecker.js";
 import { ContextManager } from "../context/ContextManager.js";
 import { MiMoLoop } from "../loop/MiMoLoop.js";
-import { SingleAgentMemoryManager } from "../memory/SingleAgentMemoryManager.js";
+import { SingleAgentMemoryManager } from "../memory/single/SingleAgentMemoryManager.js";
 import type { IHookManager } from "../loop/MiMoLoop.js";
 import { ToolCallRepair } from "../repair/ToolCallRepair.js";
 import { SessionManager } from "../session/SessionManager.js";
@@ -83,12 +83,13 @@ export function createMiMoStack(
 	// SessionManager — automatic session persistence; one instance per stack.
 	const sessionManager = new SessionManager();
 
-	// MemoryManager — created only when single-agent memory is enabled.
 	const memoryManager = cfg.memory.enabled
 		? new SingleAgentMemoryManager({
-				workingDirectory,
-				config: cfg.memory,
-			})
+			projectRoot: workingDirectory,
+			globalBasePath: cfg.memory.globalBasePath || undefined,
+			maxPreludeEntries: cfg.memory.maxPreludeEntries,
+			maxStoredEntries: cfg.memory.maxStoredEntries,
+		})
 		: undefined;
 
 	const loop = new MiMoLoop({
@@ -111,6 +112,7 @@ export function createMiMoStack(
 		budgetUsd: cfg.budgetUsd || undefined,
 		workingDirectory,
 		sessionPersister: sessionManager,
+		memoryManager,
 	});
 
 	return {
