@@ -14,6 +14,13 @@ export {
 } from "./RuntimeMemory.js";
 export type { LogEntry } from "./RuntimeMemory.js";
 
+export { resolveMemory } from "./single/index.js";
+export type {
+	CurrentTask,
+	MemoryConfidence as SingleMemoryConfidence,
+	MemoryLayer,
+	MemoryRecord,
+} from "./single/index.js";
 export {
 	getGlobalMemoryRoot,
 	getMemoryFile,
