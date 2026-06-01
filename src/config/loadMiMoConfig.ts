@@ -44,8 +44,33 @@ function mergeProjectOverGlobal(
 		(out as any)[k] = v;
 	}
 	if (project.context) out.context = { ...global.context, ...project.context };
-	if (project.capacity) out.capacity = { ...global.capacity, ...project.capacity };
-	if (project.validation) out.validation = { ...global.validation, ...project.validation };
+	if (project.capacity) {
+		out.capacity = { ...global.capacity, ...project.capacity };
+	}
+	if (project.validation) {
+		out.validation = { ...global.validation, ...project.validation };
+	}
+	if (project.completeness) {
+		out.completeness = { ...global.completeness, ...project.completeness };
+	}
+	if (project.memory) {
+		out.memory = {
+			...global.memory,
+			...project.memory,
+			injection: {
+				...global.memory?.injection,
+				...project.memory.injection,
+			},
+			writeback: {
+				...global.memory?.writeback,
+				...project.memory.writeback,
+			},
+			compaction: {
+				...global.memory?.compaction,
+				...project.memory.compaction,
+			},
+		};
+	}
 	return out;
 }
 

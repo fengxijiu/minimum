@@ -64,6 +64,10 @@ export { SessionMemory } from "./memory/SessionMemory.js";
 export type { SessionData } from "./memory/SessionMemory.js";
 export { ProjectMemory } from "./memory/ProjectMemory.js";
 export type { ProjectMemoryEntry } from "./memory/ProjectMemory.js";
+export { SingleAgentMemoryManager } from "./memory/SingleAgentMemoryManager.js";
+export type {
+	SingleAgentMemoryManagerOptions,
+} from "./memory/SingleAgentMemoryManager.js";
 export {
 	AppendOnlyLog,
 	VolatileScratch,

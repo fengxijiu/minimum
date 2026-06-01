@@ -5,6 +5,7 @@ export type {
 	StormConfig as StormDetectionConfig,
 	ValidationConfig,
 	CompletenessConfig,
+	MemoryConfig,
 } from "./MiMoConfig.js";
 export { DEFAULT_MIMO_CONFIG, mergeConfig } from "./MiMoConfig.js";
 export {

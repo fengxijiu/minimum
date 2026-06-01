@@ -21,3 +21,5 @@ export type {
 	MemoryLayer,
 	MemoryWritebackRequest,
 } from "./single/index.js";
+export { SingleAgentMemoryManager } from "./SingleAgentMemoryManager.js";
+export type { SingleAgentMemoryManagerOptions } from "./SingleAgentMemoryManager.js";
