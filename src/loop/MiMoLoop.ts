@@ -76,6 +76,19 @@ export interface IApprovalManager {
 	checkApproval(request: ApprovalRequest): Promise<ApprovalResponse>;
 }
 
+export interface ILongTermMemoryManager {
+	buildPrelude(request: {
+		projectRoot?: string;
+		input?: string;
+		messages?: ChatMessage[];
+	}): Promise<{ injected: boolean; prelude: string }>;
+	writeback(request: {
+		projectRoot?: string;
+		input?: string;
+		messages?: ChatMessage[];
+	}): Promise<unknown>;
+}
+
 // ============ Types ============
 
 export interface MiMoLoopConfig {
@@ -105,6 +118,7 @@ export interface MiMoLoopConfig {
 		budget_tokens?: number;
 	};
 	sessionPersister?: ISessionPersister;
+	memoryManager?: ILongTermMemoryManager;
 }
 
 export interface LoopState {
@@ -199,7 +213,16 @@ export class MiMoLoop {
 		this.steerConsumed = false;
 
 		try {
-			// 1. 添加用户消息
+			// 1. 注入相关长期记忆，然后添加用户消息
+			if (this.config.memoryManager) {
+				const memory = await this.config.memoryManager.buildPrelude({
+					projectRoot: this.config.workingDirectory,
+					input: userInput,
+				});
+				if (memory.injected && memory.prelude) {
+					this.messages.push({ role: "system", content: memory.prelude });
+				}
+			}
 			this.messages.push({ role: "user", content: userInput });
 
 			// UserPromptSubmit hook
@@ -585,6 +608,12 @@ export class MiMoLoop {
 			yield { type: "error", error: error.message, recoverable: false };
 		} finally {
 			this.state.running = false;
+			if (this.config.memoryManager) {
+				await this.config.memoryManager.writeback({
+					projectRoot: this.config.workingDirectory,
+					messages: this.messages,
+				}).catch(() => {});
+			}
 			this.config.sessionPersister?.persistFromLoop(this.messages, {
 				totalCostUsd: this.state.totalCostUsd,
 				totalTokens: this.state.totalTokens,

@@ -13,3 +13,23 @@ export {
 	VolatileScratch,
 } from "./RuntimeMemory.js";
 export type { LogEntry } from "./RuntimeMemory.js";
+export {
+	SingleAgentMemoryManager,
+	MemoryRetriever,
+	MemoryResolver,
+	MemoryPreludeBuilder,
+	MemoryExtractor,
+	SingleAgentMemoryScorer,
+	MemoryWriter,
+	MemoryCompactor,
+} from "./single/SingleAgentMemoryManager.js";
+export type {
+	SingleAgentMemoryManagerOptions,
+	MemoryManagerRequest,
+	MemoryScope,
+	MemoryCandidate,
+	ScoredMemory,
+	ExtractedMemory,
+	MemoryInjectionResult,
+	MemoryWritebackResult,
+} from "./single/SingleAgentMemoryManager.js";

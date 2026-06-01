@@ -55,6 +55,17 @@ export interface CompletenessConfig {
 	enabled?: boolean;
 }
 
+export interface MemoryConfig {
+	/** 是否启用单代理长期记忆（默认 true） */
+	enabled?: boolean;
+	/** 全局记忆存储路径（默认 ~/.minimum/memory） */
+	globalBasePath?: string;
+	/** 每轮最多注入的相关记忆条数（默认 8） */
+	maxPreludeEntries?: number;
+	/** 每个作用域保留的最大记忆条数（默认 200） */
+	maxStoredEntries?: number;
+}
+
 export interface MiMoConfig {
 	/** MiMo API key（来自 `init` 注册的全局配置，env MIMO_API_KEY 优先） */
 	apiKey?: string;
@@ -91,6 +102,8 @@ export interface MiMoConfig {
 	validation?: ValidationConfig;
 	/** 完整性检查配置 */
 	completeness?: CompletenessConfig;
+	/** 单代理长期记忆配置 */
+	memory?: MemoryConfig;
 }
 
 /** 所有优化分析得来的默认值 */
@@ -129,6 +142,12 @@ export const DEFAULT_MIMO_CONFIG: Required<MiMoConfig> = {
 	completeness: {
 		enabled: true,
 	},
+	memory: {
+		enabled: true,
+		globalBasePath: "",
+		maxPreludeEntries: 8,
+		maxStoredEntries: 200,
+	},
 };
 
 /** 深合并用户配置与默认配置 */
@@ -150,5 +169,6 @@ export function mergeConfig(user: MiMoConfig = {}): Required<MiMoConfig> {
 		storm: { ...DEFAULT_MIMO_CONFIG.storm, ...user.storm },
 		validation: { ...DEFAULT_MIMO_CONFIG.validation, ...user.validation },
 		completeness: { ...DEFAULT_MIMO_CONFIG.completeness, ...user.completeness },
+		memory: { ...DEFAULT_MIMO_CONFIG.memory, ...user.memory },
 	};
 }
