@@ -18,6 +18,7 @@ import {
 } from "../memory/single/MemoryPreludeBuilder.js";
 import type { MemoryPreludeRequest } from "../memory/single/MemoryPreludeBuilder.js";
 import type { ICodeValidator } from "../types/validator.js";
+import { repairTruncatedJson } from "../utils/json-repair.js";
 import { countMessagesTokens } from "../utils/token-counter.js";
 import { healMessages } from "./healing.js";
 import { buildAssistantMessage, buildSyntheticAssistantMessage } from "./messages.js";
@@ -89,19 +90,6 @@ export interface IApprovalManager {
 	checkApproval(request: ApprovalRequest): Promise<ApprovalResponse>;
 }
 
-export interface ILongTermMemoryManager {
-	buildPrelude(request: {
-		projectRoot?: string;
-		input?: string;
-		messages?: ChatMessage[];
-	}): Promise<{ injected: boolean; prelude: string }>;
-	writeback(request: {
-		projectRoot?: string;
-		input?: string;
-		messages?: ChatMessage[];
-	}): Promise<unknown>;
-}
-
 // ============ Types ============
 
 export interface MiMoLoopConfig {
@@ -139,7 +127,6 @@ export interface MiMoLoopConfig {
 		projectMemory?: MemoryPreludeRequest["projectMemory"];
 		globalMemory?: MemoryPreludeRequest["globalMemory"];
 	};
-	memoryManager?: ILongTermMemoryManager;
 }
 
 export interface LoopState {
@@ -198,7 +185,6 @@ export class MiMoLoop {
 	private memoryWritebackDone = false;
 	/** First all-suppressed storm → self-correct; second → force summary. */
 	private selfCorrectedThisTurn = false;
-
 	constructor(config: MiMoLoopConfig) {
 		this.config = config;
 		this.state = {
@@ -238,16 +224,7 @@ export class MiMoLoop {
 		this.memoryWritebackDone = false;
 
 		try {
-			// 1. 注入相关长期记忆，然后添加用户消息
-			if (this.config.memoryManager) {
-				const memory = await this.config.memoryManager.buildPrelude({
-					projectRoot: this.config.workingDirectory,
-					input: userInput,
-				});
-				if (memory.injected && memory.prelude) {
-					this.messages.push({ role: "system", content: memory.prelude });
-				}
-			}
+			// 1. 添加用户消息
 			this.messages.push({ role: "user", content: userInput });
 
 			// UserPromptSubmit hook
@@ -262,7 +239,7 @@ export class MiMoLoop {
 				};
 			}
 
-			await this.refreshMemoryPrelude(userInput);
+			await this.refreshMemoryPrelude();
 
 			// 2. 主循环（Reasonix 风格：无限迭代，通过 return 退出）
 			const maxSteps = this.config.maxSteps || 50;
@@ -637,15 +614,9 @@ export class MiMoLoop {
 			yield { type: "error", error: error.message, recoverable: false };
 		} finally {
 			this.state.running = false;
+			await this.writebackMemory();
 			const persistedMessages = filterMemoryPreludeMessages(this.messages);
 			this.config.sessionPersister?.persistFromLoop(persistedMessages, {
-			if (this.config.memoryManager) {
-				await this.config.memoryManager.writeback({
-					projectRoot: this.config.workingDirectory,
-					messages: this.messages,
-				}).catch(() => {});
-			}
-			this.config.sessionPersister?.persistFromLoop(this.messages, {
 				totalCostUsd: this.state.totalCostUsd,
 				totalTokens: this.state.totalTokens,
 				toolCalls: this.state.toolCalls,
@@ -686,26 +657,6 @@ export class MiMoLoop {
 			};
 			yield { type: "done", success: false };
 		}
-	}
-
-	private async refreshMemoryPrelude(userInput: string): Promise<void> {
-		if (this.config.memoryPrelude === false) {
-			this.messages = injectMemoryPreludeMessage(this.messages, "");
-			return;
-		}
-
-		const options = this.config.memoryPrelude ?? {};
-		const result = await buildPrelude({
-			userInput,
-			workingDirectory: this.config.workingDirectory,
-			messages: this.messages,
-			tokenBudget: options.tokenBudget ?? 700,
-			maxRecords: options.maxRecords,
-			globalMemoryPath: options.globalMemoryPath,
-			projectMemory: options.projectMemory,
-			globalMemory: options.globalMemory,
-		});
-		this.messages = injectMemoryPreludeMessage(this.messages, result.prelude);
 	}
 
 	/**
@@ -826,6 +777,27 @@ export class MiMoLoop {
 	}
 
 	private async refreshMemoryPrelude(): Promise<void> {
+		// Fast path: legacy memoryPrelude config (MemoryPreludeBuilder)
+		if (this.config.memoryPrelude !== undefined) {
+			if (this.config.memoryPrelude === false) {
+				this.messages = injectMemoryPreludeMessage(this.messages, "");
+				return;
+			}
+			const options = this.config.memoryPrelude;
+			const result = await buildPrelude({
+				userInput: this.currentUserInput,
+				workingDirectory: this.config.workingDirectory,
+				messages: this.messages,
+				tokenBudget: options.tokenBudget ?? 700,
+				maxRecords: options.maxRecords,
+				globalMemoryPath: options.globalMemoryPath,
+				projectMemory: options.projectMemory,
+				globalMemory: options.globalMemory,
+			});
+			this.messages = injectMemoryPreludeMessage(this.messages, result.prelude);
+			return;
+		}
+
 		const memoryManager = this.config.memoryManager;
 		if (!memoryManager) return;
 
@@ -922,9 +894,6 @@ export class MiMoLoop {
 
 	private async optimizeContext(): Promise<any> {
 		if (!this.config.contextManager) return null;
-		const firstUserMessage = this.messages.find((message) => message.role === "user");
-		const taskState: TaskState = {
-			objective: firstUserMessage?.content || "",
 		const messages = this.getMessagesWithoutMemoryPrelude();
 		const taskState: TaskState = {
 			objective: messages[0]?.content || "",

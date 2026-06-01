@@ -64,8 +64,6 @@ export interface MemoryConfig {
 	maxPreludeEntries?: number;
 	/** 每个作用域保留的最大记忆条数（默认 200） */
 	maxStoredEntries?: number;
-	/** 是否启用单 Agent 记忆系统（默认 true） */
-	enabled?: boolean;
 	/** 记忆注入配置 */
 	injection?: {
 		/** 每次注入到上下文的最大 token 数（默认 2500） */
@@ -198,11 +196,6 @@ export function mergeConfig(user: MiMoConfig = {}): Required<MiMoConfig> {
 		storm: { ...DEFAULT_MIMO_CONFIG.storm, ...user.storm },
 		validation: { ...DEFAULT_MIMO_CONFIG.validation, ...user.validation },
 		completeness: { ...DEFAULT_MIMO_CONFIG.completeness, ...user.completeness },
-		memory: { ...DEFAULT_MIMO_CONFIG.memory, ...user.memory },
-		completeness: {
-			...DEFAULT_MIMO_CONFIG.completeness,
-			...user.completeness,
-		},
 		memory: {
 			...DEFAULT_MIMO_CONFIG.memory,
 			...user.memory,

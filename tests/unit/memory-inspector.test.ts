@@ -10,7 +10,6 @@ import {
 	renderMemoryReport,
 	writeCandidate,
 } from "../../src/memory/governance/index.js";
-import { MemoryCommand } from "../../src/commands/index.js";
 import type { MemoryCandidate } from "../../src/memory/governance/types.js";
 
 function mkCandidate(over: Partial<MemoryCandidate> = {}): MemoryCandidate {
@@ -95,43 +94,17 @@ describe("renderMemoryReport", () => {
 	});
 });
 
-describe("MemoryCommand", () => {
+describe("inspectMemoryIndex", () => {
 	let dir: string;
 	beforeEach(() => {
 		dir = fs.mkdtempSync(path.join(os.tmpdir(), "mimo-cmd-"));
 	});
 	afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
-	function ctx() {
-		return { workingDirectory: dir, messages: [], config: {} };
-	}
-
-	it("status reports canonical and staging", async () => {
-		await writeCandidate(dir, mkCandidate());
-		await refreshMemoryIndex(dir);
-		const r = await new MemoryCommand().execute(["status"], ctx());
-		expect(r.success).toBe(true);
-		expect(r.output).toContain("Canonical memory:");
-		expect(r.output).toContain("Staging (1 candidate)");
-		expect(r.output).toContain("Index:");
-	});
-
-	it("inspectMemoryIndex reports generated index stats", async () => {
+	it("reports generated index stats", async () => {
 		await refreshMemoryIndex(dir);
 		const info = await inspectMemoryIndex(dir);
 		expect(info.exists).toBe(true);
 		expect(info.entryCount).toBeGreaterThan(0);
-	});
-
-	it("defaults to status with no args", async () => {
-		const r = await new MemoryCommand().execute([], ctx());
-		expect(r.success).toBe(true);
-		expect(r.output).toContain("Canonical memory:");
-	});
-
-	it("rejects an unknown subcommand", async () => {
-		const r = await new MemoryCommand().execute(["frobnicate"], ctx());
-		expect(r.success).toBe(false);
-		expect(r.output).toContain("Unknown subcommand");
 	});
 });

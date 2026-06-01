@@ -1,7 +1,15 @@
+import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { ChatMessage } from "../../types/common.js";
 import { MemoryStore, type MemoryEntry } from "../MemoryStore.js";
 import { ProjectMemory, type ProjectMemoryEntry } from "../ProjectMemory.js";
+import { readMemoryIndex } from "../governance/MemoryIndex.js";
+import type {
+	ISingleAgentMemoryManager,
+	MemoryInjectionRequest,
+	MemoryInjectionResult,
+	MemoryWritebackRequest,
+} from "./types.js";
 
 export type MemoryScope = "project" | "global";
 
@@ -40,12 +48,6 @@ export interface ExtractedMemory {
 	value: string;
 	description?: string;
 	metadata?: Record<string, unknown>;
-}
-
-export interface MemoryInjectionResult {
-	injected: boolean;
-	prelude: string;
-	entries: ScoredMemory[];
 }
 
 export interface MemoryWritebackResult {
@@ -245,7 +247,7 @@ export class MemoryCompactor {
 	}
 }
 
-export class SingleAgentMemoryManager {
+export class SingleAgentMemoryManager implements ISingleAgentMemoryManager {
 	private globalStore: MemoryStore;
 	private projectMemories = new Map<string, ProjectMemory>();
 	private initializedGlobal?: Promise<void>;
@@ -272,19 +274,31 @@ export class SingleAgentMemoryManager {
 		this.compactor = new MemoryCompactor(options.maxStoredEntries ?? 200);
 	}
 
-	async buildPrelude(request: MemoryManagerRequest): Promise<MemoryInjectionResult> {
-		const input =
-			request.input ??
-			request.messages?.map((message) => message.content).join("\n") ??
-			"";
-		const stores = await this.getStores(request.projectRoot);
-		const candidates = await this.retriever.retrieve(stores);
+	async buildPrelude(request: MemoryInjectionRequest): Promise<MemoryInjectionResult> {
+		const input = request.userInput ??
+			request.messages.map((m) => typeof m.content === "string" ? m.content : "").join("\n");
+		const projectRoot = path.resolve(request.workingDirectory ?? this.options.projectRoot);
+		const stores = await this.getStores(projectRoot);
+		const [kvCandidates, govCandidates] = await Promise.all([
+			this.retriever.retrieve(stores),
+			retrieveGovernanceCandidates(projectRoot),
+		]);
+		const candidates = mergeMemoryCandidates(kvCandidates, govCandidates);
 		const entries = this.resolver.resolve(input, candidates, this.maxPreludeEntries);
 		const prelude = this.preludeBuilder.build(entries);
-		return { injected: prelude.length > 0, prelude, entries };
+		return { prelude };
 	}
 
-	async writeback(request: MemoryManagerRequest): Promise<MemoryWritebackResult> {
+	async writeback(request: MemoryWritebackRequest): Promise<void> {
+		const legacyRequest: MemoryManagerRequest = {
+			projectRoot: request.workingDirectory,
+			input: request.userInput,
+			messages: request.messages as ChatMessage[],
+		};
+		await this.writebackRaw(legacyRequest);
+	}
+
+	async writebackRaw(request: MemoryManagerRequest): Promise<MemoryWritebackResult> {
 		const stores = await this.getStores(request.projectRoot);
 		const entries = this.extractor.extract(request);
 		const written = await this.writer.write(stores, entries);
@@ -370,4 +384,44 @@ function dedupeExtracted(entries: ExtractedMemory[]): ExtractedMemory[] {
 		seen.add(id);
 		return true;
 	});
+}
+
+/** Read canonical/compressed governance markdown entries as MemoryCandidate[]. */
+async function retrieveGovernanceCandidates(projectRoot: string): Promise<MemoryCandidate[]> {
+	try {
+		const index = await readMemoryIndex(projectRoot);
+		if (!index) return [];
+		const out: MemoryCandidate[] = [];
+		for (const entry of index.entries) {
+			if (!entry.exists) continue;
+			if (entry.kind !== "canonical" && entry.kind !== "compressed") continue;
+			const abs = path.join(projectRoot, entry.path);
+			let content = "";
+			try {
+				content = await fs.readFile(abs, "utf-8");
+			} catch {
+				continue;
+			}
+			const value = content.trim().slice(0, 600);
+			if (!value) continue;
+			const key = `governance:${entry.key ?? entry.id ?? entry.path}`;
+			out.push({
+				scope: "project",
+				key,
+				value,
+				description: entry.headings[0],
+				updatedAt: entry.mtimeMs || 0,
+				metadata: { source: "governance", kind: entry.kind },
+			});
+		}
+		return out;
+	} catch {
+		return [];
+	}
+}
+
+/** Merge KV and governance candidates; KV takes precedence on duplicate keys. */
+function mergeMemoryCandidates(kv: MemoryCandidate[], gov: MemoryCandidate[]): MemoryCandidate[] {
+	const seen = new Set(kv.map((c) => c.key));
+	return [...kv, ...gov.filter((c) => !seen.has(c.key))];
 }

@@ -2,7 +2,7 @@ import { ApprovalManager } from "../approval/ApprovalManager.js";
 import { CompletenessChecker } from "../completeness/CompletenessChecker.js";
 import { ContextManager } from "../context/ContextManager.js";
 import { MiMoLoop } from "../loop/MiMoLoop.js";
-import { SingleAgentMemoryManager } from "../memory/single/SingleAgentMemoryManager.js";
+import { SingleAgentMemoryManager } from "../memory/SingleAgentMemoryManager.js";
 import type { IHookManager } from "../loop/MiMoLoop.js";
 import { ToolCallRepair } from "../repair/ToolCallRepair.js";
 import { SessionManager } from "../session/SessionManager.js";
@@ -85,10 +85,8 @@ export function createMiMoStack(
 
 	const memoryManager = cfg.memory.enabled
 		? new SingleAgentMemoryManager({
-			projectRoot: workingDirectory,
-			globalBasePath: cfg.memory.globalBasePath || undefined,
-			maxPreludeEntries: cfg.memory.maxPreludeEntries,
-			maxStoredEntries: cfg.memory.maxStoredEntries,
+			workingDirectory,
+			config: cfg.memory,
 		})
 		: undefined;
 

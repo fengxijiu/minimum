@@ -190,13 +190,14 @@ export class MemoryCompactor {
 			const keep = new Set(file.records.map((record) => record.id));
 			const mergedById = new Map(file.records.map((record) => [record.id, record]));
 			for (let i = 0; i < file.records.length; i++) {
-				const a = mergedById.get(file.records[i]!.id)!;
+				let a = mergedById.get(file.records[i]!.id)!;
 				if (!keep.has(a.id)) continue;
 				for (let j = i + 1; j < file.records.length; j++) {
 					const b = mergedById.get(file.records[j]!.id)!;
 					if (!keep.has(b.id)) continue;
 					if (!shouldMerge(a, b, this.opts.similarityThreshold ?? DEFAULT_OPTIONS.similarityThreshold)) continue;
-					mergedById.set(a.id, mergeRecords(a, b));
+					a = mergeRecords(a, b);
+					mergedById.set(a.id, a);
 					keep.delete(b.id);
 					merged++;
 					fileMerged++;

@@ -1,3 +1,5 @@
+import type { ChatMessage } from "../../types/common.js";
+
 export type MemoryLayer = "session" | "project" | "global";
 
 export type MemoryConfidence = "high" | "medium" | "low" | number;
@@ -20,9 +22,7 @@ export interface CurrentTask {
 	prompt?: string;
 	content?: string;
 	explicitPreferences?: string[];
-import type { ChatMessage } from "../../types/common.js";
-
-export type MemoryLayer = "global" | "project" | "session";
+}
 
 export interface MemoryInjectionRequest {
 	messages: readonly ChatMessage[];

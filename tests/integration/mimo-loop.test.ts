@@ -3,7 +3,7 @@ import { CompletenessChecker } from "../../src/completeness/CompletenessChecker.
 import { ContextManager } from "../../src/context/ContextManager.js";
 import { IterationManager } from "../../src/iteration/IterationManager.js";
 import { MiMoLoop } from "../../src/loop/MiMoLoop.js";
-import { MockClient } from "../../src/mocks/MockClient.js";
+import { MockClient } from "../helpers/MockClient.js";
 import { ToolCallRepair } from "../../src/repair/ToolCallRepair.js";
 import { ToolRegistry } from "../../src/tools/ToolRegistry.js";
 import { CodeValidator } from "../../src/validators/CodeValidator.js";

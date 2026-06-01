@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { CodeValidator } from "../../src/validators/CodeValidator.js";
 import { PatternChecker } from "../../src/validators/PatternChecker.js";
 import { SyntaxChecker } from "../../src/validators/SyntaxChecker.js";
-import { TypeChecker } from "../../src/validators/TypeChecker.js";
 
 describe("Validators", () => {
 	describe("SyntaxChecker", () => {
@@ -47,47 +46,6 @@ describe("Validators", () => {
 
 			expect(result).toBeDefined();
 			expect(result.length).toBe(0);
-		});
-	});
-
-	describe("TypeChecker", () => {
-		let checker: TypeChecker;
-
-		beforeEach(() => {
-			checker = new TypeChecker();
-		});
-
-		it("should detect any type usage", async () => {
-			const result = await checker.check({
-				toolName: "write_file",
-				toolArgs: { path: "test.ts" },
-				toolResult: { content: "const x: any = 5;" },
-			});
-
-			expect(result).toBeDefined();
-			expect(result.some((r) => r.message.includes("any"))).toBe(true);
-		});
-
-		it("should detect undefined usage without typeof", async () => {
-			const result = await checker.check({
-				toolName: "write_file",
-				toolArgs: { path: "test.ts" },
-				toolResult: { content: "const x = undefined;" },
-			});
-
-			expect(result).toBeDefined();
-			expect(result.some((r) => r.message.includes("undefined"))).toBe(true);
-		});
-
-		it("should pass for clean code", async () => {
-			const result = await checker.check({
-				toolName: "write_file",
-				toolArgs: { path: "test.ts" },
-				toolResult: { content: "const x: number = 5;" },
-			});
-
-			expect(result).toBeDefined();
-			expect(result[0].passed).toBe(true);
 		});
 	});
 

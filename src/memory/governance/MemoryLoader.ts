@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import { CharBudget } from "../../utils/tokenBudget.js";
 import { refreshMemoryIndex } from "./MemoryIndex.js";
 import { canonicalPath, getOrInitManifest } from "./MemoryManifest.js";
+import { ProjectMemory } from "../ProjectMemory.js";
 import type { Manifest } from "./types.js";
 
 /**
@@ -65,12 +66,31 @@ export async function loadCanonicalMemory(
 		includedKeys.push(key);
 	}
 
+	await appendSingleAgentMemories(projectRoot, budget);
+
 	return {
 		text: budget.text,
 		includedKeys,
 		truncated: budget.truncated,
 		approxTokens: budget.approxTokens,
 	};
+}
+
+/** Append single-agent KV memories as an extra section when budget allows. */
+async function appendSingleAgentMemories(projectRoot: string, budget: CharBudget): Promise<void> {
+	try {
+		const pm = new ProjectMemory(projectRoot);
+		await pm.initialize();
+		const entries = await pm.list();
+		if (entries.length === 0) return;
+		const lines = entries
+			.sort((a, b) => b.updatedAt - a.updatedAt)
+			.slice(0, 30)
+			.map((e) => `- **${e.key}**: ${e.value.replace(/\n/gu, " ").slice(0, 200)}`);
+		budget.tryPush(`\n## Single-agent memories\n\n${lines.join("\n")}\n`);
+	} catch {
+		// single-agent memories unavailable — skip silently
+	}
 }
 
 /** Deduplicated ordered list of canonical keys to load for a task type. */

@@ -4,30 +4,34 @@ export type {
 	MemoryConfidence,
 	MemoryLayer,
 	MemoryRecord,
+} from "./types.js";
 export {
 	MemoryRetriever,
 	retrieveMemory,
 	extractKeywords,
 	extractRecentFiles,
-	type MemoryLayer,
-	type MemoryMessage,
-	type MemoryRetrieverOptions,
-	type RetrievedMemory,
-	type RetrievedMemoryEntry,
-	type RetrieveMemoryQuery,
 } from "./MemoryRetriever.js";
+export type {
+	MemoryMessage,
+	MemoryRetrieverOptions,
+	RetrievedMemory,
+	RetrievedMemoryEntry,
+	RetrieveMemoryQuery,
+} from "./MemoryRetriever.js";
+export {
 	scoreCandidate,
 	shouldInject,
 	shouldWrite,
-	type SingleAgentMemoryCandidate,
-	type SingleAgentMemoryRecord,
-	type SingleAgentMemoryScope,
-	type SingleAgentMemoryScore,
+} from "./SingleAgentMemoryScorer.js";
+export type {
+	SingleAgentMemoryCandidate,
+	SingleAgentMemoryRecord,
+	SingleAgentMemoryScope,
+	SingleAgentMemoryScore,
 } from "./SingleAgentMemoryScorer.js";
 export type {
 	ISingleAgentMemoryManager,
 	MemoryInjectionRequest,
 	MemoryInjectionResult,
-	MemoryLayer,
 	MemoryWritebackRequest,
 } from "./types.js";

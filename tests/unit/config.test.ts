@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createMiMoStack } from "../../src/config/createMiMoStack.js";
 import { loadMiMoConfig, mergeConfig } from "../../src/config/index.js";
-import { MockClient } from "../../src/mocks/MockClient.js";
+import { MockClient } from "../helpers/MockClient.js";
 import { ToolRegistry } from "../../src/tools/ToolRegistry.js";
 
 describe("loadMiMoConfig", () => {

@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createMiMoStack } from "../../src/config/createMiMoStack.js";
-import { MockClient } from "../../src/mocks/MockClient.js";
+import { MockClient } from "../helpers/MockClient.js";
 import { ToolRegistry } from "../../src/tools/ToolRegistry.js";
 
 async function drain(iterable: AsyncIterable<unknown>): Promise<void> {
@@ -46,7 +46,7 @@ describe("SingleAgentMemoryManager integration", () => {
 				"Please remember for this project: use the Aurora API base URL for billing requests.",
 			),
 		);
-		const firstWriteback = await firstStack.memoryManager?.writeback({
+		const firstWriteback = await firstStack.memoryManager?.impl.writebackRaw({
 			projectRoot: projectA,
 			input: "Remember globally: my preferred test runner is vitest.",
 		});
