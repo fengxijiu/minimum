@@ -14,6 +14,18 @@ import { buildAssistantMessage, buildSyntheticAssistantMessage } from "./message
 import { ReadTracker, isEditTool, isReadTool } from "./ReadTracker.js";
 import { SnapshotManager } from "./SnapshotManager.js";
 
+/** Minimal interface for session persistence — avoids importing SessionManager directly. */
+export interface ISessionPersister {
+	persistFromLoop(messages: ChatMessage[], meta: {
+		totalCostUsd?: number;
+		totalTokens?: number;
+		toolCalls?: number;
+		steps?: number;
+		model?: string;
+	}): Promise<void>;
+	flushSync(): void;
+}
+
 // ============ Constants ============
 
 /** Max chars per tool result before truncation. */
@@ -92,6 +104,7 @@ export interface MiMoLoopConfig {
 		type: "enabled" | "disabled";
 		budget_tokens?: number;
 	};
+	sessionPersister?: ISessionPersister;
 }
 
 export interface LoopState {
@@ -572,6 +585,12 @@ export class MiMoLoop {
 			yield { type: "error", error: error.message, recoverable: false };
 		} finally {
 			this.state.running = false;
+			this.config.sessionPersister?.persistFromLoop(this.messages, {
+				totalCostUsd: this.state.totalCostUsd,
+				totalTokens: this.state.totalTokens,
+				toolCalls: this.state.toolCalls,
+				steps: this.state.currentStep,
+			}).catch(() => {});
 		}
 	}
 

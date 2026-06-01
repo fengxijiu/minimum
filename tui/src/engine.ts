@@ -211,9 +211,13 @@ function fallbackInfo(reason: EngineFallbackReason, error?: string): EngineInfo 
  *
  * @throws if MIMO_API_KEY is not set or engine fails to initialize.
  */
+export interface SessionFlusher {
+  flushSync(): void;
+}
+
 export async function createEngineRunner(
   workingDirectory: string,
-): Promise<{ runner: Runner; pipelineRunner?: Runner; info: EngineInfo }> {
+): Promise<{ runner: Runner; pipelineRunner?: Runner; info: EngineInfo; sessionFlusher?: SessionFlusher }> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let eng: any;
   try {
@@ -256,13 +260,16 @@ export async function createEngineRunner(
     }
 
     const approvalManager = new eng.ApprovalManager({ mode: userConfig.approvalMode ?? 'auto-edit' });
-    const { loop } = eng.createMiMoStack(client, tools, workingDirectory, userConfig, { approvalManager });
+    const { loop, sessionManager } = eng.createMiMoStack(client, tools, workingDirectory, userConfig, { approvalManager });
     const bridge = new eng.EngineBridge(loop, { approvalManager });
     const runner: Runner = {
       send: (input: string) => bridge.send(input),
       resolvePermission: (id, decision) => bridge.resolvePermission(id, decision),
       setApprovalMode: (mode) => approvalManager.setMode(mode),
     };
+    const sessionFlusher: SessionFlusher | undefined = sessionManager
+      ? { flushSync: () => sessionManager.flushSync() }
+      : undefined;
     // Pipeline (orchestrator) runner — the W0–W4 multi-persona pipeline, run
     // through the same client behind the Runner contract. Optional: only wired
     // when the built engine exposes PipelineBridge.
@@ -280,7 +287,7 @@ export async function createEngineRunner(
       configPath,
       memoryPath: path.join(workingDirectory, '.minimum', 'memory.md'),
     };
-    return { runner, ...(pipelineRunner && { pipelineRunner }), info };
+    return { runner, ...(pipelineRunner && { pipelineRunner }), info, ...(sessionFlusher && { sessionFlusher }) };
   } catch (err) {
     return { runner: mockRunner, info: fallbackInfo('init-error', String((err as Error)?.message ?? err)) };
   }
