@@ -57,6 +57,51 @@ export {
 export { TodoWriteTool } from "./tools/todo/index.js";
 export type { TodoItem, TodoStatus } from "./tools/todo/index.js";
 
+// Memory system
+export { MemoryStore } from "./memory/MemoryStore.js";
+export type { MemoryEntry, MemoryStoreOptions } from "./memory/MemoryStore.js";
+export { ProjectMemory } from "./memory/ProjectMemory.js";
+export type { ProjectMemoryEntry } from "./memory/ProjectMemory.js";
+export { MemoryWriter, decideMemory } from "./memory/single/MemoryWriter.js";
+export type { MemoryWriterOptions, MemoryWriteResult, WriteMemoryOptions } from "./memory/single/MemoryWriter.js";
+export type { MemoryDecision } from "./memory/governance/types.js";
+export { extractCandidates } from "./memory/single/MemoryExtractor.js";
+export type {
+	ExtractedMemoryCandidate,
+	ExtractedMemoryCategory,
+	ExtractedMemoryLayer,
+	MemoryExtractorContext,
+} from "./memory/single/MemoryExtractor.js";
+export {
+	MemoryRetriever,
+	retrieveMemory,
+	extractKeywords,
+	extractRecentFiles,
+} from "./memory/single/index.js";
+export type {
+	MemoryLayer,
+	MemoryMessage,
+	MemoryRetrieverOptions,
+	RetrievedMemory,
+	RetrievedMemoryEntry,
+	RetrieveMemoryQuery,
+} from "./memory/single/index.js";
+export { MemoryCompactor } from "./memory/single/MemoryCompactor.js";
+export type {
+	CompressionMetrics,
+	CompressionReport,
+	DeepCompressionDecision,
+	MemoryCompactorOptions,
+} from "./memory/single/MemoryCompactor.js";
+export { SingleAgentMemoryManager } from "./memory/single/SingleAgentMemoryManager.js";
+export type {
+	SingleAgentMemoryManagerOptions,
+	MemoryManagerRequest,
+	MemoryScope,
+	MemoryCandidate,
+	ScoredMemory,
+	ExtractedMemory,
+} from "./memory/single/SingleAgentMemoryManager.js";
 
 // Hooks system
 export { HookManager } from "./hooks/index.js";
@@ -139,3 +184,26 @@ export type {
 	TaskHandler,
 } from "./tasks/index.js";
 
+export {
+	MEMORY_PRELUDE_MARKER,
+	buildPrelude,
+	filterMemoryPreludeMessages,
+	injectMemoryPreludeMessage,
+	isMemoryPreludeMessage,
+} from "./memory/single/MemoryPreludeBuilder.js";
+export type {
+	IncludedMemoryRecord,
+	MemoryPreludeRequest,
+	MemoryPreludeResult,
+} from "./memory/single/MemoryPreludeBuilder.js";
+export {
+	scoreCandidate,
+	shouldInject,
+	shouldWrite,
+} from "./memory/single/index.js";
+export type {
+	SingleAgentMemoryCandidate,
+	SingleAgentMemoryRecord,
+	SingleAgentMemoryScope,
+	SingleAgentMemoryScore,
+} from "./memory/single/index.js";
