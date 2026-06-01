@@ -11,6 +11,12 @@ import type { ChatMessage, ToolCall, ToolDefinition } from "../types/common.js";
 import type { ICompletenessChecker } from "../types/completeness.js";
 import type { IContextManager, TaskState } from "../types/context.js";
 import type { IToolCallRepair } from "../types/repair.js";
+import {
+	buildPrelude,
+	filterMemoryPreludeMessages,
+	injectMemoryPreludeMessage,
+} from "../memory/single/MemoryPreludeBuilder.js";
+import type { MemoryPreludeRequest } from "../memory/single/MemoryPreludeBuilder.js";
 import type { ICodeValidator } from "../types/validator.js";
 import { countMessagesTokens } from "../utils/token-counter.js";
 import { healMessages } from "./healing.js";
@@ -126,6 +132,13 @@ export interface MiMoLoopConfig {
 		budget_tokens?: number;
 	};
 	sessionPersister?: ISessionPersister;
+	memoryPrelude?: false | {
+		tokenBudget?: number;
+		maxRecords?: number;
+		globalMemoryPath?: string;
+		projectMemory?: MemoryPreludeRequest["projectMemory"];
+		globalMemory?: MemoryPreludeRequest["globalMemory"];
+	};
 	memoryManager?: ILongTermMemoryManager;
 }
 
@@ -248,6 +261,8 @@ export class MiMoLoop {
 					results: submitHook.results,
 				};
 			}
+
+			await this.refreshMemoryPrelude(userInput);
 
 			// 2. 主循环（Reasonix 风格：无限迭代，通过 return 退出）
 			const maxSteps = this.config.maxSteps || 50;
@@ -622,6 +637,8 @@ export class MiMoLoop {
 			yield { type: "error", error: error.message, recoverable: false };
 		} finally {
 			this.state.running = false;
+			const persistedMessages = filterMemoryPreludeMessages(this.messages);
+			this.config.sessionPersister?.persistFromLoop(persistedMessages, {
 			if (this.config.memoryManager) {
 				await this.config.memoryManager.writeback({
 					projectRoot: this.config.workingDirectory,
@@ -669,6 +686,26 @@ export class MiMoLoop {
 			};
 			yield { type: "done", success: false };
 		}
+	}
+
+	private async refreshMemoryPrelude(userInput: string): Promise<void> {
+		if (this.config.memoryPrelude === false) {
+			this.messages = injectMemoryPreludeMessage(this.messages, "");
+			return;
+		}
+
+		const options = this.config.memoryPrelude ?? {};
+		const result = await buildPrelude({
+			userInput,
+			workingDirectory: this.config.workingDirectory,
+			messages: this.messages,
+			tokenBudget: options.tokenBudget ?? 700,
+			maxRecords: options.maxRecords,
+			globalMemoryPath: options.globalMemoryPath,
+			projectMemory: options.projectMemory,
+			globalMemory: options.globalMemory,
+		});
+		this.messages = injectMemoryPreludeMessage(this.messages, result.prelude);
 	}
 
 	/**
@@ -885,6 +922,9 @@ export class MiMoLoop {
 
 	private async optimizeContext(): Promise<any> {
 		if (!this.config.contextManager) return null;
+		const firstUserMessage = this.messages.find((message) => message.role === "user");
+		const taskState: TaskState = {
+			objective: firstUserMessage?.content || "",
 		const messages = this.getMessagesWithoutMemoryPrelude();
 		const taskState: TaskState = {
 			objective: messages[0]?.content || "",
