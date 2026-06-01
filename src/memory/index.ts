@@ -14,6 +14,20 @@ export {
 } from "./RuntimeMemory.js";
 export type { LogEntry } from "./RuntimeMemory.js";
 
+export {
+	MemoryRetriever,
+	retrieveMemory,
+	extractKeywords,
+	extractRecentFiles,
+} from "./single/index.js";
+export type {
+	MemoryLayer,
+	MemoryMessage,
+	MemoryRetrieverOptions,
+	RetrievedMemory,
+	RetrievedMemoryEntry,
+	RetrieveMemoryQuery,
+} from "./single/index.js";
 export { MemoryCompactor } from "./single/MemoryCompactor.js";
 export type {
 	CompressionMetrics,

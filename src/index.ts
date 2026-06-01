@@ -72,6 +72,20 @@ export {
 	VolatileScratch,
 	RuntimeMemory,
 } from "./memory/RuntimeMemory.js";
+export {
+	MemoryRetriever,
+	retrieveMemory,
+	extractKeywords,
+	extractRecentFiles,
+} from "./memory/single/index.js";
+export type {
+	MemoryLayer,
+	MemoryMessage,
+	MemoryRetrieverOptions,
+	RetrievedMemory,
+	RetrievedMemoryEntry,
+	RetrieveMemoryQuery,
+} from "./memory/single/index.js";
 export { MemoryCompactor } from "./memory/single/MemoryCompactor.js";
 export type {
 	CompressionMetrics,
