@@ -53,6 +53,10 @@ export interface ValidationConfig {
 export interface CompletenessConfig {
 	/** 是否启用完整性检查（默认 true） */
 	enabled?: boolean;
+	/** 低于此分时将缺口反馈给模型（0–1，默认 0 = 仅 complete:false 时才注入） */
+	minScore?: number;
+	/** 同一文件连续触发几次后停止注入，防刷屏（默认 2） */
+	maxFeedbackPerFile?: number;
 }
 
 export interface MemoryConfig {

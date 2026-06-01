@@ -1,6 +1,7 @@
 import { ApprovalManager } from "../approval/ApprovalManager.js";
 import { CompletenessChecker } from "../completeness/CompletenessChecker.js";
 import { ContextManager } from "../context/ContextManager.js";
+import { IterationManager } from "../iteration/IterationManager.js";
 import { MiMoLoop } from "../loop/MiMoLoop.js";
 import { SingleAgentMemoryManager } from "../memory/SingleAgentMemoryManager.js";
 import type { IHookManager } from "../loop/MiMoLoop.js";
@@ -90,6 +91,10 @@ export function createMiMoStack(
 		})
 		: undefined;
 
+	const iterationManager = cfg.completeness.enabled
+		? new IterationManager({ maxRetries: 3, learnFromErrors: true })
+		: undefined;
+
 	const loop = new MiMoLoop({
 		client,
 		tools,
@@ -98,6 +103,10 @@ export function createMiMoStack(
 		completenessChecker: cfg.completeness.enabled
 			? new CompletenessChecker()
 			: undefined,
+		completenessMinScore: cfg.completeness.minScore,
+		completenessMaxFeedbackPerFile: cfg.completeness.maxFeedbackPerFile,
+		iterationManager,
+		iterationMaxRetries: 3,
 		toolRepair: new ToolCallRepair(),
 		capacity: cfg.capacity,
 		storm: cfg.storm,

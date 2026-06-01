@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import type { ApprovalRequest, ApprovalResponse } from "../approval/types.js";
 import { CapacityController } from "../capacity/CapacityController.js";
 import type { CapacityConfig, CapacitySnapshot } from "../capacity/types.js";
@@ -10,6 +12,7 @@ import { StormBreaker } from "../repair/StormBreaker.js";
 import type { ChatMessage, ToolCall, ToolDefinition } from "../types/common.js";
 import type { ICompletenessChecker } from "../types/completeness.js";
 import type { IContextManager, TaskState } from "../types/context.js";
+import type { IIterationManager } from "../types/iteration.js";
 import type { IToolCallRepair } from "../types/repair.js";
 import {
 	buildPrelude,
@@ -98,6 +101,14 @@ export interface MiMoLoopConfig {
 	validator?: ICodeValidator;
 	toolRepair?: IToolCallRepair;
 	completenessChecker?: ICompletenessChecker;
+	/** Minimum completeness score (0–1) below which feedback is injected. Default 0 = only when complete:false. */
+	completenessMinScore?: number;
+	/** Max per-file completeness feedback injections per turn to avoid spam. Default 2. */
+	completenessMaxFeedbackPerFile?: number;
+	/** Error/fix learning backend for repeated edit failures on the same file. */
+	iterationManager?: IIterationManager;
+	/** Max per-file edit attempts tracked before stopping iteration feedback. Default 3. */
+	iterationMaxRetries?: number;
 	contextManager?: IContextManager;
 	memoryManager?: ISingleAgentMemoryManager;
 	hookManager?: IHookManager;
@@ -182,9 +193,18 @@ export class MiMoLoop {
 	/** True when a steer was consumed this turn (avoids double-submit). */
 	private steerConsumed = false;
 	private currentUserInput = "";
+	private currentObjective = "";
 	private memoryWritebackDone = false;
 	/** First all-suppressed storm → self-correct; second → force summary. */
 	private selfCorrectedThisTurn = false;
+	/** Per-file completeness feedback count this turn (capped at completenessMaxFeedbackPerFile). */
+	private completenessFeedbackCount = new Map<string, number>();
+	/** Per-file edit attempt count this turn (for iteration learning). */
+	private editAttempts = new Map<string, number>();
+	/** Last validation/completeness diagnosis per file (for recordFix on success). */
+	private lastDiagByFile = new Map<string, string>();
+	/** Last pre-edit content per file (for recordFix on success). */
+	private lastContentByFile = new Map<string, string>();
 	constructor(config: MiMoLoopConfig) {
 		this.config = config;
 		this.state = {
@@ -226,7 +246,12 @@ export class MiMoLoop {
 		this.selfCorrectedThisTurn = false;
 		this.steerConsumed = false;
 		this.currentUserInput = userInput;
+		this.currentObjective = userInput;
 		this.memoryWritebackDone = false;
+		this.completenessFeedbackCount.clear();
+		this.editAttempts.clear();
+		this.lastDiagByFile.clear();
+		this.lastContentByFile.clear();
 
 		try {
 			// 1. 添加用户消息
@@ -584,6 +609,100 @@ export class MiMoLoop {
 							}
 						}
 
+						// 完整性检查（成功的写入类工具，建议式反馈不阻断）
+						if (
+							this.config.completenessChecker &&
+							!finalResult.isError &&
+							isEditTool(toolCall) &&
+							editArgs?.path
+						) {
+							const filePath = editArgs.path;
+							const feedbackCount = this.completenessFeedbackCount.get(filePath) ?? 0;
+							const maxFeedback = this.config.completenessMaxFeedbackPerFile ?? 2;
+							if (feedbackCount < maxFeedback) {
+								let generatedCode = "";
+								try {
+									generatedCode = await readFile(
+										resolve(this.config.workingDirectory, filePath), "utf-8");
+								} catch { /* unreadable — skip check */ }
+
+								if (generatedCode) {
+									const completeness = await this.config.completenessChecker.check({
+										task: this.currentObjective,
+										generatedCode,
+										context: {
+											projectRoot: this.config.workingDirectory,
+											currentFile: filePath,
+											readFiles: [],
+											modifiedFiles: [filePath],
+											language: inferLanguage(filePath),
+										},
+										isTestTask: /\.(test|spec)\./.test(filePath),
+									});
+
+									yield { type: "completeness", result: completeness };
+
+									const minScore = this.config.completenessMinScore ?? 0;
+									const needsFeedback = !completeness.complete || completeness.score < minScore;
+									if (needsFeedback) {
+										this.completenessFeedbackCount.set(filePath, feedbackCount + 1);
+
+										// Track for iteration learning
+										const diagSummary = completeness.requiredActions
+											.map(a => a.description).join("; ");
+										this.lastDiagByFile.set(filePath, diagSummary);
+										const attempt = this.editAttempts.get(filePath) ?? 0;
+										this.editAttempts.set(filePath, attempt + 1);
+
+										if (this.config.iterationManager) {
+											this.config.iterationManager.recordError(
+												filePath, new Error(diagSummary), attempt);
+											yield { type: "iteration",
+												attempt: attempt + 1,
+												maxAttempts: this.config.iterationMaxRetries ?? 3,
+												error: diagSummary };
+										}
+
+										const feedbackLines = [
+											finalResult.content,
+											"",
+											`Completeness check: score ${completeness.score.toFixed(2)}, ${completeness.issues.length} issue(s).`,
+											...completeness.requiredActions.map(a => `  - ${a.description}`),
+											...completeness.suggestions.map(s => `  · ${s}`),
+										];
+
+										// Inject prior-fix hint on second+ attempt
+										if (attempt > 0 && this.config.iterationManager) {
+											const hint = this.config.iterationManager.buildFixPrompt(
+												this.currentObjective, generatedCode, [diagSummary], attempt);
+											feedbackLines.push("", hint);
+										}
+
+										finalResult = { content: feedbackLines.join("\n").trim(), isError: false };
+									} else if (this.config.iterationManager && (this.editAttempts.get(filePath) ?? 0) > 0) {
+										// File previously failed but now passes — record successful fix
+										const prevDiag = this.lastDiagByFile.get(filePath) ?? "";
+										const prevContent = this.lastContentByFile.get(filePath) ?? "";
+										this.config.iterationManager.recordFix(
+											filePath, prevDiag, "model self-corrected",
+											prevContent, generatedCode, true);
+										this.editAttempts.delete(filePath);
+										this.lastDiagByFile.delete(filePath);
+										this.lastContentByFile.delete(filePath);
+									}
+								}
+							}
+						}
+
+						// Snapshot current content for iteration learning (before next edit overwrites it)
+						if (!finalResult.isError && isEditTool(toolCall) && editArgs?.path) {
+							try {
+								const content = await readFile(
+									resolve(this.config.workingDirectory, editArgs.path), "utf-8");
+								this.lastContentByFile.set(editArgs.path, content);
+							} catch { /* ignore */ }
+						}
+
 						yield {
 							type: "tool_result",
 							toolCall,
@@ -737,6 +856,15 @@ export class MiMoLoop {
 	 * Called before every done/return exit point.
 	 */
 	private async *finishTurn(): AsyncGenerator<LoopEvent> {
+		// Clear per-turn iteration learning state
+		if (this.config.iterationManager) {
+			this.config.iterationManager.clearHistory();
+		}
+		this.completenessFeedbackCount.clear();
+		this.editAttempts.clear();
+		this.lastDiagByFile.clear();
+		this.lastContentByFile.clear();
+
 		const stopHook = await this.runHooks("Stop", {});
 		if (stopHook.results.length) {
 			yield { type: "hook", event: "Stop", results: stopHook.results };
@@ -1165,4 +1293,16 @@ export class MiMoLoop {
 	configure(config: Partial<MiMoLoopConfig>): void {
 		this.config = { ...this.config, ...config };
 	}
+}
+
+function inferLanguage(filePath: string): string {
+	const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
+	const map: Record<string, string> = {
+		ts: "typescript", tsx: "typescript",
+		js: "javascript", jsx: "javascript",
+		py: "python", go: "go", rs: "rust",
+		java: "java", rb: "ruby", php: "php",
+		cs: "csharp", cpp: "cpp", c: "c",
+	};
+	return map[ext] ?? "unknown";
 }
