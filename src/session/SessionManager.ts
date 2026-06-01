@@ -1,8 +1,17 @@
-import * as fs from "node:fs/promises";
+import * as fs from "node:fs";
+import * as fsPromises from "node:fs/promises";
 import * as path from "node:path";
 import type { ChatMessage } from "../types/common.js";
 import { CheckpointManager } from "./CheckpointManager.js";
 import type { SessionState } from "./types.js";
+
+export interface LoopMeta {
+	totalCostUsd?: number;
+	totalTokens?: number;
+	toolCalls?: number;
+	steps?: number;
+	model?: string;
+}
 
 export class SessionManager {
 	private basePath: string;
@@ -16,8 +25,48 @@ export class SessionManager {
 	}
 
 	async initialize(): Promise<void> {
-		await fs.mkdir(this.basePath, { recursive: true });
+		await fsPromises.mkdir(this.basePath, { recursive: true });
 		await this.checkpointManager.initialize();
+	}
+
+	/**
+	 * 从 loop 状态持久化 — 每轮结束后调用。
+	 * 首次调用时自动创建 session（无需提前 initialize()）。
+	 */
+	async persistFromLoop(messages: ChatMessage[], meta: LoopMeta): Promise<void> {
+		if (!this.currentSession) {
+			await fsPromises.mkdir(this.basePath, { recursive: true });
+			this.currentSession = {
+				id: `session_${Date.now()}`,
+				messages: [],
+				checkpoints: [],
+				metadata: {},
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			};
+		}
+		this.currentSession.messages = messages;
+		this.currentSession.metadata = { ...this.currentSession.metadata, ...meta };
+		await this.saveSession(this.currentSession);
+		// 更新 last 指针，方便启动时恢复
+		const lastPath = path.join(this.basePath, "last");
+		await fsPromises.writeFile(lastPath, this.currentSession.id, "utf-8");
+	}
+
+	/**
+	 * 进程退出前同步写盘（SIGINT 安全路径）。
+	 */
+	flushSync(): void {
+		if (!this.currentSession) return;
+		try {
+			fs.mkdirSync(this.basePath, { recursive: true });
+			this.currentSession.updatedAt = Date.now();
+			const filePath = path.join(this.basePath, `${this.currentSession.id}.json`);
+			fs.writeFileSync(filePath, JSON.stringify(this.currentSession, null, 2));
+			fs.writeFileSync(path.join(this.basePath, "last"), this.currentSession.id, "utf-8");
+		} catch {
+			// best-effort; ignore errors during shutdown
+		}
 	}
 
 	async createSession(name?: string): Promise<SessionState> {
@@ -39,7 +88,7 @@ export class SessionManager {
 	async loadSession(sessionId: string): Promise<SessionState | null> {
 		try {
 			const filePath = path.join(this.basePath, `${sessionId}.json`);
-			const content = await fs.readFile(filePath, "utf-8");
+			const content = await fsPromises.readFile(filePath, "utf-8");
 			const session = JSON.parse(content) as SessionState;
 
 			this.currentSession = session;
@@ -54,7 +103,7 @@ export class SessionManager {
 	async saveSession(session: SessionState): Promise<void> {
 		session.updatedAt = Date.now();
 		const filePath = path.join(this.basePath, `${session.id}.json`);
-		await fs.writeFile(filePath, JSON.stringify(session, null, 2));
+		await fsPromises.writeFile(filePath, JSON.stringify(session, null, 2));
 	}
 
 	async addMessage(message: ChatMessage): Promise<void> {
@@ -99,12 +148,12 @@ export class SessionManager {
 
 	async listSessions(): Promise<SessionState[]> {
 		try {
-			const files = await fs.readdir(this.basePath);
+			const files = await fsPromises.readdir(this.basePath);
 			const sessions: SessionState[] = [];
 
 			for (const file of files) {
 				if (file.endsWith(".json")) {
-					const content = await fs.readFile(
+					const content = await fsPromises.readFile(
 						path.join(this.basePath, file),
 						"utf-8",
 					);

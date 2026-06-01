@@ -1,37 +1,36 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { JsonRepair } from "../../src/repair/JsonRepair.js";
 import { StormBreaker } from "../../src/repair/StormBreaker.js";
 import { ToolCallRepair } from "../../src/repair/ToolCallRepair.js";
 import { TypeRepair } from "../../src/repair/TypeRepair.js";
 
 describe("Repair", () => {
-	describe("JsonRepair", () => {
-		let repair: JsonRepair;
+	describe("JSON repair (via ToolCallRepair.repairJson)", () => {
+		let repair: ToolCallRepair;
 
 		beforeEach(() => {
-			repair = new JsonRepair();
+			repair = new ToolCallRepair();
 		});
 
 		it("should repair truncated JSON", () => {
-			const result = repair.repair('{"key": "value"');
+			const result = repair.repairJson('{"key": "value"');
 			expect(result.changed).toBe(true);
 			expect(result.fallback).toBe(false);
 		});
 
 		it("should handle valid JSON", () => {
-			const result = repair.repair('{"key": "value"}');
+			const result = repair.repairJson('{"key": "value"}');
 			expect(result.changed).toBe(false);
 			expect(result.fallback).toBe(false);
 		});
 
 		it("should handle empty input", () => {
-			const result = repair.repair("");
+			const result = repair.repairJson("");
 			expect(result.changed).toBe(true);
 			expect(result.repaired).toBe("{}");
 		});
 
 		it("should handle whitespace-only input", () => {
-			const result = repair.repair("   ");
+			const result = repair.repairJson("   ");
 			expect(result.changed).toBe(true);
 			expect(result.repaired).toBe("{}");
 		});

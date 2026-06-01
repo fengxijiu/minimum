@@ -8,19 +8,21 @@ import type {
 	RepairResult,
 	ToolSchema,
 } from "../types/repair.js";
-import { JsonRepair } from "./JsonRepair.js";
+import {
+	balanceBrackets,
+	removeTrailingComma,
+	repairTruncatedJson,
+} from "../utils/json-repair.js";
 import { PathRepair } from "./PathRepair.js";
 import { TypeRepair } from "./TypeRepair.js";
 import { ValueRepair } from "./ValueRepair.js";
 
 export class ToolCallRepair implements IToolCallRepair {
-	private jsonRepair: JsonRepair;
 	private typeRepair: TypeRepair;
 	private valueRepair: ValueRepair;
 	private pathRepair: PathRepair;
 
 	constructor() {
-		this.jsonRepair = new JsonRepair();
 		this.typeRepair = new TypeRepair();
 		this.valueRepair = new ValueRepair();
 		this.pathRepair = new PathRepair();
@@ -149,7 +151,30 @@ export class ToolCallRepair implements IToolCallRepair {
 	}
 
 	repairJson(json: string): JsonRepairResult {
-		return this.jsonRepair.repair(json);
+		if (!json || !json.trim()) {
+			return { repaired: "{}", changed: json !== "{}", description: "empty input", fallback: false };
+		}
+		try {
+			JSON.parse(json);
+			return { repaired: json, changed: false, description: "", fallback: false };
+		} catch { /* fall through */ }
+
+		const result = repairTruncatedJson(json);
+		if (!result.fallback) return result;
+
+		let repaired = json;
+		const descriptions: string[] = [];
+		const withoutComma = removeTrailingComma(repaired);
+		if (withoutComma !== repaired) { repaired = withoutComma; descriptions.push("removed trailing comma"); }
+		const balanced = balanceBrackets(repaired);
+		if (balanced !== repaired) { repaired = balanced; descriptions.push("balanced brackets"); }
+
+		try {
+			JSON.parse(repaired);
+			return { repaired, changed: true, description: descriptions.join(", "), fallback: false };
+		} catch {
+			return { repaired: "{}", changed: true, description: "fallback to empty object", fallback: true };
+		}
 	}
 
 	repairArgTypes(

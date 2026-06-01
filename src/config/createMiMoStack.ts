@@ -4,6 +4,7 @@ import { ContextManager } from "../context/ContextManager.js";
 import { MiMoLoop } from "../loop/MiMoLoop.js";
 import type { IHookManager } from "../loop/MiMoLoop.js";
 import { ToolCallRepair } from "../repair/ToolCallRepair.js";
+import { SessionManager } from "../session/SessionManager.js";
 import { ApplyPatchTool } from "../tools/filesystem/ApplyPatchTool.js";
 import { TodoWriteTool } from "../tools/todo/TodoWriteTool.js";
 import { CodeValidator } from "../validators/CodeValidator.js";
@@ -13,6 +14,7 @@ export interface MiMoStack {
 	loop: MiMoLoop;
 	validator: CodeValidator;
 	contextManager: ContextManager;
+	sessionManager: SessionManager;
 	approvalManager: ApprovalManager;
 }
 
@@ -76,6 +78,9 @@ export function createMiMoStack(
 			? deps.approvalManager
 			: new ApprovalManager({ mode: cfg.approvalMode });
 
+	// SessionManager — automatic session persistence; one instance per stack.
+	const sessionManager = new SessionManager();
+
 	const loop = new MiMoLoop({
 		client,
 		tools,
@@ -95,7 +100,8 @@ export function createMiMoStack(
 		maxSteps: cfg.maxSteps,
 		budgetUsd: cfg.budgetUsd || undefined,
 		workingDirectory,
+		sessionPersister: sessionManager,
 	});
 
-	return { loop, validator, contextManager, approvalManager };
+	return { loop, validator, contextManager, sessionManager, approvalManager };
 }

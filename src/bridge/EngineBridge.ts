@@ -19,6 +19,8 @@ export interface UiPlanStep {
 	status: UiPlanStatus;
 }
 
+export type UiRisk = "low" | "medium" | "high";
+
 export type UiEvent =
 	| { kind: "assistant"; text: string }
 	| { kind: "reasoning"; text: string }
@@ -39,7 +41,7 @@ export type UiEvent =
 			id: string;
 			tool: string;
 			args: Record<string, unknown>;
-			risk: "low" | "medium" | "high";
+			risk: UiRisk;
 			description: string;
 	  }
 	| {
@@ -49,7 +51,11 @@ export type UiEvent =
 			label: string;
 			detail?: string;
 	  }
-	| { kind: "done"; success: boolean };
+	| { kind: "done"; success: boolean }
+	| { kind: "streaming"; text: string }
+	| { kind: "streaming_reasoning"; text: string }
+	| { kind: "streaming_start" }
+	| { kind: "streaming_end" };
 
 /** Parse TodoWriteTool's formatted result back into structured plan steps. */
 export function parsePlanFromTodoResult(content: string): UiPlanStep[] | null {
