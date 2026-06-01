@@ -204,3 +204,15 @@ export type {
 	EmbeddingProvider,
 	EmbeddingVector,
 } from "./index/index.js";
+
+export {
+	scoreCandidate,
+	shouldInject,
+	shouldWrite,
+} from "./memory/single/index.js";
+export type {
+	SingleAgentMemoryCandidate,
+	SingleAgentMemoryRecord,
+	SingleAgentMemoryScope,
+	SingleAgentMemoryScore,
+} from "./memory/single/index.js";
