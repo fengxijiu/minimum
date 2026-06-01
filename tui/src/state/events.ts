@@ -20,6 +20,8 @@ export type AgentEvent =
   | { type: 'diff.push'; file: string; added: number; removed: number; lines: string[] }
   | { type: 'chips.push'; chips: import('../types.js').Chip[] }
   | { type: 'permission.show'; perm: import('../types.js').Permission }
+  // plan mode
+  | { type: 'planmode.set'; enabled: boolean }
   // session
   | { type: 'session.clear' }
   | { type: 'session.reset' }

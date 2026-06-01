@@ -54,6 +54,8 @@ export interface Runner {
   getHistory?(): ChatHistoryMessage[];
   /** Seed the engine with a prior conversation history (used by /load). */
   loadHistory?(messages: ChatHistoryMessage[]): void;
+  /** Enable or disable plan mode (blocks mutating tools so the AI only plans). */
+  setPlanMode?(enabled: boolean): void;
 }
 
 const KIND: Record<string, ToolKind> = {
@@ -274,6 +276,7 @@ export async function createEngineRunner(
       setApprovalMode: (mode) => approvalManager.setMode(mode),
       getHistory: () => bridge.getHistory(),
       loadHistory: (msgs) => bridge.loadHistory(msgs),
+      setPlanMode: (enabled) => bridge.setPlanMode(enabled),
     };
     const sessionFlusher: SessionFlusher | undefined = sessionManager
       ? { flushSync: () => sessionManager.flushSync() }

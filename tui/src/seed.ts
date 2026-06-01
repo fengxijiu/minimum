@@ -38,6 +38,7 @@ export function createInitialState(cwd: string): AppState {
     usage: { promptTokens: 0, completionTokens: 0, sessionCost: 0, lastTurnCost: 0, cacheHit: 0 },
     mcpLoading: null,
     sessionName: null,
+    planMode: false,
     pipeline: null,
   };
 }

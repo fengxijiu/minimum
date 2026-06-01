@@ -399,6 +399,10 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
         mcpLoading: event.total > 0 ? { ready: event.ready, total: event.total } : null,
       };
 
+    // ── plan mode ─────────────────────────────────────────────────
+    case 'planmode.set':
+      return state.planMode === event.enabled ? state : { ...state, planMode: event.enabled };
+
     // ── verbose ───────────────────────────────────────────────────
     case 'verbose.toggle':
       return { ...state, verbose: !state.verbose };

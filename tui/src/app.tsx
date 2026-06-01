@@ -614,6 +614,14 @@ export function App({
         runTurn(pipelineRunner, outcome.text, true);
         return;
       }
+      if (outcome.kind === 'plan.start') {
+        dispatch({ type: 'planmode.set', enabled: true });
+        runner.setPlanMode?.(true);
+        if (st.pending) dispatch({ type: 'pending.clear' });
+        dispatch({ type: 'user.submit', text: `/plan ${outcome.task}` });
+        runTurn(runner, outcome.task, false);
+        return;
+      }
       applyOutcome(outcome);
       return;
     }
@@ -665,6 +673,7 @@ export function App({
   const sUsage = useSlice(state, s => s.usage);
   const sMcpLoading = useSlice(state, s => s.mcpLoading);
   const sToasts = useSlice(state, s => s.toasts);
+  const sPlanMode = useSlice(state, s => s.planMode);
   const sVerbose = useSlice(state, s => s.verbose);
   const sHasEdits = useSlice(state, s => s.edits.length > 0);
   const sHasMessages = useMemo(
@@ -732,6 +741,11 @@ export function App({
     }
   }, [sCtxUsed, sCtxMax, dispatch]);
 
+  // ── Sync planMode → engine ───────────────────────────────────────────
+  useEffect(() => {
+    runner.setPlanMode?.(sPlanMode);
+  }, [sPlanMode, runner]);
+
   // ── Text-wrap width for dividers / turn-meta rules ──────────────────
   // No sidebar any more: the chat uses (nearly) the full terminal width.
   const chatCols = Math.max(40, termSize.cols - 2);
@@ -753,6 +767,7 @@ export function App({
   const titleMode =
     sPending === 'permission' ? 'agent · paused'
     : sPending === 'error' ? 'agent · interrupted'
+    : sPlanMode ? `${sMode} · plan mode`
     : sMode;
   const statusState: SessionState =
     sPending === 'permission' ? 'paused'

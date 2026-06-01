@@ -77,6 +77,7 @@ export interface EngineLoop {
 	run(userInput: string): AsyncGenerator<LoopEvent>;
 	getMessages?(): import("../types/common.js").ChatMessage[];
 	loadHistory?(messages: import("../types/common.js").ChatMessage[]): void;
+	configure?(config: Record<string, unknown>): void;
 }
 
 /** Translate a single engine event into zero or one UI events. */
@@ -180,6 +181,10 @@ export class EngineBridge {
 
 	loadHistory(messages: import("../types/common.js").ChatMessage[]): void {
 		this.loop.loadHistory?.(messages);
+	}
+
+	setPlanMode(enabled: boolean): void {
+		this.loop.configure?.({ planMode: enabled });
 	}
 
 	/** Forward an approval decision from the frontend back into the engine. */

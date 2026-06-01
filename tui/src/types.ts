@@ -144,6 +144,8 @@ export type AppState = {
   mcpLoading: { ready: number; total: number } | null;
   /** Active session name — null for ephemeral sessions. */
   sessionName: string | null;
+  /** Plan mode — when true the engine blocks all mutating tools so the AI only plans. */
+  planMode: boolean;
   /** Orchestrator pipeline phases — null when not running the pipeline. */
   pipeline: PipelinePhase[] | null;
 };

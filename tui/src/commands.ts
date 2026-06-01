@@ -36,7 +36,7 @@ export const COMMANDS: TuiCommand[] = [
   // view
   { name: 'copy',   desc: 'Copy last reply to clipboard',   category: 'view' },
   { name: 'diff',   desc: 'Toggle inline diff blocks',      category: 'view' },
-  { name: 'plan',   desc: 'Jump to the plan strip',         category: 'view' },
+  { name: 'plan',   desc: 'Plan a task or toggle plan mode', category: 'view', usage: '/plan [<task> | on | off]' },
   { name: 'mode',   desc: 'Switch mode: agent / chat / orchestrate', category: 'view', usage: '/mode <agent|chat|orchestrate>' },
   { name: 'orchestrate', desc: 'Run a request through the W0–W4 pipeline with W3.5 mission check', category: 'view', usage: '/orchestrate <request>', aliases: ['pipeline', 'orch'] },
   { name: 'pet',    desc: 'Toggle liliMiMO mascot',         category: 'view' },
@@ -166,7 +166,8 @@ export type CommandOutcome =
   | { kind: 'copy'; text: string }
   | { kind: 'session.save'; name?: string }
   | { kind: 'session.list' }
-  | { kind: 'session.load.request'; name: string };
+  | { kind: 'session.load.request'; name: string }
+  | { kind: 'plan.start'; task: string };
 
 let msgSeq = 0;
 export function sysMessage(text: string, tone: 'info' | 'warn' | 'ok' = 'info'): Message {
@@ -251,13 +252,26 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
     }
 
     case 'plan': {
+      const sub = args[0]?.toLowerCase();
+      if (sub === 'on') {
+        return { kind: 'event', event: { type: 'planmode.set', enabled: true } };
+      }
+      if (sub === 'off') {
+        return { kind: 'event', event: { type: 'planmode.set', enabled: false } };
+      }
+      const task = args.join(' ').trim();
+      if (task) {
+        return { kind: 'plan.start', task };
+      }
+      // No args — show current plan status + planMode state.
       const done = state.plan.steps.filter(s => s.status === 'done').length;
-      return {
-        kind: 'note',
-        note: state.plan.steps.length
-          ? `Plan "${state.plan.title}" — ${done}/${state.plan.steps.length} steps done.`
-          : 'No active plan. Describe a task to generate one.',
-      };
+      const planInfo = state.plan.steps.length
+        ? `Plan "${state.plan.title}" — ${done}/${state.plan.steps.length} steps done.`
+        : 'No active plan.';
+      const modeInfo = state.planMode
+        ? 'Plan mode: ON (mutating tools blocked). Use /plan off to disable.'
+        : 'Plan mode: off. Use /plan <task> to plan, or /plan on to enable.';
+      return { kind: 'note', note: `${planInfo}  ${modeInfo}` };
     }
 
     case 'undo': {
