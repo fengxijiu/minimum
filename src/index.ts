@@ -72,6 +72,13 @@ export {
 	VolatileScratch,
 	RuntimeMemory,
 } from "./memory/RuntimeMemory.js";
+export { extractCandidates } from "./memory/single/MemoryExtractor.js";
+export type {
+	ExtractedMemoryCandidate,
+	ExtractedMemoryCategory,
+	ExtractedMemoryLayer,
+	MemoryExtractorContext,
+} from "./memory/single/MemoryExtractor.js";
 export {
 	MemoryRetriever,
 	retrieveMemory,
