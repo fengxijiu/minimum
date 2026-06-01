@@ -101,7 +101,7 @@ export interface MiMoLoopConfig {
 	validator?: ICodeValidator;
 	toolRepair?: IToolCallRepair;
 	completenessChecker?: ICompletenessChecker;
-	/** Minimum completeness score (0–1) below which feedback is injected. Default 0 = only when complete:false. */
+	/** Minimum completeness score (0–100) below which feedback is injected. Default 0 = only when complete:false. */
 	completenessMinScore?: number;
 	/** Max per-file completeness feedback injections per turn to avoid spam. Default 2. */
 	completenessMaxFeedbackPerFile?: number;
