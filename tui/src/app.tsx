@@ -14,6 +14,10 @@ import {
 } from './commands.js';
 import { mockRunner, uiEventToMessages, summarizeTool, summarizeToolResult, describePermissionArgs, type Runner, type EngineInfo, type UiPlanStatus } from './engine.js';
 import { scanFiles, readBranch, touch } from './files.js';
+import {
+  saveTuiSession, loadTuiSessionById, listTuiSessions, formatSessionList,
+  type TuiSession,
+} from './session.js';
 import { useAgentStore, useSlice, type Dispatch } from './state/store.js';
 import type { AppState, Message, FileEntry, SessionState, Chip, PlanStep, PendingState, ApprovalMode, EditMode, UsageInfo, Mode, StagedEdit } from './types.js';
 
@@ -172,6 +176,10 @@ export function App({
   // Per-turn storm map: "toolName\x00argsPrefix" → call count.
   const stormMapRef = useRef(new Map<string, number>());
 
+  // ── Session persistence ──────────────────────────────────────────────
+  const sessionIdRef = useRef(`auto_${Date.now()}`);
+  const sessionCreatedAtRef = useRef(Date.now());
+
   // ── Per-turn telemetry (reset on turn.start, drained into turnmeta) ──
   const turnToolCountRef = useRef(0);
   const turnUsageRef = useRef<{ totalTokens: number; toolCalls: number; steps: number; totalCostUsd: number } | null>(null);
@@ -283,6 +291,47 @@ export function App({
         if (o.patch.editMode) dispatch({ type: 'edit.mode.change', mode: o.patch.editMode });
         if (o.note) dispatch({ type: 'system.push', text: o.note, tone: o.tone });
         return;
+      case 'session.save': {
+        const name = o.name?.trim() || `session_${Date.now()}`;
+        const s = stateRef.current;
+        sessionIdRef.current = name;
+        void saveTuiSession({
+          id: name,
+          name,
+          projectPath: s.path,
+          messages: s.messages,
+          createdAt: sessionCreatedAtRef.current,
+          updatedAt: Date.now(),
+        }).then(() => {
+          dispatch({ type: 'system.push', text: `Session saved as "${name}".`, tone: 'ok' });
+        }).catch(() => {
+          dispatch({ type: 'system.push', text: 'Failed to save session.', tone: 'warn' });
+        });
+        return;
+      }
+      case 'session.list':
+        void listTuiSessions().then(sessions => {
+          dispatch({ type: 'system.push', text: formatSessionList(sessions) });
+        }).catch(() => {
+          dispatch({ type: 'system.push', text: 'Failed to list sessions.', tone: 'warn' });
+        });
+        return;
+      case 'session.load.request': {
+        const name = o.name;
+        void loadTuiSessionById(name).then(session => {
+          if (!session) {
+            dispatch({ type: 'system.push', text: `Session "${name}" not found.`, tone: 'warn' });
+            return;
+          }
+          sessionIdRef.current = session.id;
+          sessionCreatedAtRef.current = session.createdAt;
+          dispatch({ type: 'session.restore', messages: session.messages, sessionName: session.name });
+          dispatch({ type: 'system.push', text: `Loaded session "${session.name}" (${session.messages.filter(m => m.type === 'user' || m.type === 'assistant').length} messages).`, tone: 'ok' });
+        }).catch(() => {
+          dispatch({ type: 'system.push', text: `Failed to load session "${name}".`, tone: 'warn' });
+        });
+        return;
+      }
     }
   }, [exit, dispatch, runner]);
 
@@ -357,6 +406,7 @@ export function App({
       turnToolCountRef.current = 0;
       turnUsageRef.current = null;
       stormMapRef.current.clear();
+      dispatch({ type: 'turn.start' });
       if (isPipeline) dispatch({ type: 'pipeline.start' });
       try {
         // ── Auto-retry wrapper (transient network / rate-limit errors) ──────
@@ -640,6 +690,24 @@ export function App({
       dispatch({ type: 'messages.commit', count: settledCount });
     }
   }, [settledCount, sCommittedCount, dispatch]);
+
+  // ── Auto-save session after each turn ───────────────────────────────
+  const sTurnInProgress = useSlice(state, s => s.turnInProgress);
+  const prevTurnInProgressRef = useRef(false);
+  useEffect(() => {
+    const justFinished = prevTurnInProgressRef.current && !sTurnInProgress;
+    prevTurnInProgressRef.current = sTurnInProgress;
+    if (!justFinished || sMessages.length === 0) return;
+    const s = stateRef.current;
+    void saveTuiSession({
+      id: sessionIdRef.current,
+      name: s.sessionName ?? sessionIdRef.current,
+      projectPath: s.path,
+      messages: sMessages,
+      createdAt: sessionCreatedAtRef.current,
+      updatedAt: Date.now(),
+    }).catch(() => {/* best-effort */});
+  }, [sTurnInProgress, sMessages]);
 
   // ── Context-window pressure warnings ───────────────────────────────
   // Fires a toast at each threshold once per session so the user knows

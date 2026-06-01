@@ -231,6 +231,21 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
         pending: null,
       };
 
+    case 'session.restore':
+      return {
+        ...state,
+        sessionName: event.sessionName,
+        messages: event.messages,
+        committedCount: event.messages.length,
+        streaming: null,
+        reasoning: null,
+        pending: null,
+        activeTool: null,
+        edits: [],
+        plan: { title: '(no plan yet)', steps: [] },
+        currentStepLabel: '',
+      };
+
     // ── UI state ──────────────────────────────────────────────────
     case 'input.change':
       return { ...state, input: event.value };

@@ -26,6 +26,7 @@ export type AgentEvent =
   | { type: 'messages.clear' }
   | { type: 'messages.commit'; count?: number }
   | { type: 'session.load'; name: string }
+  | { type: 'session.restore'; messages: import('../types.js').Message[]; sessionName: string }
   // UI state
   | { type: 'input.change'; value: string }
   | { type: 'input.submit' }

@@ -163,7 +163,10 @@ export type CommandOutcome =
   | { kind: 'note'; note: string; tone?: 'info' | 'warn' | 'ok' }
   | { kind: 'pipeline'; text: string }
   | { kind: 'event'; event: import('./state/events.js').AgentEvent }
-  | { kind: 'copy'; text: string };
+  | { kind: 'copy'; text: string }
+  | { kind: 'session.save'; name?: string }
+  | { kind: 'session.list' }
+  | { kind: 'session.load.request'; name: string };
 
 let msgSeq = 0;
 export function sysMessage(text: string, tone: 'info' | 'warn' | 'ok' = 'info'): Message {
@@ -351,7 +354,7 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
       return { kind: 'note', note: 'Skills: type `/skill list` (none registered).' };
 
     case 'sessions':
-      return { kind: 'note', note: 'Saved sessions: (none). Use /save <name> and /load <name>.' };
+      return { kind: 'session.list' };
 
     case 'copy': {
       const lastMsg = [...state.messages].reverse().find(m => m.type === 'assistant');
@@ -385,11 +388,11 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
       return { kind: 'event', event: { type: 'init.run', cwd: state.path, args } };
 
     case 'save':
-      return { kind: 'note', note: `Session saved${args[0] ? ` as "${args[0]}"` : ''}.`, tone: 'ok' };
+      return { kind: 'session.save', name: args[0] };
 
     case 'load':
       return args[0]
-        ? { kind: 'note', note: `Loaded session "${args[0]}".`, tone: 'ok' }
+        ? { kind: 'session.load.request', name: args[0] }
         : { kind: 'note', note: 'Usage: /load <name>', tone: 'warn' };
 
     default:
