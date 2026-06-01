@@ -164,6 +164,13 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
         diff: { file: event.file, added: event.added, removed: event.removed, lines: event.lines },
       });
 
+    case 'diff.toggle': {
+      const messages = state.messages.map(m =>
+        m.type === 'diff' ? { ...m, diff: { ...m.diff, collapsed: !m.diff.collapsed } } : m
+      );
+      return messages === state.messages ? state : { ...state, messages };
+    }
+
     case 'chips.push':
       return pushMessage(state, {
         id: mid('c'), type: 'chips', chips: event.chips,
@@ -219,17 +226,6 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
       if (next <= state.committedCount) return state;
       return { ...state, committedCount: next };
     }
-
-    case 'session.load':
-      return {
-        ...state,
-        sessionName: event.name,
-        messages: [],
-        committedCount: 0,
-        streaming: null,
-        reasoning: null,
-        pending: null,
-      };
 
     case 'session.restore':
       return {

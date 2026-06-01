@@ -244,10 +244,8 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
 
     case 'diff': {
       const hasDiff = state.messages.some(m => m.type === 'diff');
-      return {
-        kind: 'note',
-        note: hasDiff ? 'Toggled inline diff blocks.' : 'No diffs in this session yet.',
-      };
+      if (!hasDiff) return { kind: 'note', note: 'No diffs in this session yet.' };
+      return { kind: 'event', event: { type: 'diff.toggle' } };
     }
 
     case 'plan': {

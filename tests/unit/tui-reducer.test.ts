@@ -406,13 +406,6 @@ describe("TUI reducer", () => {
 		expect(s2.verbose).toBe(false);
 	});
 
-	// ── session.load ──────────────────────────────────────────────
-	it("session.load sets session name", () => {
-		const s = reduce(base, { type: "session.load", name: "my-session" });
-		expect(s.sessionName).toBe("my-session");
-		expect(s.messages).toHaveLength(0);
-	});
-
 	// ── session.reset ─────────────────────────────────────────────
 	it("session.reset clears usage", () => {
 		const withUsage = reduce(base, { type: "usage.update", cost: 0.5 });

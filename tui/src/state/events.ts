@@ -18,6 +18,7 @@ export type AgentEvent =
   | { type: 'system.push'; text: string; tone?: 'info' | 'warn' | 'ok' }
   | { type: 'error.push'; title: string; lines: string[]; context?: string; hint?: string }
   | { type: 'diff.push'; file: string; added: number; removed: number; lines: string[] }
+  | { type: 'diff.toggle' }
   | { type: 'chips.push'; chips: import('../types.js').Chip[] }
   | { type: 'permission.show'; perm: import('../types.js').Permission }
   // plan mode
@@ -27,7 +28,6 @@ export type AgentEvent =
   | { type: 'session.reset' }
   | { type: 'messages.clear' }
   | { type: 'messages.commit'; count?: number }
-  | { type: 'session.load'; name: string }
   | { type: 'session.restore'; messages: import('../types.js').Message[]; sessionName: string }
   // UI state
   | { type: 'input.change'; value: string }

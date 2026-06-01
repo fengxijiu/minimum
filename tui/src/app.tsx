@@ -19,7 +19,7 @@ import {
   type TuiSession,
 } from './session.js';
 import { useAgentStore, useSlice, type Dispatch } from './state/store.js';
-import type { AppState, Message, FileEntry, SessionState, Chip, PlanStep, PendingState, ApprovalMode, UsageInfo, Mode, StagedEdit } from './types.js';
+import type { AppState, Message, FileEntry, SessionState, PlanStep, PendingState, ApprovalMode, UsageInfo, Mode, StagedEdit } from './types.js';
 
 const PLAN_STATUS: Record<UiPlanStatus, PlanStep['status']> = {
   pending: 'next',
@@ -182,6 +182,8 @@ export function App({
   // ── Per-turn telemetry (reset on turn.start, drained into turnmeta) ──
   const turnToolCountRef = useRef(0);
   const turnUsageRef = useRef<{ totalTokens: number; toolCalls: number; steps: number; totalCostUsd: number } | null>(null);
+  // Tracks cumulative cost at the start of the current turn to compute per-turn delta.
+  const prevCostRef = useRef(0);
 
   // ── Streaming chunk buffer (adaptive ~120ms coalescing flush) ────────
   // Buffers both answer text and reasoning text, draining them together on an
@@ -324,6 +326,7 @@ export function App({
           }
           sessionIdRef.current = session.id;
           sessionCreatedAtRef.current = session.createdAt;
+          prevCostRef.current = 0;
           // Restore engine conversation history so the AI has full prior context.
           if (session.chatHistory?.length) {
             runner.loadHistory?.(session.chatHistory);
@@ -342,31 +345,11 @@ export function App({
 
   const allowPermission = useCallback(() => {
     const perm = activePermRef.current;
-    if (perm) {
-      runner.resolvePermission?.(perm.id, { approved: true, reason: 'user approved' });
-      setActivePerm(null);
-      dispatch({ type: 'pending.clear' });
-      dispatch({ type: 'system.push', text: `Allowed ${perm.tool}.`, tone: 'ok' });
-      return;
-    }
-    dispatch({ type: 'pending.set', value: 'error' });
-    const chips: Chip[] = [
-      { key: '⏎', label: 'fix & re-run', primary: true },
-      { key: 'n', label: 'leave it' },
-      { key: 'u', label: 'undo last edit' },
-      { key: 'l', label: 'show full log' },
-    ];
-    const id1 = tid();
-    dispatch({ type: 'tool.start', id: id1, name: 'exec_shell', args: 'pytest -q' });
-    dispatch({ type: 'tool.end', id: id1, ok: false, meta: 'exit 1 · 2.3s' });
-    dispatch({ type: 'error.push', title: 'STDERR · 1 FAILURE', lines: [
-      'FAILED tests/test_routes.py::test_health',
-      "  AssertionError: 'uptime' not in response",
-      "  expected key 'uptime', got ['up','sha']",
-      '====== 1 failed, 24 passed in 2.31s ======',
-    ]});
-    dispatch({ type: 'assistant.final', text: "My handler returns 'up', but the test expects 'uptime'. I'll rename the key in routes.py." });
-    dispatch({ type: 'chips.push', chips });
+    if (!perm) return;
+    runner.resolvePermission?.(perm.id, { approved: true, reason: 'user approved' });
+    setActivePerm(null);
+    dispatch({ type: 'pending.clear' });
+    dispatch({ type: 'system.push', text: `Allowed ${perm.tool}.`, tone: 'ok' });
   }, [runner, dispatch]);
 
   const allowPermissionAlways = useCallback(() => {
@@ -383,12 +366,6 @@ export function App({
   const applyFix = useCallback(() => {
     dispatch({ type: 'pending.clear' });
     dispatch({ type: 'edits.clear' });
-    const mid = (p: string) => p + Date.now() + '_' + seq++;
-    dispatch({ type: 'tool.start', id: mid('t'), name: 'edit', args: 'routes.py · up → uptime' });
-    dispatch({ type: 'tool.end', id: mid('t'), ok: true, meta: '+1 −1' });
-    dispatch({ type: 'tool.start', id: mid('t'), name: 'run', args: 'pytest -q' });
-    dispatch({ type: 'tool.end', id: mid('t'), ok: true, meta: 'exit 0 · 2.1s' });
-    dispatch({ type: 'assistant.final', text: 'Fixed and re-ran — 25 passed. Plan complete.' });
   }, [dispatch]);
 
   const dismissPending = useCallback((note: string) => {
@@ -483,7 +460,14 @@ export function App({
               dispatch({ type: 'tool.end', id: lastToolIdRef.current, ok: ev.ok, meta: meta || undefined, output });
               lastToolIdRef.current = null;
             }
-            if (!ev.ok) {
+            if (ev.ok) {
+              const EDIT_TOOLS = new Set(['write_file', 'edit_file', 'edit', 'apply_patch']);
+              if (EDIT_TOOLS.has(ev.name)) {
+                const sign = ev.name === 'write_file' ? '+' : '~';
+                const label = lastToolDescRef.current ?? ev.name;
+                dispatch({ type: 'edit.add', edit: { sign, label } });
+              }
+            } else {
               dispatch({
                 type: 'error.push',
                 title: `${ev.name} failed`,
@@ -512,6 +496,11 @@ export function App({
               totalCostUsd: ev.totalCostUsd,
             };
             dispatch({ type: 'ctx.update', used: Number((ev.totalTokens / 1000).toFixed(1)) });
+            const costDelta = Math.max(0, ev.totalCostUsd - prevCostRef.current);
+            prevCostRef.current = ev.totalCostUsd;
+            if (costDelta > 0) {
+              dispatch({ type: 'usage.update', cost: costDelta, completionTokens: ev.totalTokens });
+            }
             continue;
           }
           if (ev.kind === 'plan') {
