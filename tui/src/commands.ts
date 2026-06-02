@@ -1,5 +1,40 @@
 import type { AppState, ApprovalMode, Message, PlanStep, Permission, FileEntry } from './types.js';
 
+export interface SkillEntry {
+  name: string;
+  description: string;
+  tags: string[];
+  prompt: string;
+}
+
+/** Built-in skill catalog — each entry defines the pipeline prompt injected on `/skill run`. */
+export const SKILL_CATALOG: SkillEntry[] = [
+  {
+    name: 'code-review',
+    description: 'Review code for issues: completeness, correctness, error handling, and type safety',
+    tags: ['code', 'review', 'quality'],
+    prompt: 'Review the code in the current project for issues including completeness, correctness, error handling, and TypeScript type safety. Group findings by severity (error / warning / info) and suggest concrete fixes.',
+  },
+  {
+    name: 'refactor',
+    description: 'Suggest the most impactful refactoring improvements',
+    tags: ['code', 'refactor', 'improvement'],
+    prompt: 'Analyze the code in the current project and identify the most impactful refactoring opportunities. For each suggestion explain the benefit, the files involved, and provide a concrete before/after example.',
+  },
+  {
+    name: 'test-generator',
+    description: 'Generate unit tests following existing project patterns',
+    tags: ['testing', 'unit-test', 'automation'],
+    prompt: 'Generate comprehensive unit tests for the source files in this project. Follow the existing test framework and conventions you find. Cover the happy path, edge cases, and error paths for each exported function or class.',
+  },
+  {
+    name: 'documentation',
+    description: 'Generate clear documentation with signatures, params, and examples',
+    tags: ['docs', 'documentation', 'generation'],
+    prompt: 'Generate clear and concise documentation for the public API of this project. Include function/method signatures, parameter and return type descriptions, thrown errors, and a usage example for each exported symbol.',
+  },
+];
+
 export interface CommandContext {
   model?: string;
   tools?: string[];
@@ -36,7 +71,7 @@ export const COMMANDS: TuiCommand[] = [
   // view
   { name: 'copy',   desc: 'Copy last reply to clipboard',   category: 'view' },
   { name: 'diff',   desc: 'Toggle inline diff blocks',      category: 'view' },
-  { name: 'plan',   desc: 'Jump to the plan strip',         category: 'view' },
+  { name: 'plan',   desc: 'Plan a task or toggle plan mode', category: 'view', usage: '/plan [<task> | on | off]' },
   { name: 'mode',   desc: 'Switch mode: agent / chat / orchestrate', category: 'view', usage: '/mode <agent|chat|orchestrate>' },
   { name: 'orchestrate', desc: 'Run a request through the W0–W4 pipeline with W3.5 mission check', category: 'view', usage: '/orchestrate <request>', aliases: ['pipeline', 'orch'] },
   { name: 'pet',    desc: 'Toggle liliMiMO mascot',         category: 'view' },
@@ -44,13 +79,12 @@ export const COMMANDS: TuiCommand[] = [
   { name: 'verbose', desc: 'Toggle verbose mode',           category: 'view', aliases: ['v'] },
   // system
   { name: 'permission', desc: 'Set permission mode: read-only | auto-edit | full-auto', category: 'system', usage: '/permission <mode>', aliases: ['approval', 'appr', 'perm'] },
-  { name: 'editmode', desc: 'Set edit mode: review | auto | yolo', category: 'system', usage: '/editmode <mode>' },
   { name: 'run',    desc: 'Run a shell command (asks first)', category: 'system', usage: '/run <cmd>' },
   { name: 'mcp',    desc: 'Show MCP server status',         category: 'system' },
   { name: 'status', desc: 'Show session status',            category: 'system' },
   { name: 'tools',  desc: 'List available tools',           category: 'system' },
   { name: 'model',  desc: 'Show the active model',          category: 'system' },
-  { name: 'skill',  desc: 'Manage skills',                  category: 'system', usage: '/skill [list|run]' },
+  { name: 'skill',  desc: 'Run built-in skills',             category: 'system', usage: '/skill [list|info <name>|run <name>|<name>]' },
   { name: 'config', desc: 'View configuration',             category: 'system', aliases: ['cfg'] },
   { name: 'init',   desc: 'Initialize .minimum/config.json for this project', category: 'system' },
   { name: 'help',   desc: 'Show keys & commands',           category: 'system', aliases: ['?'] },
@@ -163,7 +197,11 @@ export type CommandOutcome =
   | { kind: 'note'; note: string; tone?: 'info' | 'warn' | 'ok' }
   | { kind: 'pipeline'; text: string }
   | { kind: 'event'; event: import('./state/events.js').AgentEvent }
-  | { kind: 'copy'; text: string };
+  | { kind: 'copy'; text: string }
+  | { kind: 'session.save'; name?: string }
+  | { kind: 'session.list' }
+  | { kind: 'session.load.request'; name: string }
+  | { kind: 'plan.start'; task: string };
 
 let msgSeq = 0;
 export function sysMessage(text: string, tone: 'info' | 'warn' | 'ok' = 'info'): Message {
@@ -241,20 +279,31 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
 
     case 'diff': {
       const hasDiff = state.messages.some(m => m.type === 'diff');
-      return {
-        kind: 'note',
-        note: hasDiff ? 'Toggled inline diff blocks.' : 'No diffs in this session yet.',
-      };
+      if (!hasDiff) return { kind: 'note', note: 'No diffs in this session yet.' };
+      return { kind: 'event', event: { type: 'diff.toggle' } };
     }
 
     case 'plan': {
+      const sub = args[0]?.toLowerCase();
+      if (sub === 'on') {
+        return { kind: 'event', event: { type: 'planmode.set', enabled: true } };
+      }
+      if (sub === 'off') {
+        return { kind: 'event', event: { type: 'planmode.set', enabled: false } };
+      }
+      const task = args.join(' ').trim();
+      if (task) {
+        return { kind: 'plan.start', task };
+      }
+      // No args — show current plan status + planMode state.
       const done = state.plan.steps.filter(s => s.status === 'done').length;
-      return {
-        kind: 'note',
-        note: state.plan.steps.length
-          ? `Plan "${state.plan.title}" — ${done}/${state.plan.steps.length} steps done.`
-          : 'No active plan. Describe a task to generate one.',
-      };
+      const planInfo = state.plan.steps.length
+        ? `Plan "${state.plan.title}" — ${done}/${state.plan.steps.length} steps done.`
+        : 'No active plan.';
+      const modeInfo = state.planMode
+        ? 'Plan mode: ON (mutating tools blocked). Use /plan off to disable.'
+        : 'Plan mode: off. Use /plan <task> to plan, or /plan on to enable.';
+      return { kind: 'note', note: `${planInfo}  ${modeInfo}` };
     }
 
     case 'undo': {
@@ -347,11 +396,33 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
       return { kind: 'note', note: `Config — ${lines}` };
     }
 
-    case 'skill':
-      return { kind: 'note', note: 'Skills: type `/skill list` (none registered).' };
+    case 'skill': {
+      const sub = parts[1]?.toLowerCase();
+      if (!sub || sub === 'list') {
+        const lines = SKILL_CATALOG.map(s => `  ${s.name.padEnd(18)} ${s.description}`);
+        return { kind: 'note', note: `Available skills (${SKILL_CATALOG.length}):\n${lines.join('\n')}\n\nUsage: /skill run <name>` };
+      }
+      if (sub === 'info') {
+        const skillName = parts[2]?.toLowerCase();
+        const skill = SKILL_CATALOG.find(s => s.name === skillName);
+        if (!skill) {
+          const names = SKILL_CATALOG.map(s => s.name).join(', ');
+          return { kind: 'note', note: `Unknown skill: "${skillName}". Available: ${names}`, tone: 'warn' };
+        }
+        return { kind: 'note', note: `Skill: ${skill.name}\n${skill.description}\nTags: ${skill.tags.join(', ')}` };
+      }
+      // `/skill run <name>` or `/skill <name>` shorthand
+      const runName = (sub === 'run' ? parts[2] : sub)?.toLowerCase();
+      const skill = SKILL_CATALOG.find(s => s.name === runName);
+      if (!skill) {
+        const names = SKILL_CATALOG.map(s => s.name).join(', ');
+        return { kind: 'note', note: `Unknown skill: "${runName}". Available: ${names}`, tone: 'warn' };
+      }
+      return { kind: 'pipeline', text: skill.prompt };
+    }
 
     case 'sessions':
-      return { kind: 'note', note: 'Saved sessions: (none). Use /save <name> and /load <name>.' };
+      return { kind: 'session.list' };
 
     case 'copy': {
       const lastMsg = [...state.messages].reverse().find(m => m.type === 'assistant');
@@ -363,15 +434,6 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
 
     case 'verbose':
       return { kind: 'event', event: { type: 'verbose.toggle' } };
-
-    case 'editmode': {
-      const MODES = ['review', 'auto', 'yolo'] as const;
-      const target = args[0] as typeof MODES[number] | undefined;
-      if (target && MODES.includes(target)) {
-        return { kind: 'event', event: { type: 'edit.mode.change', mode: target } };
-      }
-      return { kind: 'note', note: `Edit mode: ${state.editMode}. Usage: /editmode <review|auto|yolo>` };
-    }
 
     case 'mcp':
       return {
@@ -385,11 +447,11 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
       return { kind: 'event', event: { type: 'init.run', cwd: state.path, args } };
 
     case 'save':
-      return { kind: 'note', note: `Session saved${args[0] ? ` as "${args[0]}"` : ''}.`, tone: 'ok' };
+      return { kind: 'session.save', name: args[0] };
 
     case 'load':
       return args[0]
-        ? { kind: 'note', note: `Loaded session "${args[0]}".`, tone: 'ok' }
+        ? { kind: 'session.load.request', name: args[0] }
         : { kind: 'note', note: 'Usage: /load <name>', tone: 'warn' };
 
     default:

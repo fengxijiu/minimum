@@ -6,7 +6,7 @@ import { HelpOverlay } from './HelpOverlay.js';
 import { Prompt } from './Prompt.js';
 import { filterCommands, filterFiles, type CommandContext, type CmdMatch, type FileMatch } from '../commands.js';
 import { loadHistory, appendHistory } from '../inputHistory.js';
-import type { FileEntry, PendingState, Mode, EditMode } from '../types.js';
+import type { FileEntry, PendingState, Mode } from '../types.js';
 import type { Dispatch } from '../state/store.js';
 import { theme } from '../theme.js';
 
@@ -53,7 +53,6 @@ export interface InputAreaProps {
   pending: PendingState;
   hasMessages: boolean;
   mode: Mode;
-  editMode: EditMode;
   verbose: boolean;
   hasEdits: boolean;
   onSubmit: (text: string) => void;
@@ -66,7 +65,7 @@ export interface InputAreaProps {
 }
 
 export const InputArea = React.memo(function InputArea({
-  files, helpOpen, pending, hasMessages, mode, editMode, verbose, hasEdits,
+  files, helpOpen, pending, hasMessages, mode, verbose, hasEdits,
   onSubmit, onPermAllow, onPermAlwaysAllow, onPermDeny, onApplyFix, dispatch, cmdCtx,
 }: InputAreaProps) {
   const { exit } = useApp();
@@ -214,14 +213,6 @@ export const InputArea = React.memo(function InputArea({
         setStash(inputRef.current);
         setInput('');
       }
-      return;
-    }
-
-    if (key.shift && key.tab) {
-      const modes = ['review', 'auto', 'yolo'] as const;
-      const next = modes[(modes.indexOf(editMode) + 1) % modes.length]!;
-      dispatch({ type: 'edit.mode.change', mode: next });
-      dispatch({ type: 'toast.show', text: `Edit mode: ${next}`, tone: 'info', ttlMs: 2000 });
       return;
     }
 

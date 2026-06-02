@@ -10,7 +10,6 @@ import {
 	renderMemoryReport,
 	writeCandidate,
 } from "../../src/memory/governance/index.js";
-import { MemoryCommand } from "../../src/commands/index.js";
 import type { MemoryCandidate } from "../../src/memory/governance/types.js";
 
 function mkCandidate(over: Partial<MemoryCandidate> = {}): MemoryCandidate {
@@ -104,13 +103,14 @@ describe("renderMemoryReport", () => {
 	});
 });
 
-describe("MemoryCommand", () => {
+describe("inspectMemoryIndex", () => {
 	let dir: string;
 	beforeEach(() => {
 		dir = fs.mkdtempSync(path.join(os.tmpdir(), "mimo-cmd-"));
 	});
 	afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
+<<<<<<< HEAD
 	function ctx() {
 		return { workingDirectory: dir, messages: [], config: {} };
 	}
@@ -130,11 +130,15 @@ describe("MemoryCommand", () => {
 	});
 
 	it("inspectMemoryIndex reports generated index stats", async () => {
+=======
+	it("reports generated index stats", async () => {
+>>>>>>> main
 		await refreshMemoryIndex(dir);
 		const info = await inspectMemoryIndex(dir);
 		expect(info.exists).toBe(true);
 		expect(info.entryCount).toBeGreaterThan(0);
 	});
+<<<<<<< HEAD
 
 	it("defaults to status with no args", async () => {
 		const r = await new MemoryCommand().execute([], ctx());
@@ -179,4 +183,6 @@ describe("MemoryCommand", () => {
 		expect(r.success).toBe(false);
 		expect(r.output).toContain("Unknown subcommand");
 	});
+=======
+>>>>>>> main
 });

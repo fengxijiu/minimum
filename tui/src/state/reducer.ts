@@ -164,6 +164,13 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
         diff: { file: event.file, added: event.added, removed: event.removed, lines: event.lines },
       });
 
+    case 'diff.toggle': {
+      const messages = state.messages.map(m =>
+        m.type === 'diff' ? { ...m, diff: { ...m.diff, collapsed: !m.diff.collapsed } } : m
+      );
+      return messages === state.messages ? state : { ...state, messages };
+    }
+
     case 'chips.push':
       return pushMessage(state, {
         id: mid('c'), type: 'chips', chips: event.chips,
@@ -220,15 +227,19 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
       return { ...state, committedCount: next };
     }
 
-    case 'session.load':
+    case 'session.restore':
       return {
         ...state,
-        sessionName: event.name,
-        messages: [],
-        committedCount: 0,
+        sessionName: event.sessionName,
+        messages: event.messages,
+        committedCount: event.messages.length,
         streaming: null,
         reasoning: null,
         pending: null,
+        activeTool: null,
+        edits: [],
+        plan: { title: '(no plan yet)', steps: [] },
+        currentStepLabel: '',
       };
 
     // ── UI state ──────────────────────────────────────────────────
@@ -358,10 +369,6 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
         },
       };
 
-    // ── edit mode ─────────────────────────────────────────────────
-    case 'edit.mode.change':
-      return { ...state, editMode: event.mode };
-
     case 'edit.undo': {
       if (!state.edits.length) return state;
       return {
@@ -383,6 +390,10 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
         ...state,
         mcpLoading: event.total > 0 ? { ready: event.ready, total: event.total } : null,
       };
+
+    // ── plan mode ─────────────────────────────────────────────────
+    case 'planmode.set':
+      return state.planMode === event.enabled ? state : { ...state, planMode: event.enabled };
 
     // ── verbose ───────────────────────────────────────────────────
     case 'verbose.toggle':

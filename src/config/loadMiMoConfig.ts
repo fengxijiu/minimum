@@ -45,7 +45,20 @@ function mergeProjectOverGlobal(
 	}
 	if (project.context) out.context = { ...global.context, ...project.context };
 	if (project.capacity) out.capacity = { ...global.capacity, ...project.capacity };
-	if (project.validation) out.validation = { ...global.validation, ...project.validation };
+	if (project.validation) {
+		out.validation = { ...global.validation, ...project.validation };
+	}
+	if (project.memory) {
+		const gm = global.memory ?? {};
+		const pm = project.memory;
+		out.memory = {
+			...gm,
+			...pm,
+			...(pm.injection ? { injection: { ...gm.injection, ...pm.injection } } : {}),
+			...(pm.writeback ? { writeback: { ...gm.writeback, ...pm.writeback } } : {}),
+			...(pm.compaction ? { compaction: { ...gm.compaction, ...pm.compaction } } : {}),
+		};
+	}
 	return out;
 }
 

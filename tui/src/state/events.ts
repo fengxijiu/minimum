@@ -1,4 +1,4 @@
-import type { ApprovalMode, Mode, PlanStep, EditMode } from '../types.js';
+import type { ApprovalMode, Mode, PlanStep } from '../types.js';
 
 /**
  * AgentEvent — every state mutation flows through a typed event.
@@ -18,14 +18,17 @@ export type AgentEvent =
   | { type: 'system.push'; text: string; tone?: 'info' | 'warn' | 'ok' }
   | { type: 'error.push'; title: string; lines: string[]; context?: string; hint?: string }
   | { type: 'diff.push'; file: string; added: number; removed: number; lines: string[] }
+  | { type: 'diff.toggle' }
   | { type: 'chips.push'; chips: import('../types.js').Chip[] }
   | { type: 'permission.show'; perm: import('../types.js').Permission }
+  // plan mode
+  | { type: 'planmode.set'; enabled: boolean }
   // session
   | { type: 'session.clear' }
   | { type: 'session.reset' }
   | { type: 'messages.clear' }
   | { type: 'messages.commit'; count?: number }
-  | { type: 'session.load'; name: string }
+  | { type: 'session.restore'; messages: import('../types.js').Message[]; sessionName: string }
   // UI state
   | { type: 'input.change'; value: string }
   | { type: 'input.submit' }
@@ -54,7 +57,6 @@ export type AgentEvent =
   // usage / cost tracking
   | { type: 'usage.update'; promptTokens?: number; completionTokens?: number; cost?: number }
   // edit mode
-  | { type: 'edit.mode.change'; mode: EditMode }
   | { type: 'edit.undo' }
   // mcp
   | { type: 'mcp.loading'; ready: number; total: number }

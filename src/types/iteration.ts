@@ -88,4 +88,7 @@ export interface IIterationManager {
 	getFixHistory(taskId: string): FixRecord[];
 	findSimilarFixes(problem: string): FixRecord[];
 	clearHistory(taskId?: string): void;
+	recordError(taskId: string, error: Error, attempt: number): void;
+	recordFix(taskId: string, problem: string, solution: string, before: string, after: string, successful: boolean): void;
+	buildFixPrompt(task: string, failedCode: string, errors: string[], attempt: number): string;
 }

@@ -15,8 +15,21 @@ export class TaskCompletionChecker {
 		const issues: CompletenessIssue[] = [];
 		let penalty = 0;
 
-		// 1. TODO / FIXME / HACK 标记 — 明确的未完成信号
-		const todoMatches = code.match(/\b(TODO|FIXME|HACK)\b[^\n]*/gi) ?? [];
+		// For the marker scan, strip string / template literals so the words
+		// TODO/FIXME/HACK appearing inside string data or regexes (e.g. a linter
+		// that *matches* "TODO") aren't mistaken for real markers. Comments are
+		// kept — a `// TODO` comment is a genuine incompleteness signal.
+		// (The stub-pattern scan below intentionally uses the raw code, because it
+		// must inspect the string argument of a not-implemented throw.)
+		const markerCode = code
+			.replace(/`(?:\\[\s\S]|[^\\`])*`/g, '""')
+			.replace(/'(?:\\.|[^\\'])*'/g, '""')
+			.replace(/"(?:\\.|[^\\"])*"/g, '""');
+
+		// 1. 未完成标记 — 明确的未完成信号。
+		// 要求标记后紧跟冒号或左括号（标记后接 scope/描述的约定），
+		// 避免把散文里提到的标记名等词误判为真正的标记。
+		const todoMatches = markerCode.match(/\b(TODO|FIXME|HACK)\b\s*[:(][^\n]*/gi) ?? [];
 		for (const match of todoMatches) {
 			issues.push({
 				type: "incomplete-part",

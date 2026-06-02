@@ -81,6 +81,7 @@ export type {
 	ManifestRules,
 	MemoryCandidate,
 	MemoryConfidence,
+	MemoryDecision,
 	MemoryScore,
 	MergeAction,
 	MergeDecision,

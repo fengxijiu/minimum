@@ -27,3 +27,6 @@ DeepSeek-Reasonix-main.zip
 Thumbs.db
 .idea/
 .vscode/
+
+# Claude Code session data
+.claude/
