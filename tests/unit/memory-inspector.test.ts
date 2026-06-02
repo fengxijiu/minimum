@@ -67,7 +67,16 @@ describe("renderMemoryReport", () => {
 	it("renders canonical and staging sections", () => {
 		const out = renderMemoryReport(
 			[{ key: "project", path: ".minimum/project.md", exists: true, bytes: 10 }],
-			[{ sourceTask: "T1", persona: "vision", scope: "ui", confidence: "medium", relatedFiles: [] }],
+			[
+				{
+					id: "T1.vision",
+					sourceTask: "T1",
+					persona: "vision",
+					scope: "ui",
+					confidence: "medium",
+					relatedFiles: [],
+				},
+			],
 		);
 		expect(out).toContain("Canonical memory:");
 		expect(out).toContain("project");

@@ -17,6 +17,7 @@ export interface CanonicalFileInfo {
 }
 
 export interface StagingInfo {
+	id: string;
 	sourceTask: string;
 	persona: string;
 	scope: string;
@@ -63,6 +64,7 @@ export async function inspectCanonical(
 export async function inspectStaging(projectRoot: string): Promise<StagingInfo[]> {
 	const candidates = await listCandidates(projectRoot);
 	return candidates.map((c) => ({
+		id: `${c.sourceTask}.${c.persona}`,
 		sourceTask: c.sourceTask,
 		persona: c.persona,
 		scope: c.scope,
