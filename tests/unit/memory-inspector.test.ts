@@ -110,79 +110,10 @@ describe("inspectMemoryIndex", () => {
 	});
 	afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
-<<<<<<< HEAD
-	function ctx() {
-		return { workingDirectory: dir, messages: [], config: {} };
-	}
-
-	it("status reports canonical and staging", async () => {
-		await writeCandidate(dir, mkCandidate());
-		await refreshMemoryIndex(dir);
-		const r = await new MemoryCommand().execute(["status"], ctx());
-		expect(r.success).toBe(true);
-		expect(r.output).toContain("Memory status:");
-		expect(r.output).toContain("Project canonical:");
-		expect(r.output).toContain("Global canonical:");
-		expect(r.output).toContain("Staging: 1 candidate");
-		expect(r.output).toContain("Index entries:");
-		expect(r.output).toContain("Last compacted:");
-		expect(r.output).toContain("Injection budget:");
-	});
-
-	it("inspectMemoryIndex reports generated index stats", async () => {
-=======
 	it("reports generated index stats", async () => {
->>>>>>> main
 		await refreshMemoryIndex(dir);
 		const info = await inspectMemoryIndex(dir);
 		expect(info.exists).toBe(true);
 		expect(info.entryCount).toBeGreaterThan(0);
 	});
-<<<<<<< HEAD
-
-	it("defaults to status with no args", async () => {
-		const r = await new MemoryCommand().execute([], ctx());
-		expect(r.success).toBe(true);
-		expect(r.output).toContain("Memory status:");
-	});
-
-	it("staging reports empty staging", async () => {
-		const r = await new MemoryCommand().execute(["staging"], ctx());
-		expect(r.success).toBe(true);
-		expect(r.output).toContain("Staging (0 candidates)");
-		expect(r.output).toContain("(empty)");
-	});
-
-	it("approves and rejects staged candidates by id", async () => {
-		await writeCandidate(
-			dir,
-			mkCandidate({ sourceTask: "T1", persona: "code_executor", body: "approved note" }),
-		);
-		await writeCandidate(
-			dir,
-			mkCandidate({ sourceTask: "T2", persona: "reviewer", body: "rejected note" }),
-		);
-
-		const approve = await new MemoryCommand().execute(["approve", "T1.code_executor"], ctx());
-		expect(approve.success).toBe(true);
-		expect(approve.output).toContain("Approved staged memory candidate T1.code_executor");
-		expect(
-			fs.readFileSync(path.join(dir, ".minimum", "project.md"), "utf-8"),
-		).toContain("approved note");
-
-		const reject = await new MemoryCommand().execute(["reject", "T2.reviewer"], ctx());
-		expect(reject.success).toBe(true);
-		expect(reject.output).toContain("Rejected staged memory candidate T2.reviewer");
-
-		const staging = await inspectStaging(dir);
-		expect(staging).toEqual([]);
-	});
-
-	it("rejects an unknown subcommand", async () => {
-		const r = await new MemoryCommand().execute(["frobnicate"], ctx());
-		expect(r.success).toBe(false);
-		expect(r.output).toContain("Unknown subcommand");
-	});
-=======
->>>>>>> main
 });

@@ -117,13 +117,9 @@ export function renderMemoryReport(
 		lines.push("  (empty)");
 	} else {
 		for (const s of staging) {
-<<<<<<< HEAD
-			lines.push(`  • ${s.id} [${s.confidence}] ${s.scope}`);
-=======
 			const decision = s.decision ? ` ${s.decision}` : "";
 			const reason = s.reviewReason ? ` — ${s.reviewReason}` : "";
 			lines.push(`  • ${s.sourceTask}.${s.persona} [${s.confidence}${decision}] ${s.scope}${reason}`);
->>>>>>> main
 		}
 	}
 	if (index) {
