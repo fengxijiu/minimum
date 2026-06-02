@@ -65,8 +65,6 @@ export type StagedEdit = { sign: '+' | '~' | '-'; label: string };
 
 export type PendingState = null | 'permission' | 'error';
 
-export type EditMode = 'review' | 'auto' | 'yolo';
-
 /** One W0–W4 phase in the orchestrator pipeline panel, including W3.5. */
 export type PipelinePhase = {
   phase: string;     // 'W0' | 'W1' | 'W0.5' | 'W2/3' | 'W3.5' | 'W4'
@@ -107,7 +105,6 @@ export type AppState = {
   branch: string;
   mode: Mode;
   approvalMode: ApprovalMode;
-  editMode: EditMode;
   ctx: { used: number; max: number };
   files: FileEntry[];
   edits: StagedEdit[];
@@ -144,6 +141,8 @@ export type AppState = {
   mcpLoading: { ready: number; total: number } | null;
   /** Active session name — null for ephemeral sessions. */
   sessionName: string | null;
+  /** Plan mode — when true the engine blocks all mutating tools so the AI only plans. */
+  planMode: boolean;
   /** Orchestrator pipeline phases — null when not running the pipeline. */
   pipeline: PipelinePhase[] | null;
 };

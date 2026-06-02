@@ -14,8 +14,12 @@ import {
 } from './commands.js';
 import { mockRunner, uiEventToMessages, summarizeTool, summarizeToolResult, describePermissionArgs, type Runner, type EngineInfo, type UiPlanStatus } from './engine.js';
 import { scanFiles, readBranch, touch } from './files.js';
+import {
+  saveTuiSession, loadTuiSessionById, listTuiSessions, formatSessionList,
+  type TuiSession,
+} from './session.js';
 import { useAgentStore, useSlice, type Dispatch } from './state/store.js';
-import type { AppState, Message, FileEntry, SessionState, Chip, PlanStep, PendingState, ApprovalMode, EditMode, UsageInfo, Mode, StagedEdit } from './types.js';
+import type { AppState, Message, FileEntry, SessionState, PlanStep, PendingState, ApprovalMode, UsageInfo, Mode, StagedEdit } from './types.js';
 
 const PLAN_STATUS: Record<UiPlanStatus, PlanStep['status']> = {
   pending: 'next',
@@ -82,13 +86,13 @@ const PipelineZone = React.memo(function PipelineZone({ phases }: {
 /** ChatStream zone — only re-renders on messages/stepLabel/activeTool/streaming changes. */
 const ChatZone = React.memo(function ChatZone({
   messages, committedCount, stepLabel, activeTool,
-  streaming, reasoning, verbose, petVisible, cols, maxRows, resizeRevision, header,
+  streaming, reasoning, verbose, petVisible, cols, maxRows, reservedRows, resizeRevision, header,
 }: {
   messages: Message[]; committedCount: number;
   stepLabel: string; activeTool: AppState['activeTool'];
   streaming?: string | null; reasoning?: string | null; verbose?: boolean;
   petVisible: boolean;
-  cols: number; maxRows: number; resizeRevision: number; header: React.ReactNode;
+  cols: number; maxRows: number; reservedRows: number; resizeRevision: number; header: React.ReactNode;
 }) {
   return (
     <ChatStream
@@ -102,6 +106,7 @@ const ChatZone = React.memo(function ChatZone({
       petVisible={petVisible}
       cols={cols}
       maxRows={maxRows}
+      reservedRows={reservedRows}
       resizeRevision={resizeRevision}
       header={header}
     />
@@ -110,16 +115,15 @@ const ChatZone = React.memo(function ChatZone({
 
 /** StatusBar zone — only re-renders on status/usage changes. */
 const StatusZone = React.memo(function StatusZone({
-  statusState, approvalMode, editMode, ctxUsed, ctxMax, hint, usage, mcpLoading,
+  statusState, approvalMode, ctxUsed, ctxMax, hint, usage, mcpLoading,
 }: {
-  statusState: SessionState; approvalMode?: ApprovalMode; editMode?: EditMode;
+  statusState: SessionState; approvalMode?: ApprovalMode;
   ctxUsed: number; ctxMax: number; hint: string; usage: UsageInfo; mcpLoading: AppState['mcpLoading'];
 }) {
   return (
     <StatusBar
       state={statusState}
       approvalMode={approvalMode}
-      editMode={editMode}
       ctxUsed={ctxUsed}
       ctxMax={ctxMax}
       hint={hint}
@@ -171,9 +175,15 @@ export function App({
   // Per-turn storm map: "toolName\x00argsPrefix" → call count.
   const stormMapRef = useRef(new Map<string, number>());
 
+  // ── Session persistence ──────────────────────────────────────────────
+  const sessionIdRef = useRef(`auto_${Date.now()}`);
+  const sessionCreatedAtRef = useRef(Date.now());
+
   // ── Per-turn telemetry (reset on turn.start, drained into turnmeta) ──
   const turnToolCountRef = useRef(0);
   const turnUsageRef = useRef<{ totalTokens: number; toolCalls: number; steps: number; totalCostUsd: number } | null>(null);
+  // Tracks cumulative cost at the start of the current turn to compute per-turn delta.
+  const prevCostRef = useRef(0);
 
   // ── Streaming chunk buffer (adaptive ~120ms coalescing flush) ────────
   // Buffers both answer text and reasoning text, draining them together on an
@@ -279,39 +289,67 @@ export function App({
         }
         if (o.patch.approvalMode) dispatch({ type: 'approval.change', mode: o.patch.approvalMode });
         if (o.patch.mode) dispatch({ type: 'mode.change', mode: o.patch.mode });
-        if (o.patch.editMode) dispatch({ type: 'edit.mode.change', mode: o.patch.editMode });
         if (o.note) dispatch({ type: 'system.push', text: o.note, tone: o.tone });
         return;
+      case 'session.save': {
+        const name = o.name?.trim() || `session_${Date.now()}`;
+        const s = stateRef.current;
+        sessionIdRef.current = name;
+        void saveTuiSession({
+          id: name,
+          name,
+          projectPath: s.path,
+          messages: s.messages,
+          chatHistory: runner.getHistory?.(),
+          createdAt: sessionCreatedAtRef.current,
+          updatedAt: Date.now(),
+        }).then(() => {
+          dispatch({ type: 'system.push', text: `Session saved as "${name}".`, tone: 'ok' });
+        }).catch(() => {
+          dispatch({ type: 'system.push', text: 'Failed to save session.', tone: 'warn' });
+        });
+        return;
+      }
+      case 'session.list':
+        void listTuiSessions().then(sessions => {
+          dispatch({ type: 'system.push', text: formatSessionList(sessions) });
+        }).catch(() => {
+          dispatch({ type: 'system.push', text: 'Failed to list sessions.', tone: 'warn' });
+        });
+        return;
+      case 'session.load.request': {
+        const name = o.name;
+        void loadTuiSessionById(name).then(session => {
+          if (!session) {
+            dispatch({ type: 'system.push', text: `Session "${name}" not found.`, tone: 'warn' });
+            return;
+          }
+          sessionIdRef.current = session.id;
+          sessionCreatedAtRef.current = session.createdAt;
+          prevCostRef.current = 0;
+          // Restore engine conversation history so the AI has full prior context.
+          if (session.chatHistory?.length) {
+            runner.loadHistory?.(session.chatHistory);
+          }
+          dispatch({ type: 'session.restore', messages: session.messages, sessionName: session.name });
+          const msgCount = session.messages.filter(m => m.type === 'user' || m.type === 'assistant').length;
+          const ctxNote = session.chatHistory?.length ? ` · AI context restored (${session.chatHistory.length} turns)` : '';
+          dispatch({ type: 'system.push', text: `Loaded "${session.name}" (${msgCount} messages${ctxNote}).`, tone: 'ok' });
+        }).catch(() => {
+          dispatch({ type: 'system.push', text: `Failed to load session "${name}".`, tone: 'warn' });
+        });
+        return;
+      }
     }
   }, [exit, dispatch, runner]);
 
   const allowPermission = useCallback(() => {
     const perm = activePermRef.current;
-    if (perm) {
-      runner.resolvePermission?.(perm.id, { approved: true, reason: 'user approved' });
-      setActivePerm(null);
-      dispatch({ type: 'pending.clear' });
-      dispatch({ type: 'system.push', text: `Allowed ${perm.tool}.`, tone: 'ok' });
-      return;
-    }
-    dispatch({ type: 'pending.set', value: 'error' });
-    const chips: Chip[] = [
-      { key: '⏎', label: 'fix & re-run', primary: true },
-      { key: 'n', label: 'leave it' },
-      { key: 'u', label: 'undo last edit' },
-      { key: 'l', label: 'show full log' },
-    ];
-    const id1 = tid();
-    dispatch({ type: 'tool.start', id: id1, name: 'exec_shell', args: 'pytest -q' });
-    dispatch({ type: 'tool.end', id: id1, ok: false, meta: 'exit 1 · 2.3s' });
-    dispatch({ type: 'error.push', title: 'STDERR · 1 FAILURE', lines: [
-      'FAILED tests/test_routes.py::test_health',
-      "  AssertionError: 'uptime' not in response",
-      "  expected key 'uptime', got ['up','sha']",
-      '====== 1 failed, 24 passed in 2.31s ======',
-    ]});
-    dispatch({ type: 'assistant.final', text: "My handler returns 'up', but the test expects 'uptime'. I'll rename the key in routes.py." });
-    dispatch({ type: 'chips.push', chips });
+    if (!perm) return;
+    runner.resolvePermission?.(perm.id, { approved: true, reason: 'user approved' });
+    setActivePerm(null);
+    dispatch({ type: 'pending.clear' });
+    dispatch({ type: 'system.push', text: `Allowed ${perm.tool}.`, tone: 'ok' });
   }, [runner, dispatch]);
 
   const allowPermissionAlways = useCallback(() => {
@@ -328,12 +366,6 @@ export function App({
   const applyFix = useCallback(() => {
     dispatch({ type: 'pending.clear' });
     dispatch({ type: 'edits.clear' });
-    const mid = (p: string) => p + Date.now() + '_' + seq++;
-    dispatch({ type: 'tool.start', id: mid('t'), name: 'edit', args: 'routes.py · up → uptime' });
-    dispatch({ type: 'tool.end', id: mid('t'), ok: true, meta: '+1 −1' });
-    dispatch({ type: 'tool.start', id: mid('t'), name: 'run', args: 'pytest -q' });
-    dispatch({ type: 'tool.end', id: mid('t'), ok: true, meta: 'exit 0 · 2.1s' });
-    dispatch({ type: 'assistant.final', text: 'Fixed and re-ran — 25 passed. Plan complete.' });
   }, [dispatch]);
 
   const dismissPending = useCallback((note: string) => {
@@ -356,6 +388,7 @@ export function App({
       turnToolCountRef.current = 0;
       turnUsageRef.current = null;
       stormMapRef.current.clear();
+      dispatch({ type: 'turn.start' });
       if (isPipeline) dispatch({ type: 'pipeline.start' });
       try {
         // ── Auto-retry wrapper (transient network / rate-limit errors) ──────
@@ -427,7 +460,14 @@ export function App({
               dispatch({ type: 'tool.end', id: lastToolIdRef.current, ok: ev.ok, meta: meta || undefined, output });
               lastToolIdRef.current = null;
             }
-            if (!ev.ok) {
+            if (ev.ok) {
+              const EDIT_TOOLS = new Set(['write_file', 'edit_file', 'edit', 'apply_patch']);
+              if (EDIT_TOOLS.has(ev.name)) {
+                const sign = ev.name === 'write_file' ? '+' : '~';
+                const label = lastToolDescRef.current ?? ev.name;
+                dispatch({ type: 'edit.add', edit: { sign, label } });
+              }
+            } else {
               dispatch({
                 type: 'error.push',
                 title: `${ev.name} failed`,
@@ -456,6 +496,11 @@ export function App({
               totalCostUsd: ev.totalCostUsd,
             };
             dispatch({ type: 'ctx.update', used: Number((ev.totalTokens / 1000).toFixed(1)) });
+            const costDelta = Math.max(0, ev.totalCostUsd - prevCostRef.current);
+            prevCostRef.current = ev.totalCostUsd;
+            if (costDelta > 0) {
+              dispatch({ type: 'usage.update', cost: costDelta, completionTokens: ev.totalTokens });
+            }
             continue;
           }
           if (ev.kind === 'plan') {
@@ -556,6 +601,14 @@ export function App({
         runTurn(pipelineRunner, outcome.text, true);
         return;
       }
+      if (outcome.kind === 'plan.start') {
+        dispatch({ type: 'planmode.set', enabled: true });
+        runner.setPlanMode?.(true);
+        if (st.pending) dispatch({ type: 'pending.clear' });
+        dispatch({ type: 'user.submit', text: `/plan ${outcome.task}` });
+        runTurn(runner, outcome.task, false);
+        return;
+      }
       applyOutcome(outcome);
       return;
     }
@@ -601,12 +654,12 @@ export function App({
   const sStreaming = useSlice(state, s => s.streaming);
   const sReasoning = useSlice(state, s => s.reasoning);
   const sApprovalMode = useSlice(state, s => s.approvalMode);
-  const sEditMode = useSlice(state, s => s.editMode);
   const sCtxUsed = useSlice(state, s => s.ctx.used);
   const sCtxMax = useSlice(state, s => s.ctx.max);
   const sUsage = useSlice(state, s => s.usage);
   const sMcpLoading = useSlice(state, s => s.mcpLoading);
   const sToasts = useSlice(state, s => s.toasts);
+  const sPlanMode = useSlice(state, s => s.planMode);
   const sVerbose = useSlice(state, s => s.verbose);
   const sHasEdits = useSlice(state, s => s.edits.length > 0);
   const sHasMessages = useMemo(
@@ -640,6 +693,25 @@ export function App({
     }
   }, [settledCount, sCommittedCount, dispatch]);
 
+  // ── Auto-save session after each turn ───────────────────────────────
+  const sTurnInProgress = useSlice(state, s => s.turnInProgress);
+  const prevTurnInProgressRef = useRef(false);
+  useEffect(() => {
+    const justFinished = prevTurnInProgressRef.current && !sTurnInProgress;
+    prevTurnInProgressRef.current = sTurnInProgress;
+    if (!justFinished || sMessages.length === 0) return;
+    const s = stateRef.current;
+    void saveTuiSession({
+      id: sessionIdRef.current,
+      name: s.sessionName ?? sessionIdRef.current,
+      projectPath: s.path,
+      messages: sMessages,
+      chatHistory: runner.getHistory?.(),
+      createdAt: sessionCreatedAtRef.current,
+      updatedAt: Date.now(),
+    }).catch(() => {/* best-effort */});
+  }, [sTurnInProgress, sMessages]);
+
   // ── Context-window pressure warnings ───────────────────────────────
   // Fires a toast at each threshold once per session so the user knows
   // to consider /clear before the window fills and costs spike.
@@ -655,13 +727,33 @@ export function App({
     }
   }, [sCtxUsed, sCtxMax, dispatch]);
 
+  // ── Sync planMode → engine ───────────────────────────────────────────
+  useEffect(() => {
+    runner.setPlanMode?.(sPlanMode);
+  }, [sPlanMode, runner]);
+
   // ── Text-wrap width for dividers / turn-meta rules ──────────────────
   // No sidebar any more: the chat uses (nearly) the full terminal width.
   const chatCols = Math.max(40, termSize.cols - 2);
 
+  // ── Bottom chrome height for streamCap calculation ───────────────────
+  // Rows consumed by UI below ChatStream so ChatStream can compute an
+  // accurate streamCap.  Compact plan (> 4 steps) = 1 row; card plan = 2;
+  // no plan = 0.  Pipeline adds 1 row per phase + 1 header.
+  const bottomReserved = useMemo(() => {
+    const CHROME = 8; // TitleBar(1) + InputArea(3) + StatusBar(1) + box chrome
+    const planRows = sPlanSteps.length === 0 ? 0
+      : sPlanSteps.length > 4 ? 1    // compact single-line strip
+      : 2;                            // title row + steps row
+    const pipelineRows = sPipeline ? sPipeline.length + 1 : 0;
+    const toastRows = sToasts.length;
+    return CHROME + planRows + pipelineRows + toastRows;
+  }, [sPlanSteps, sPipeline, sToasts]);
+
   const titleMode =
     sPending === 'permission' ? 'agent · paused'
     : sPending === 'error' ? 'agent · interrupted'
+    : sPlanMode ? `${sMode} · plan mode`
     : sMode;
   const statusState: SessionState =
     sPending === 'permission' ? 'paused'
@@ -686,6 +778,7 @@ export function App({
         verbose={sVerbose}
         cols={chatCols}
         maxRows={termSize.rows}
+        reservedRows={bottomReserved}
         resizeRevision={termSize.revision}
         header={
           <Box flexDirection="column">
@@ -706,7 +799,6 @@ export function App({
         pending={sPending}
         hasMessages={sHasMessages}
         mode={sMode}
-        editMode={sEditMode}
         verbose={sVerbose}
         hasEdits={sHasEdits}
         onSubmit={handleSubmit}
@@ -721,7 +813,6 @@ export function App({
       <StatusZone
         statusState={statusState}
         approvalMode={sApprovalMode}
-        editMode={sEditMode}
         ctxUsed={sCtxUsed}
         ctxMax={sCtxMax}
         hint={[

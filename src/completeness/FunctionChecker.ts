@@ -7,7 +7,15 @@ export class FunctionChecker {
 		const functions = this.extractFunctions(code);
 
 		for (const func of functions) {
-			if (func.body.includes("TODO") || func.body.includes("FIXME")) {
+			// The TODO/FIXME marker scan uses a string-stripped body so markers
+			// inside string data aren't mistaken for real markers. The placeholder
+			// scan below uses the raw body because it must inspect the string
+			// argument of a not-implemented throw.
+			const markerBody = func.body
+				.replace(/`(?:\\[\s\S]|[^\\`])*`/g, '""')
+				.replace(/'(?:\\.|[^\\'])*'/g, '""')
+				.replace(/"(?:\\.|[^\\"])*"/g, '""');
+			if (/\b(?:TODO|FIXME)\b\s*[:(]/.test(markerBody)) {
 				issues.push({
 					type: "placeholder-code",
 					severity: "error",
@@ -51,6 +59,13 @@ export class FunctionChecker {
 			location: { file: string; line: number; column: number };
 		}> = [];
 
+		// Control-flow / non-function keywords that the naive regexes below would
+		// otherwise capture as "functions" (e.g. `if (x) { ... }`).
+		const NON_FUNCTION = new Set([
+			"if", "for", "while", "switch", "catch", "do", "else",
+			"return", "function", "typeof", "await", "yield", "with",
+		]);
+
 		const patterns = [
 			/function\s+(\w+)\s*\([^)]*\)\s*\{([^}]*)\}/g,
 			/(?:const|let|var)\s+(\w+)\s*=\s*(?:\([^)]*\)|[^=])\s*=>\s*\{([^}]*)\}/g,
@@ -66,7 +81,7 @@ export class FunctionChecker {
 				const beforeMatch = code.slice(0, match.index);
 				const lineNumber = beforeMatch.split("\n").length;
 
-				if (name && body !== undefined) {
+				if (name && body !== undefined && !NON_FUNCTION.has(name)) {
 					functions.push({
 						name,
 						body,
@@ -88,12 +103,13 @@ export class FunctionChecker {
 	}
 
 	private hasPlaceholderCode(body: string): boolean {
+		// Only unambiguous stubs. Spread/rest (`...`) and `return null/undefined`
+		// are valid in real code and caused heavy false positives, so they are
+		// intentionally excluded.
 		const placeholders = [
-			/pass\s*$/,
-			/\.\.\./,
+			/\bpass\s*$/,
 			/throw\s+new\s+Error\s*\(\s*['"]not\s+implemented/i,
-			/return\s+null\s*;?\s*$/,
-			/return\s+undefined\s*;?\s*$/,
+			/raise\s+NotImplementedError/,
 		];
 
 		return placeholders.some((p) => p.test(body));

@@ -44,10 +44,18 @@ export type UiEvent =
 
 export type ApprovalDecision = { approved: boolean; reason?: string; remembered?: boolean };
 
+export type ChatHistoryMessage = { role: string; content: string; tool_calls?: unknown[]; tool_call_id?: string };
+
 export interface Runner {
   send(input: string): AsyncIterable<UiEvent>;
   resolvePermission?(id: string, decision: ApprovalDecision): void;
   setApprovalMode?(mode: 'read-only' | 'auto-edit' | 'full-auto' | 'suggest' | 'never'): void;
+  /** Return the engine's current conversation history for session persistence. */
+  getHistory?(): ChatHistoryMessage[];
+  /** Seed the engine with a prior conversation history (used by /load). */
+  loadHistory?(messages: ChatHistoryMessage[]): void;
+  /** Enable or disable plan mode (blocks mutating tools so the AI only plans). */
+  setPlanMode?(enabled: boolean): void;
 }
 
 const KIND: Record<string, ToolKind> = {
@@ -266,6 +274,9 @@ export async function createEngineRunner(
       send: (input: string) => bridge.send(input),
       resolvePermission: (id, decision) => bridge.resolvePermission(id, decision),
       setApprovalMode: (mode) => approvalManager.setMode(mode),
+      getHistory: () => bridge.getHistory(),
+      loadHistory: (msgs) => bridge.loadHistory(msgs),
+      setPlanMode: (enabled) => bridge.setPlanMode(enabled),
     };
     const sessionFlusher: SessionFlusher | undefined = sessionManager
       ? { flushSync: () => sessionManager.flushSync() }

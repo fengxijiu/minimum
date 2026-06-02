@@ -156,4 +156,25 @@ export class IterationManager implements IIterationManager {
 		this.errorRecorder.clearHistory(taskId);
 		this.fixRecorder.clearHistory(taskId);
 	}
+
+	recordError(taskId: string, error: Error, attempt: number): void {
+		this.errorRecorder.record(taskId, error, attempt);
+	}
+
+	recordFix(
+		taskId: string,
+		problem: string,
+		solution: string,
+		before: string,
+		after: string,
+		successful: boolean,
+	): void {
+		this.fixRecorder.record(taskId, problem, solution, before, after, successful);
+	}
+
+	buildFixPrompt(task: string, failedCode: string, errors: string[], attempt: number): string {
+		const similarFixes = this.findSimilarFixes(errors.join(", "))
+			.map(f => ({ problem: f.problem, solution: f.solution }));
+		return this.retryStrategy.generateFixPrompt(task, failedCode, errors, attempt, similarFixes);
+	}
 }
