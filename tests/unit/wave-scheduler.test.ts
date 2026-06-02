@@ -20,6 +20,8 @@ function mkContract(over: Partial<TaskContract> = {}): TaskContract {
 		inputs: { userGoal: "image upload", artifacts: [], constraints: [] },
 		pathPolicy: { allowedGlobs: ["src/x.ts"], forbiddenGlobs: [] },
 		acceptance: ["done"],
+		nonGoals: ["do not modify unrelated files"],
+		blockedCondition: "blocked if required wave context is missing",
 		outputSchema: "task_report",
 		parallelGroup: "g",
 		dependsOn: [],

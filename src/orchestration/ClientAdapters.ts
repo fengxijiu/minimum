@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getPersona } from "../personas/PersonaRegistry.js";
+import { loadProjectSkillPrompt } from "../personas/PersonaSkillMap.js";
 import type { ChatMessage } from "../types/common.js";
 import type { MissionCheckInput } from "./MissionChecker.js";
 import type { CoarseDag } from "./TaskContract.js";
@@ -55,6 +56,7 @@ export async function collectText(
 
 export interface PlannerBridgeOptions {
 	maxTokens?: number;
+	projectRoot?: string;
 }
 
 /** Build a PlannerBridge backed by a completion client + master_planner prompt. */
@@ -65,16 +67,21 @@ export function createPlannerBridge(
 	const master = getPersona("master_planner");
 	const contextBuilder = getPersona("context_builder");
 	const missionCheckerPrompt = loadInlinePrompt("mission_checker.md");
-	const sys = (): ChatMessage => ({ role: "system", content: master.systemPrompt });
+	const sys = async (): Promise<ChatMessage> => {
+		const projectSkills = opts.projectRoot
+			? await loadProjectSkillPrompt({ projectRoot: opts.projectRoot, personaId: "master_planner", stage: "W1" })
+			: "";
+		return { role: "system", content: projectSkills ? `${master.systemPrompt}\n\n${projectSkills}` : master.systemPrompt };
+	};
 	const missionSys = (): ChatMessage => ({ role: "system", content: missionCheckerPrompt });
 	const max = opts.maxTokens ?? master.maxTokens;
 
 	return {
-		compile: (userRequest, memoryPrefix) =>
+		compile: async (userRequest, memoryPrefix) =>
 			collectText(
 				client,
 				[
-					sys(),
+					await sys(),
 					{
 						role: "user",
 						content: `${memoryPrefix}\n\n# User Request\n${userRequest}\n\nCompile the coarse task DAG now. Output a single <task_dag> block.`,
@@ -82,11 +89,11 @@ export function createPlannerBridge(
 				],
 				max,
 			),
-		refine: (dag: CoarseDag, perception: TaskResult[], memoryPrefix: string) =>
+		refine: async (dag: CoarseDag, perception: TaskResult[], memoryPrefix: string) =>
 			collectText(
 				client,
 				[
-					sys(),
+					await sys(),
 					{
 						role: "user",
 						content: [
@@ -132,11 +139,11 @@ export function createPlannerBridge(
 				],
 				max,
 			),
-		finalize: (results, candidates, canonicalText) =>
+		finalize: async (results, candidates, canonicalText) =>
 			collectText(
 				client,
 				[
-					sys(),
+					await sys(),
 					{
 						role: "user",
 						content: `# Task Reports\n${renderResults(results)}\n\n# Memory Candidates\n${candidates
@@ -151,6 +158,7 @@ export function createPlannerBridge(
 
 export interface WorkerExecutorOptions {
 	maxTokens?: number;
+	projectRoot?: string;
 }
 
 /**
@@ -167,10 +175,25 @@ export function createWorkerExecutor(
 		run: async (contract: TaskContract) => {
 			const persona = getPersona(contract.personaId);
 			const max = opts.maxTokens ?? persona.maxTokens;
+			const projectSkills = opts.projectRoot
+				? await loadProjectSkillPrompt({
+					projectRoot: opts.projectRoot,
+					personaId: contract.personaId,
+					stage: contract.phase,
+					objective: contract.objective,
+				})
+				: "";
+			const systemPrompt = projectSkills ? `${persona.systemPrompt}\n\n${projectSkills}` : persona.systemPrompt;
 			const lines = [
 				`# Objective\n${contract.objective}`,
 				`\n# Acceptance\n${contract.acceptance.map((a) => `- ${a}`).join("\n")}`,
 			];
+			if (contract.nonGoals?.length) {
+				lines.push(`\n# Non-Goals\n${contract.nonGoals.map((g) => `- ${g}`).join("\n")}`);
+			}
+			if (contract.blockedCondition) {
+				lines.push(`\n# Blocked Condition\n${contract.blockedCondition}`);
+			}
 			if (contract.inputs.contextPack) {
 				lines.push(`\n# Context Pack\nSee ${contract.inputs.contextPack}`);
 			}
@@ -183,7 +206,7 @@ export function createWorkerExecutor(
 			return collectText(
 				client,
 				[
-					{ role: "system", content: persona.systemPrompt },
+					{ role: "system", content: systemPrompt },
 					{ role: "user", content: lines.join("\n") },
 				],
 				max,
@@ -208,6 +231,8 @@ function renderRefinements(refinements: MissionCheckInput["refinements"]): strin
 				`allowedGlobs: ${r.allowedGlobs.join(", ") || "(none)"}`,
 			];
 			if (r.acceptance?.length) lines.push(`acceptance: ${r.acceptance.join("; ")}`);
+			if (r.nonGoals?.length) lines.push(`nonGoals: ${r.nonGoals.join("; ")}`);
+			if (r.blockedCondition) lines.push(`blockedCondition: ${r.blockedCondition}`);
 			if (r.constraints?.length) lines.push(`constraints: ${r.constraints.join("; ")}`);
 			if (r.contextPackPath) lines.push(`contextPack: ${r.contextPackPath}`);
 			return lines.join("\n");

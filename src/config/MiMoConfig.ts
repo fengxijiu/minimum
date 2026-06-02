@@ -1,3 +1,5 @@
+import type { ToolRateLimitOption } from "../tools/limits/ToolRateLimiter.js";
+
 /**
  * MiMoConfig — 统一配置类型。
  *
@@ -125,6 +127,14 @@ export interface MiMoConfig {
 	completeness?: CompletenessConfig;
 	/** 单代理长期记忆配置 */
 	memory?: MemoryConfig;
+	/** 工具调用限流配置(false 关闭,缺省使用 ToolRateLimiter 的内置默认)*/
+	rateLimit?: ToolRateLimitOption;
+	/** Shell 工具配置(exec_shell + run_background 等的默认值)*/
+	shell?: {
+		timeoutSec?: number;
+		maxOutputChars?: number;
+		extraAllowed?: readonly string[];
+	};
 }
 
 /** 所有优化分析得来的默认值 */
@@ -179,6 +189,12 @@ export const DEFAULT_MIMO_CONFIG: Required<MiMoConfig> = {
 			enabled: true,
 		},
 	},
+	rateLimit: {},
+	shell: {
+		timeoutSec: 60,
+		maxOutputChars: 32_000,
+		extraAllowed: [],
+	},
 };
 
 /** 深合并用户配置与默认配置 */
@@ -216,5 +232,14 @@ export function mergeConfig(user: MiMoConfig = {}): Required<MiMoConfig> {
 				...user.memory?.compaction,
 			},
 		},
+		rateLimit:
+			user.rateLimit === false
+				? false
+				: user.rateLimit === undefined
+					? DEFAULT_MIMO_CONFIG.rateLimit
+					: typeof user.rateLimit === "object" && typeof DEFAULT_MIMO_CONFIG.rateLimit === "object"
+						? { ...DEFAULT_MIMO_CONFIG.rateLimit, ...user.rateLimit }
+						: user.rateLimit,
+		shell: { ...DEFAULT_MIMO_CONFIG.shell, ...user.shell },
 	};
 }

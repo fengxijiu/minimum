@@ -1,4 +1,5 @@
 import type { AppState, ApprovalMode, Message, PlanStep, Permission, FileEntry } from './types.js';
+import { loadLearnedSkillsSync } from '../../src/skills/LearnedSkillLoader.js';
 
 export interface SkillEntry {
   name: string;
@@ -85,6 +86,7 @@ export const COMMANDS: TuiCommand[] = [
   { name: 'tools',  desc: 'List available tools',           category: 'system' },
   { name: 'model',  desc: 'Show the active model',          category: 'system' },
   { name: 'skill',  desc: 'Run built-in skills',             category: 'system', usage: '/skill [list|info <name>|run <name>|<name>]' },
+  { name: 'learn',  desc: 'Create project-local learned skills', category: 'system', usage: '/learn [--name <skill-name>|preview|apply|reject|status]' },
   { name: 'config', desc: 'View configuration',             category: 'system', aliases: ['cfg'] },
   { name: 'init',   desc: 'Initialize .minimum/config.json for this project', category: 'system' },
   { name: 'help',   desc: 'Show keys & commands',           category: 'system', aliases: ['?'] },
@@ -201,7 +203,14 @@ export type CommandOutcome =
   | { kind: 'session.save'; name?: string }
   | { kind: 'session.list' }
   | { kind: 'session.load.request'; name: string }
-  | { kind: 'plan.start'; task: string };
+  | { kind: 'plan.start'; task: string }
+  | { kind: 'learn.create'; preferredName?: string; dryRun?: boolean }
+  | { kind: 'learn.preview'; draftId: string }
+  | { kind: 'learn.apply'; draftId: string; load?: boolean }
+  | { kind: 'learn.reject'; draftId: string }
+  | { kind: 'learn.status' };
+
+export type LearnCommandMode = 'create' | 'preview' | 'apply' | 'reject' | 'status';
 
 let msgSeq = 0;
 export function sysMessage(text: string, tone: 'info' | 'warn' | 'ok' = 'info'): Message {
@@ -397,28 +406,61 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
     }
 
     case 'skill': {
+      const learned = loadLearnedSkillsSync(state.path);
+      const catalog = [
+        ...SKILL_CATALOG,
+        ...learned.map(s => ({
+          name: s.name,
+          description: s.description,
+          tags: s.tags,
+          prompt: s.prompt,
+        })),
+      ];
       const sub = parts[1]?.toLowerCase();
       if (!sub || sub === 'list') {
-        const lines = SKILL_CATALOG.map(s => `  ${s.name.padEnd(18)} ${s.description}`);
-        return { kind: 'note', note: `Available skills (${SKILL_CATALOG.length}):\n${lines.join('\n')}\n\nUsage: /skill run <name>` };
+        const lines = catalog.map(s => `  ${s.name.padEnd(18)} ${s.description}`);
+        return { kind: 'note', note: `Available skills (${catalog.length}):\n${lines.join('\n')}\n\nUsage: /skill run <name>` };
       }
       if (sub === 'info') {
         const skillName = parts[2]?.toLowerCase();
-        const skill = SKILL_CATALOG.find(s => s.name === skillName);
+        const skill = catalog.find(s => s.name === skillName);
         if (!skill) {
-          const names = SKILL_CATALOG.map(s => s.name).join(', ');
+          const names = catalog.map(s => s.name).join(', ');
           return { kind: 'note', note: `Unknown skill: "${skillName}". Available: ${names}`, tone: 'warn' };
         }
         return { kind: 'note', note: `Skill: ${skill.name}\n${skill.description}\nTags: ${skill.tags.join(', ')}` };
       }
       // `/skill run <name>` or `/skill <name>` shorthand
       const runName = (sub === 'run' ? parts[2] : sub)?.toLowerCase();
-      const skill = SKILL_CATALOG.find(s => s.name === runName);
+      const skill = catalog.find(s => s.name === runName);
       if (!skill) {
-        const names = SKILL_CATALOG.map(s => s.name).join(', ');
+        const names = catalog.map(s => s.name).join(', ');
         return { kind: 'note', note: `Unknown skill: "${runName}". Available: ${names}`, tone: 'warn' };
       }
       return { kind: 'pipeline', text: skill.prompt };
+    }
+
+    case 'learn': {
+      const sub = args[0]?.toLowerCase();
+      if (!sub || sub === '--name' || sub === '--dry-run') {
+        const nameIdx = args.indexOf('--name');
+        const preferredName = nameIdx >= 0 ? args[nameIdx + 1] : undefined;
+        return { kind: 'learn.create', ...(preferredName && { preferredName }), dryRun: args.includes('--dry-run') };
+      }
+      if (sub === 'preview') {
+        const draftId = args[1];
+        return draftId ? { kind: 'learn.preview', draftId } : { kind: 'note', note: 'Usage: /learn preview <draft-id>', tone: 'warn' };
+      }
+      if (sub === 'apply') {
+        const draftId = args[1];
+        return draftId ? { kind: 'learn.apply', draftId, load: args.includes('--load') } : { kind: 'note', note: 'Usage: /learn apply <draft-id> [--load]', tone: 'warn' };
+      }
+      if (sub === 'reject') {
+        const draftId = args[1];
+        return draftId ? { kind: 'learn.reject', draftId } : { kind: 'note', note: 'Usage: /learn reject <draft-id>', tone: 'warn' };
+      }
+      if (sub === 'status') return { kind: 'learn.status' };
+      return { kind: 'note', note: 'Usage: /learn [--name <skill-name>|--dry-run|preview|apply|reject|status]', tone: 'warn' };
     }
 
     case 'sessions':

@@ -10,7 +10,8 @@ not write business code directly.
    Work Package → Task.
 2. **Assign** each Task a single Persona from the fixed registry.
 3. **Constrain** each Task with a Task Contract specifying inputs,
-   allowedGlobs, forbiddenGlobs, tools, and acceptance criteria.
+   allowedGlobs, forbiddenGlobs, tools, acceptance criteria, non-goals, and
+   blocked conditions.
 4. **Detect conflicts** before scheduling: no two tasks in the same
    parallelGroup may share a writable file.
 5. **Refine** the DAG after Wave 1 (perception) using vision/scout/context
@@ -25,6 +26,10 @@ not write business code directly.
 - No subagent may decide architecture. Architecture decisions live here.
 - No subagent may merge patches. Only the master finalize step merges.
 - If a Task Contract is incomplete, refuse to launch that Task.
+- Do not emit vague tasks such as "implement feature"; split behavior changes
+  into test-writing, verification, implementation, re-verification, and review.
+- Blocked tasks must not be retried unchanged; repair with changed context,
+  changed owner, or narrower scope.
 
 ## DAG Output (W0 coarse compile)
 
@@ -76,6 +81,8 @@ from the perception reports, canonical memory, and Context Builder guidance:
       "allowedGlobs": ["src/api/upload.ts", "src/api/upload.test.ts"],
       "forbiddenGlobs": [],
       "acceptance": ["POST /upload returns 201", "rejects files >5MB"],
+      "nonGoals": ["do not redesign the upload page"],
+      "blockedCondition": "blocked if existing upload API conventions cannot be found",
       "constraints": ["reuse existing multer config"],
       "contextPack": "# Context Pack: T2-1\n\n## Goal\n...\n\n## Relevant Files\n..." }
   ]
@@ -83,8 +90,17 @@ from the perception reports, canonical memory, and Context Builder guidance:
 </refine>
 ```
 
-`forbiddenGlobs`, `acceptance`, `constraints`, and `contextPack` are optional.
+`forbiddenGlobs`, `constraints`, and `contextPack` are optional.
+For write-capable tasks, `acceptance`, `nonGoals`, and `blockedCondition` are
+required.
 Tasks in the same `parallelGroup` must receive disjoint `allowedGlobs`.
+
+For behavior changes, prefer this dependency shape unless the task is explicitly
+test-waived:
+
+```
+test_writer -> test_runner -> code_executor -> test_runner -> reviewer
+```
 
 ## Finalize Output (W4)
 

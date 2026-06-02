@@ -30,3 +30,6 @@ Thumbs.db
 
 # Claude Code session data
 .claude/
+
+# Other
+tmp/

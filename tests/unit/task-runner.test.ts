@@ -20,6 +20,8 @@ function mkContract(over: Partial<TaskContract> = {}): TaskContract {
 		inputs: { userGoal: "image upload", artifacts: [], constraints: [] },
 		pathPolicy: { allowedGlobs: ["src/upload.ts"], forbiddenGlobs: [] },
 		acceptance: ["uploads a file"],
+		nonGoals: ["do not change unrelated upload flows"],
+		blockedCondition: "blocked if upload handler context is missing",
 		outputSchema: "task_report",
 		parallelGroup: "impl",
 		dependsOn: [],

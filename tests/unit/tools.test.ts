@@ -2,6 +2,12 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { ToolRegistry } from "../../src/tools/ToolRegistry.js";
 import { ReadFileTool } from "../../src/tools/filesystem/ReadFileTool.js";
 import { ExecShellTool } from "../../src/tools/shell/ExecShellTool.js";
+import { ToolRateLimiter } from "../../src/tools/index.js";
+import {
+	ChoiceTool,
+	DeferredConfirmationGate,
+	ReadTracker,
+} from "../../src/tools/index.js";
 
 describe("Tools", () => {
 	describe("ToolRegistry", () => {
@@ -69,11 +75,30 @@ describe("Tools", () => {
 			const result = await registry.execute({
 				function: {
 					name: "exec_shell",
-					arguments: '{"command": "echo hello"}',
+					arguments: JSON.stringify({ command: "node --version" }),
 				},
 			});
 
-			expect(result.content).toContain("hello");
+			expect(result.content).toMatch(/v\d+/);
+		});
+
+		it("rate limiter 短路时返回限流结构体且不调用工具", async () => {
+			const limiter = new ToolRateLimiter({
+				aggregate: { maxCalls: 1, windowSeconds: 60 },
+			});
+			const registry = new ToolRegistry({ rateLimiter: limiter });
+			registry.register(new ExecShellTool());
+			// First call: allowed (uses the 1-call budget)
+			const ok = await registry.execute({
+				function: { name: "exec_shell", arguments: JSON.stringify({ command: "node --version" }) },
+			});
+			expect(ok.isError).toBeFalsy();
+			// Second call: rate-limited
+			const blocked = await registry.execute({
+				function: { name: "exec_shell", arguments: JSON.stringify({ command: "node -v" }) },
+			});
+			expect(blocked.isError).toBe(true);
+			expect(blocked.content).toContain("rate_limited");
 		});
 	});
 
@@ -110,9 +135,37 @@ describe("Tools", () => {
 
 		it("should execute command", async () => {
 			const tool = new ExecShellTool();
-			const result = await tool.execute({ command: "echo test" });
+			const result = await tool.execute({ command: "node --version" });
 
-			expect(result).toContain("test");
+			expect(result).toMatch(/v\d+/);
 		});
+	});
+});
+
+describe("Wave1 集成 smoke", () => {
+	it("从 index barrel 拿到的导出可用", async () => {
+		const reg = new ToolRegistry({
+			rateLimiter: new ToolRateLimiter({ aggregate: { maxCalls: 1000, windowSeconds: 60 } }),
+		});
+		const gate = new DeferredConfirmationGate();
+		gate.resolve({ type: "pick", optionId: "yes" });
+		reg.register(new ChoiceTool({ gate }) as any);
+		// ReadTracker just needs to be constructible
+		const tracker = new ReadTracker();
+		expect(tracker.hasRead("/any")).toBe(false);
+		const res = await reg.execute({
+			function: {
+				name: "ask_choice",
+				arguments: JSON.stringify({
+					question: "Proceed?",
+					options: [
+						{ id: "yes", title: "Yes" },
+						{ id: "no", title: "No" },
+					],
+				}),
+			},
+		});
+		expect(res.content).toBe("user picked: yes");
+		expect(res.isError).toBeFalsy();
 	});
 });

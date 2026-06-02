@@ -23,6 +23,8 @@ function makeContract(overrides: Partial<TaskContract> = {}): TaskContract {
 			forbiddenGlobs: [],
 		},
 		acceptance: ["component renders without errors"],
+		nonGoals: ["do not redesign upload styling"],
+		blockedCondition: "blocked if existing upload API contract cannot be located",
 		outputSchema: "task_report",
 		parallelGroup: "frontend",
 		dependsOn: [],
@@ -78,6 +80,18 @@ describe("validateContract", () => {
 		const r = validateContract(makeContract({ acceptance: [] }));
 		expect(r.ok).toBe(false);
 		expect(r.errors.some((e) => e.includes("acceptance"))).toBe(true);
+	});
+
+	it("rejects empty nonGoals for write-capable contracts", () => {
+		const r = validateContract(makeContract({ nonGoals: [] }));
+		expect(r.ok).toBe(false);
+		expect(r.errors.some((e) => e.includes("nonGoals"))).toBe(true);
+	});
+
+	it("rejects missing blockedCondition for write-capable contracts", () => {
+		const r = validateContract(makeContract({ blockedCondition: "" }));
+		expect(r.ok).toBe(false);
+		expect(r.errors.some((e) => e.includes("blockedCondition"))).toBe(true);
 	});
 
 	it("rejects non-array dependsOn", () => {

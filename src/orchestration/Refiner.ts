@@ -24,6 +24,8 @@ export interface RefinementEntry {
 	allowedGlobs: string[];
 	forbiddenGlobs?: string[];
 	acceptance?: string[];
+	nonGoals?: string[];
+	blockedCondition?: string;
 	constraints?: string[];
 	/** Inline markdown emitted by the master during W0.5; persisted before launch. */
 	contextPack?: string;
@@ -85,6 +87,14 @@ function validateEntry(
 	if (acceptance !== undefined && !Array.isArray(acceptance))
 		return { ok: false, error: `refine entry ${taskId}: acceptance must be array or omitted` };
 
+	const nonGoals = raw.nonGoals ?? raw.non_goals;
+	if (nonGoals !== undefined && !Array.isArray(nonGoals))
+		return { ok: false, error: `refine entry ${taskId}: nonGoals must be array or omitted` };
+
+	const blockedCondition = raw.blockedCondition ?? raw.blocked_condition;
+	if (blockedCondition !== undefined && typeof blockedCondition !== "string")
+		return { ok: false, error: `refine entry ${taskId}: blockedCondition must be string or omitted` };
+
 	const constraints = raw.constraints;
 	if (constraints !== undefined && !Array.isArray(constraints))
 		return { ok: false, error: `refine entry ${taskId}: constraints must be array or omitted` };
@@ -100,6 +110,8 @@ function validateEntry(
 			allowedGlobs: allowedGlobs as string[],
 			...(forbiddenGlobs !== undefined && { forbiddenGlobs: forbiddenGlobs as string[] }),
 			...(acceptance !== undefined && { acceptance: acceptance as string[] }),
+			...(nonGoals !== undefined && { nonGoals: nonGoals as string[] }),
+			...(blockedCondition !== undefined && { blockedCondition }),
 			...(constraints !== undefined && { constraints: constraints as string[] }),
 			...(contextPack !== undefined && { contextPack }),
 		},
@@ -191,6 +203,8 @@ function assembleContract(
 		entry?.acceptance ??
 		opts.defaultAcceptance ??
 		[`complete: ${task.objective}`];
+	const nonGoals = entry?.nonGoals ?? [`do not change files outside ${task.id}'s Task Contract`];
+	const blockedCondition = entry?.blockedCondition ?? `blocked if required context for ${task.id} is missing or contradictory`;
 
 	const contract: TaskContract = {
 		taskId: task.id,
@@ -210,6 +224,8 @@ function assembleContract(
 			forbiddenGlobs: entry?.forbiddenGlobs ?? [],
 		},
 		acceptance,
+		nonGoals,
+		blockedCondition,
 		outputSchema: persona.outputSchema,
 		parallelGroup: task.parallelGroup,
 		dependsOn: task.dependsOn,

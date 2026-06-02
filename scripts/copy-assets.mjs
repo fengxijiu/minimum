@@ -10,6 +10,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 const ASSET_SETS = [
 	{ from: "src/personas/prompts", to: "dist/personas/prompts" },
+	{ from: "src/personas/inline-skills", to: "dist/personas/inline-skills" },
+	{ from: "src/skills/system", to: "dist/skills/system" },
 ];
 
 for (const { from, to } of ASSET_SETS) {

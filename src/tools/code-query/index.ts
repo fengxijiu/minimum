@@ -1,0 +1,10 @@
+export { SymbolsTool } from "./SymbolsTool.js";
+export { CodeQueryTool } from "./CodeQueryTool.js";
+export { grammarForPath } from "./grammar-map.js";
+export { getParser, parseSource, setGrammarDir } from "./parser.js";
+export { extractSymbols } from "./symbols.js";
+export { findInCode } from "./find-in-code.js";
+export type { GrammarName } from "./grammar-map.js";
+export type { ParserOptions } from "./parser.js";
+export type { CodeSymbol, SymbolKind } from "./symbols.js";
+export type { CodeMatch, CodeMatchKind, FindInCodeOptions } from "./find-in-code.js";

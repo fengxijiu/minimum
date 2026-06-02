@@ -12,6 +12,7 @@ import { createInitialState } from './seed.js';
 import {
   runCommand, type CommandOutcome, type CommandContext,
 } from './commands.js';
+import { LearnCommandService } from '../../src/learn/LearnCommandService.js';
 import { mockRunner, uiEventToMessages, summarizeTool, summarizeToolResult, describePermissionArgs, type Runner, type EngineInfo, type UiPlanStatus } from './engine.js';
 import { scanFiles, readBranch, touch } from './files.js';
 import {
@@ -337,6 +338,90 @@ export function App({
           dispatch({ type: 'system.push', text: `Loaded "${session.name}" (${msgCount} messages${ctxNote}).`, tone: 'ok' });
         }).catch(() => {
           dispatch({ type: 'system.push', text: `Failed to load session "${name}".`, tone: 'warn' });
+        });
+        return;
+      }
+      case 'learn.create': {
+        const s = stateRef.current;
+        const service = new LearnCommandService({
+          projectRoot: s.path,
+          generateWithModel: runner.completeText,
+        });
+        void service.create({
+          preferredName: o.preferredName,
+          dryRun: o.dryRun,
+          messages: s.messages
+            .filter((m): m is Extract<Message, { type: 'user' | 'assistant' | 'system' }> => m.type === 'user' || m.type === 'assistant' || m.type === 'system')
+            .map(m => ({ role: m.type, content: m.text })),
+        }).then(result => {
+          const note = [
+            result.dryRun ? 'Learned skill dry-run generated.' : `Learned skill draft created: ${result.draft.id}`,
+            `Name: ${result.draft.name}`,
+            `Target: ${result.draft.targetPath}`,
+            result.validation.ok ? 'Validation: ok' : `Validation: ${result.validation.errors.join('; ')}`,
+            result.dryRun ? '' : `Apply with: /learn apply ${result.draft.id} --load`,
+          ].filter(Boolean).join('\n');
+          dispatch({ type: 'system.push', text: note, tone: result.validation.ok ? 'ok' : 'warn' });
+        }).catch(err => {
+          dispatch({ type: 'system.push', text: `Failed to create learned skill: ${String(err?.message ?? err)}`, tone: 'warn' });
+        });
+        return;
+      }
+      case 'learn.preview': {
+        const service = new LearnCommandService({ projectRoot: stateRef.current.path });
+        void service.preview(o.draftId).then(result => {
+          dispatch({ type: 'system.push', text: result.markdown });
+        }).catch(err => {
+          dispatch({ type: 'system.push', text: `Failed to preview learned skill: ${String(err?.message ?? err)}`, tone: 'warn' });
+        });
+        return;
+      }
+      case 'learn.apply': {
+        const service = new LearnCommandService({
+          projectRoot: stateRef.current.path,
+          reloadSkills: o.load ? runner.reloadSkills : undefined,
+        });
+        void service.apply(o.draftId).then(result => {
+          const assignment = result.assignments[0];
+          dispatch({
+            type: 'system.push',
+            text: [
+              `Learned skill applied: ${result.draft.name}`,
+              `Wrote: ${result.skillPath}`,
+              assignment ? `Assigned: ${assignment.persona_id} (${assignment.stage_affinity.join(', ')}, confidence ${assignment.confidence.toFixed(2)})` : null,
+            ].filter(Boolean).join('\n'),
+            tone: 'ok',
+          });
+        }).catch(err => {
+          dispatch({ type: 'system.push', text: `Failed to apply learned skill: ${String(err?.message ?? err)}`, tone: 'warn' });
+        });
+        return;
+      }
+      case 'learn.reject': {
+        const service = new LearnCommandService({ projectRoot: stateRef.current.path });
+        void service.reject(o.draftId).then(result => {
+          dispatch({ type: 'system.push', text: `Rejected learned skill draft: ${result.id}`, tone: 'ok' });
+        }).catch(err => {
+          dispatch({ type: 'system.push', text: `Failed to reject learned skill: ${String(err?.message ?? err)}`, tone: 'warn' });
+        });
+        return;
+      }
+      case 'learn.status': {
+        const service = new LearnCommandService({ projectRoot: stateRef.current.path });
+        void service.status().then(result => {
+          const drafts = result.drafts.map(d => `  ${d.id.padEnd(32)} ${d.status} ${d.name}`);
+          const skills = result.learnedSkills.map(s => `  ${s.name.padEnd(24)} ${s.status}`);
+          dispatch({
+            type: 'system.push',
+            text: [
+              `Drafts (${result.drafts.length}):`,
+              drafts.length ? drafts.join('\n') : '  (none)',
+              `Learned skills (${result.learnedSkills.length}):`,
+              skills.length ? skills.join('\n') : '  (none)',
+            ].join('\n'),
+          });
+        }).catch(err => {
+          dispatch({ type: 'system.push', text: `Failed to read learn status: ${String(err?.message ?? err)}`, tone: 'warn' });
         });
         return;
       }

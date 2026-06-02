@@ -1,5 +1,6 @@
 import type { ToolDefinition } from "../types/common.js";
 import { truncateToolResult } from "./truncateResult.js";
+import type { ToolRateLimiter } from "./limits/ToolRateLimiter.js";
 
 export interface Tool {
 	name: string;
@@ -15,6 +16,15 @@ export interface ToolCallContext {
 
 export class ToolRegistry {
 	private tools: Map<string, Tool> = new Map();
+	private readonly rateLimiter?: ToolRateLimiter;
+
+	constructor(options: { rateLimiter?: ToolRateLimiter } = {}) {
+		this.rateLimiter = options.rateLimiter;
+	}
+
+	setRateLimiter(limiter: ToolRateLimiter | undefined): void {
+		(this as unknown as { rateLimiter?: ToolRateLimiter }).rateLimiter = limiter;
+	}
 
 	register(tool: Tool): void {
 		this.tools.set(tool.name, tool);
@@ -66,6 +76,16 @@ export class ToolRegistry {
 				].join("\n"),
 				isError: true,
 			};
+		}
+
+		if (this.rateLimiter) {
+			const decision = this.rateLimiter.consume(toolCall.function.name);
+			if (!decision.allowed) {
+				return {
+					content: JSON.stringify(decision.result),
+					isError: true,
+				};
+			}
 		}
 
 		try {

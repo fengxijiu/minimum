@@ -1,5 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import type { ReadTracker } from "../../loop/ReadTracker.js";
 
 export interface ReadFileOptions {
 	encoding?: string;
@@ -10,6 +11,12 @@ export interface ReadFileOptions {
 export class ReadFileTool {
 	name = "read_file";
 	description = "Read the contents of a file";
+
+	private readonly readTracker?: ReadTracker;
+
+	constructor(options: { readTracker?: ReadTracker } = {}) {
+		this.readTracker = options.readTracker;
+	}
 
 	getDefinition() {
 		return {
@@ -54,6 +61,11 @@ export class ReadFileTool {
 			const content = await fs.readFile(filePath, {
 				encoding: encoding as BufferEncoding,
 			});
+
+			// Mark file as read only when reading the full file (not a partial range)
+			if (args.startLine === undefined && args.endLine === undefined) {
+				this.readTracker?.markRead(filePath);
+			}
 
 			if (args.startLine !== undefined || args.endLine !== undefined) {
 				const lines = content.split("\n");

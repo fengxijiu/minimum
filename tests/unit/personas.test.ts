@@ -119,6 +119,18 @@ describe("PersonaRegistry", () => {
 			expect(master).toContain("<finalize>");
 		});
 
+		it("master prompt includes minimum-native planning and dispatch skills", () => {
+			const master = getPersona("master_planner").systemPrompt;
+			expect(master).toContain("Minimum-native Superpowers Skills");
+			expect(master).toContain("Contract-First Planning");
+			expect(master).toContain("Subagent Task Assignment for Minimum");
+		});
+
+		it("reviewer prompt includes review skills but code_executor does not", () => {
+			expect(getPersona("reviewer").systemPrompt).toContain("Spec Compliance Review");
+			expect(getPersona("code_executor").systemPrompt).not.toContain("Spec Compliance Review");
+		});
+
 		it("every system prompt is non-empty", () => {
 			for (const p of listPersonas()) {
 				expect(p.systemPrompt.length).toBeGreaterThan(200);

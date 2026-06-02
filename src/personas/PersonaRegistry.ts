@@ -7,6 +7,7 @@ import {
 	type Persona,
 	type PersonaId,
 } from "./Persona.js";
+import { renderInlineSkillsForPersona } from "./SkillRegistry.js";
 
 const PROMPTS_DIR = path.join(
 	path.dirname(fileURLToPath(import.meta.url)),
@@ -27,6 +28,25 @@ function buildWorkerPrompt(roleFile: string, footer: string): string {
 	return role.trimEnd() + "\n\n" + footer.trimStart();
 }
 
+function buildPersonaPrompt(
+	personaId: PersonaId,
+	roleFile: string,
+	footer: string,
+): string {
+	const role = loadPrompt(roleFile);
+	const skills = renderInlineSkillsForPersona(personaId);
+	const parts = [role.trimEnd()];
+	if (skills) parts.push(skills);
+	parts.push(footer.trimStart());
+	return parts.join("\n\n");
+}
+
+function buildMasterPrompt(): string {
+	const role = loadPrompt("master-planner.md");
+	const skills = renderInlineSkillsForPersona("master_planner");
+	return skills ? `${role.trimEnd()}\n\n${skills}` : role;
+}
+
 /**
  * Construct the canonical set of 10 personas. Called once at module load.
  *
@@ -36,7 +56,7 @@ function buildWorkerPrompt(roleFile: string, footer: string): string {
  */
 function buildPersonas(): Map<PersonaId, Persona> {
 	const footer = loadPrompt("_common-footer.md");
-	const masterPrompt = loadPrompt("master-planner.md");
+	const masterPrompt = buildMasterPrompt();
 
 	const out = new Map<PersonaId, Persona>();
 
@@ -73,7 +93,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		id: "vision",
 		kind: "worker",
 		model: "mimo-v2.5",
-		systemPrompt: buildWorkerPrompt("vision.md", footer),
+		systemPrompt: buildPersonaPrompt("vision", "vision.md", footer),
 		toolAllowlist: ["read_file", "list_directory"],
 		toolDenylist: ["write_file", "edit_file", "apply_patch", "exec_shell"],
 		pathPolicy: {
@@ -91,7 +111,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		id: "repo_scout",
 		kind: "worker",
 		model: "mimo-v2.5",
-		systemPrompt: buildWorkerPrompt("repo-scout.md", footer),
+		systemPrompt: buildPersonaPrompt("repo_scout", "repo-scout.md", footer),
 		toolAllowlist: [
 			"read_file",
 			"list_directory",
@@ -116,7 +136,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		id: "context_builder",
 		kind: "worker",
 		model: "mimo-v2.5-pro",
-		systemPrompt: buildWorkerPrompt("context-builder.md", footer),
+		systemPrompt: buildPersonaPrompt("context_builder", "context-builder.md", footer),
 		toolAllowlist: ["read_file", "list_directory", "write_file"],
 		toolDenylist: ["edit_file", "apply_patch", "exec_shell"],
 		pathPolicy: {
@@ -136,7 +156,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		id: "code_executor",
 		kind: "worker",
 		model: "mimo-v2.5",
-		systemPrompt: buildWorkerPrompt("code-executor.md", footer),
+		systemPrompt: buildPersonaPrompt("code_executor", "code-executor.md", footer),
 		toolAllowlist: [
 			"read_file",
 			"list_directory",
@@ -167,7 +187,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		id: "test_writer",
 		kind: "worker",
 		model: "mimo-v2.5",
-		systemPrompt: buildWorkerPrompt("test-writer.md", footer),
+		systemPrompt: buildPersonaPrompt("test_writer", "test-writer.md", footer),
 		toolAllowlist: [
 			"read_file",
 			"list_directory",
@@ -201,7 +221,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		id: "test_runner",
 		kind: "worker",
 		model: "mimo-v2.5",
-		systemPrompt: buildWorkerPrompt("test-runner.md", footer),
+		systemPrompt: buildPersonaPrompt("test_runner", "test-runner.md", footer),
 		toolAllowlist: ["read_file", "exec_shell"],
 		toolDenylist: ["write_file", "edit_file", "apply_patch"],
 		pathPolicy: {
@@ -219,7 +239,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		id: "runtime_debug",
 		kind: "worker",
 		model: "mimo-v2.5",
-		systemPrompt: buildWorkerPrompt("runtime-debug.md", footer),
+		systemPrompt: buildPersonaPrompt("runtime_debug", "runtime-debug.md", footer),
 		toolAllowlist: [
 			"read_file",
 			"list_directory",
@@ -244,7 +264,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		id: "reviewer",
 		kind: "worker",
 		model: "mimo-v2.5",
-		systemPrompt: buildWorkerPrompt("reviewer.md", footer),
+		systemPrompt: buildPersonaPrompt("reviewer", "reviewer.md", footer),
 		toolAllowlist: ["read_file", "grep", "glob", "git_diff"],
 		toolDenylist: ["write_file", "edit_file", "apply_patch", "exec_shell"],
 		pathPolicy: {
@@ -262,7 +282,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		id: "docs",
 		kind: "worker",
 		model: "mimo-v2.5",
-		systemPrompt: buildWorkerPrompt("docs.md", footer),
+		systemPrompt: buildPersonaPrompt("docs", "docs.md", footer),
 		toolAllowlist: [
 			"read_file",
 			"list_directory",

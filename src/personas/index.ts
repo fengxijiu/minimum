@@ -14,3 +14,13 @@ export {
 	listPersonaIds,
 	listPersonas,
 } from "./PersonaRegistry.js";
+export {
+	loadMinimumAdaptedSkills,
+	renderInlineSkillsForPersona,
+	type InlineSkill,
+} from "./SkillRegistry.js";
+export {
+	loadPersonaSkillMap,
+	loadProjectSkillPrompt,
+	type RuntimePersonaSkill,
+} from "./PersonaSkillMap.js";

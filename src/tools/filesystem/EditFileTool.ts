@@ -1,5 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import type { ReadTracker } from "../../loop/ReadTracker.js";
 
 export interface EditOperation {
 	search: string;
@@ -9,6 +10,12 @@ export interface EditOperation {
 export class EditFileTool {
 	name = "edit_file";
 	description = "Edit a file using SEARCH/REPLACE blocks";
+
+	private readonly readTracker?: ReadTracker;
+
+	constructor(options: { readTracker?: ReadTracker } = {}) {
+		this.readTracker = options.readTracker;
+	}
 
 	getDefinition() {
 		return {
@@ -46,6 +53,13 @@ export class EditFileTool {
 		const filePath = context?.workingDirectory
 			? path.resolve(context.workingDirectory, args.path)
 			: path.resolve(args.path);
+
+		if (this.readTracker) {
+			const blockReason = this.readTracker.guardEdit(args.path, context?.workingDirectory);
+			if (blockReason !== null) {
+				return `Error: ${blockReason}`;
+			}
+		}
 
 		try {
 			let content = await fs.readFile(filePath, "utf-8");

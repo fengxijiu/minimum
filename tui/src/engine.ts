@@ -56,6 +56,10 @@ export interface Runner {
   loadHistory?(messages: ChatHistoryMessage[]): void;
   /** Enable or disable plan mode (blocks mutating tools so the AI only plans). */
   setPlanMode?(enabled: boolean): void;
+  /** One-shot text completion used by local command services such as /learn. */
+  completeText?(prompt: string): Promise<string>;
+  /** Refresh command-visible learned skills after /learn apply --load. */
+  reloadSkills?(): Promise<void>;
 }
 
 const KIND: Record<string, ToolKind> = {
@@ -277,6 +281,15 @@ export async function createEngineRunner(
       getHistory: () => bridge.getHistory(),
       loadHistory: (msgs) => bridge.loadHistory(msgs),
       setPlanMode: (enabled) => bridge.setPlanMode(enabled),
+      completeText: async (prompt: string) => {
+        const response = await client.chat({
+          messages: [{ role: 'user', content: prompt }],
+          maxTokens: 8192,
+          temperature: 0.2,
+        });
+        return response.content;
+      },
+      reloadSkills: async () => {},
     };
     const sessionFlusher: SessionFlusher | undefined = sessionManager
       ? { flushSync: () => sessionManager.flushSync() }

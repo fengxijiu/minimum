@@ -148,14 +148,14 @@ describe("P0-3 TodoWriteTool", () => {
 		const todo = new TodoWriteTool();
 		const out = await todo.execute({
 			todos: [
-				{ content: "a", status: "completed" },
-				{ content: "b", status: "in_progress" },
-				{ content: "c", status: "pending" },
+				{ content: "a", status: "completed", activeForm: "Doing a" },
+				{ content: "b", status: "in_progress", activeForm: "Doing b" },
+				{ content: "c", status: "pending", activeForm: "Doing c" },
 			],
 		});
 		expect(out).toContain("1/3 done");
 		expect(out).toContain("[x] a");
-		expect(out).toContain("[~] b");
+		expect(out).toContain("[>] Doing b");
 		expect(out).toContain("[ ] c");
 	});
 
@@ -163,11 +163,11 @@ describe("P0-3 TodoWriteTool", () => {
 		const todo = new TodoWriteTool();
 		const out = await todo.execute({
 			todos: [
-				{ content: "a", status: "in_progress" },
-				{ content: "b", status: "in_progress" },
+				{ content: "a", status: "in_progress", activeForm: "Doing a" },
+				{ content: "b", status: "in_progress", activeForm: "Doing b" },
 			],
 		});
-		expect(out).toContain("only one task");
+		expect(out).toContain("in_progress");
 	});
 });
 

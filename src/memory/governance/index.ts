@@ -36,13 +36,6 @@ export {
 	type MemoryIndexInfo,
 	type StagingInfo,
 } from "./MemoryInspector.js";
-
-export {
-	MemoryCommandService,
-	type MemoryCommandServiceOptions,
-	type MemoryCommandState,
-	type MemoryCommandStatus,
-} from "./MemoryCommandService.js";
 export {
 	buildMemoryIndex,
 	memoryIndexPath,

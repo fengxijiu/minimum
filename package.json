@@ -16,7 +16,7 @@
     }
   },
   "scripts": {
-    "build": "node node_modules/typescript/lib/tsc.js && node scripts/copy-assets.mjs",
+    "build": "node node_modules/typescript/lib/tsc.js && node scripts/copy-assets.mjs && node scripts/copy-grammars.mjs",
     "dev": "tsx src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -41,11 +41,20 @@
     "@biomejs/biome": "^1.9.0",
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "^4.1.7",
+    "tree-sitter-go": "^0.25.0",
+    "tree-sitter-java": "^0.23.5",
+    "tree-sitter-javascript": "^0.25.0",
+    "tree-sitter-python": "^0.25.0",
+    "tree-sitter-rust": "^0.24.0",
+    "tree-sitter-typescript": "^0.23.2",
     "tsx": "^4.0.0",
     "typescript": "^5.6.0",
     "vitest": "^2.0.0"
   },
   "engines": {
     "node": ">=22"
+  },
+  "dependencies": {
+    "web-tree-sitter": "^0.26.9"
   }
 }

@@ -60,6 +60,20 @@ export function validateContract(contract: TaskContract): ValidationResult {
 	if (!Array.isArray(contract.acceptance) || contract.acceptance.length === 0)
 		errors.push("acceptance must be a non-empty array");
 
+	if (contract.personaId) {
+		try {
+			const persona = getPersona(contract.personaId);
+			if (persona.pathPolicy.canWrite) {
+				if (!Array.isArray(contract.nonGoals) || contract.nonGoals.length === 0)
+					errors.push("nonGoals must be a non-empty array for write-capable tasks");
+				if (!contract.blockedCondition || contract.blockedCondition.trim().length < 8)
+					errors.push("blockedCondition must be at least 8 characters for write-capable tasks");
+			}
+		} catch {
+			// Unknown persona is already reported above.
+		}
+	}
+
 	if (!Array.isArray(contract.dependsOn))
 		errors.push("dependsOn must be an array (use [] for no deps)");
 

@@ -147,6 +147,26 @@ export {
 	registerBuiltinSkills,
 } from "./skills/BuiltinSkills.js";
 
+export {
+	LearnCommandService,
+	LearnDraftStore,
+	LearnSkillPromptLoader,
+	LearnedSkillWriter,
+	renderLearnedSkillMarkdown,
+	titleFromSlug,
+	toSkillSlug,
+	validateLearnedSkillDraft,
+	type LearnApplyResult,
+	type LearnCommandServiceOptions,
+	type LearnCreateRequest,
+	type LearnCreateResult,
+	type LearnedSkillDraft,
+	type LearnedSkillDraftInput,
+	type LearnMessage,
+	type LearnPreviewResult,
+	type LearnStatusResult,
+} from "./learn/index.js";
+
 // Mocks — test-only, not exported in production build
 
 // MCP (Model Context Protocol) support

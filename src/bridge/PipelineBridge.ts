@@ -42,9 +42,11 @@ export class PipelineBridge {
 
 		const planner = createPlannerBridge(this.client, {
 			...(this.opts.maxTokens && { maxTokens: this.opts.maxTokens }),
+			projectRoot: this.opts.projectRoot,
 		});
 		const executor = createWorkerExecutor(this.client, {
 			...(this.opts.maxTokens && { maxTokens: this.opts.maxTokens }),
+			projectRoot: this.opts.projectRoot,
 		});
 
 		let done = false;

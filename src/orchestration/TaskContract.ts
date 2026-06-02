@@ -23,6 +23,10 @@ export interface TaskContract {
 	inputs: TaskInputs;
 	pathPolicy: TaskPathPolicy;
 	acceptance: string[];
+	/** Explicit out-of-scope boundaries; required for write-capable tasks. */
+	nonGoals?: string[];
+	/** Concrete condition that should stop the task and trigger changed repair context. */
+	blockedCondition?: string;
 
 	/** Output schema expected from the worker; mirrors persona.outputSchema. */
 	outputSchema: OutputSchema;
