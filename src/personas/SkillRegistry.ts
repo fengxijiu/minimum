@@ -32,12 +32,50 @@ export function loadMinimumAdaptedSkills(): InlineSkill[] {
 	return skills.sort((a, b) => b.priority - a.priority || a.id.localeCompare(b.id));
 }
 
+/** Extract a one-line brief from a skill body for the brief catalog. */
+function extractBriefFromBody(body: string, id: string): string {
+	// First H2 heading that isn't a structural keyword
+	const structural = /^(purpose|overview|when to use|inputs|outputs|rules|constraints|steps|workflow)/i;
+	const h2 = body.match(/^##\s+(.+)$/m)?.[1]?.trim();
+	if (h2 && h2.length < 80 && !structural.test(h2)) return h2;
+	// First non-empty, non-heading, non-comment content line
+	const firstLine = body.split("\n").find(
+		(l) => l.trim() && !l.startsWith("#") && !l.startsWith("<!--"),
+	);
+	return firstLine?.trim().slice(0, 80) ?? id;
+}
+
+/**
+ * Full inline skill bodies for a persona — always included in the system prompt
+ * so the model can see and apply them on every turn.
+ */
 export function renderInlineSkillsForPersona(personaId: string): string {
 	const matched = loadMinimumAdaptedSkills().filter((skill) => skill.personas.includes(personaId));
 	if (!matched.length) return "";
 	return [
 		"# Minimum-native Superpowers Skills",
 		...matched.map((skill) => `\n<!-- minimum-inline-skill:${skill.id} -->\n${skill.body}`),
+	].join("\n");
+}
+
+/**
+ * Full bodies of inline skills that match the given objective.
+ * Call once per task with the task's objective string;
+ * returns "" when nothing matches so callers can skip it cheaply.
+ */
+export function renderInlineSkillsExpandedForPersona(personaId: string, objective: string): string {
+	const matched = loadMinimumAdaptedSkills().filter((skill) => skill.personas.includes(personaId));
+	if (!matched.length || !objective) return "";
+	const objLower = objective.toLowerCase();
+	const expanded = matched.filter((s) => {
+		// Match on multi-char words from the skill id (e.g. "code-review" → ["code","review"])
+		const idWords = s.id.split("-").filter((w) => w.length > 3);
+		return idWords.some((w) => objLower.includes(w));
+	});
+	if (!expanded.length) return "";
+	return [
+		"## Active Inline Skills (matched to current task)",
+		...expanded.map((s) => `\n<!-- minimum-inline-skill:${s.id} -->\n${s.body}`),
 	].join("\n");
 }
 

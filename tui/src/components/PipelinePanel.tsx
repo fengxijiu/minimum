@@ -12,7 +12,7 @@ function formatMs(ms: number): string {
   return `${Math.floor(ms / 60_000)}m${String(Math.floor((ms % 60_000) / 1000)).padStart(2, '0')}s`;
 }
 
-function PhaseBox({
+const PhaseBox = React.memo(function PhaseBox({
   phase, tick, compact, now,
 }: {
   phase: PipelinePhase;
@@ -71,7 +71,7 @@ function PhaseBox({
       )}
     </Box>
   );
-}
+});
 
 export const PipelinePanel = React.memo(function PipelinePanel({ phases }: {
   phases: PipelinePhase[] | null;

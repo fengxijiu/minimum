@@ -1,5 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import type { SkillRoutingMetadata } from "../skills/PersonaSkillRouter.js";
 import type { LearnedSkillDraft } from "./types.js";
 import { atomicWriteJson } from "./LearnDraftStore.js";
 import { renderLearnedSkillMarkdown } from "./LearnedSkillRenderer.js";
@@ -14,13 +15,21 @@ export interface LearnedSkillWriterResult {
 export class LearnedSkillWriter {
 	constructor(private readonly projectRoot: string) {}
 
-	async write(draft: LearnedSkillDraft): Promise<LearnedSkillWriterResult> {
+	async write(
+		draft: LearnedSkillDraft,
+		routing?: SkillRoutingMetadata,
+		options: { allowExisting?: boolean } = {},
+	): Promise<LearnedSkillWriterResult> {
 		const slug = toSkillSlug(draft.name);
 		const dir = path.join(this.projectRoot, ".minimum", "skills", "learned", slug);
 		const skillPath = path.join(dir, "SKILL.md");
 		const metadataPath = path.join(dir, "metadata.json");
 
 		if (await exists(skillPath)) {
+			if (options.allowExisting) {
+				const markdown = await fs.readFile(skillPath, "utf-8");
+				return { skillPath, metadataPath, markdown };
+			}
 			throw new Error(`learned skill already exists: ${slug}`);
 		}
 
@@ -31,7 +40,7 @@ export class LearnedSkillWriter {
 			targetDir: dir,
 			targetPath: skillPath,
 		};
-		const markdown = renderLearnedSkillMarkdown(appliedDraft);
+		const markdown = renderLearnedSkillMarkdown(appliedDraft, routing);
 
 		await fs.mkdir(dir, { recursive: true });
 		await fs.writeFile(skillPath, markdown, "utf-8");

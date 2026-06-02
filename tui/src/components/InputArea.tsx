@@ -6,7 +6,7 @@ import { HelpOverlay } from './HelpOverlay.js';
 import { Prompt } from './Prompt.js';
 import { filterCommands, filterFiles, type CommandContext, type CmdMatch, type FileMatch } from '../commands.js';
 import { loadHistory, appendHistory } from '../inputHistory.js';
-import type { FileEntry, PendingState, Mode } from '../types.js';
+import type { FileEntry, PendingState, Mode, ChoiceRequest } from '../types.js';
 import type { Dispatch } from '../state/store.js';
 import { theme } from '../theme.js';
 
@@ -47,10 +47,33 @@ function PermissionChoiceBar({ selected }: { selected: number }) {
   );
 }
 
+function ChoiceBar({ request, selected }: { request: ChoiceRequest; selected: number }) {
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor={theme.accent} paddingX={2} paddingY={0}>
+      <Text color={theme.accent} bold>{request.question}</Text>
+      <Box flexDirection="column">
+        {request.options.map((opt, i) => {
+          const active = i === selected;
+          return (
+            <Box key={opt.id}>
+              <Text color={active ? theme.accent : theme.inkSoft} bold={active}>
+                {active ? '▶ ' : '  '}{opt.title}
+              </Text>
+              {opt.summary ? <Text color={theme.muted}> — {opt.summary}</Text> : null}
+            </Box>
+          );
+        })}
+      </Box>
+      <Text color={theme.muted}>↑↓ navigate · ⏎ confirm · esc cancel</Text>
+    </Box>
+  );
+}
+
 export interface InputAreaProps {
   files: FileEntry[];
   helpOpen: boolean;
   pending: PendingState;
+  choiceRequest?: ChoiceRequest | null;
   hasMessages: boolean;
   mode: Mode;
   verbose: boolean;
@@ -60,27 +83,36 @@ export interface InputAreaProps {
   onPermAlwaysAllow: () => void;
   onPermDeny: (note: string) => void;
   onApplyFix: () => void;
+  onChoicePick: (optionId: string) => void;
+  onChoiceCancel: () => void;
   dispatch: Dispatch;
   cmdCtx: CommandContext;
 }
 
 export const InputArea = React.memo(function InputArea({
-  files, helpOpen, pending, hasMessages, mode, verbose, hasEdits,
-  onSubmit, onPermAllow, onPermAlwaysAllow, onPermDeny, onApplyFix, dispatch, cmdCtx,
+  files, helpOpen, pending, choiceRequest, hasMessages, mode, verbose, hasEdits,
+  onSubmit, onPermAllow, onPermAlwaysAllow, onPermDeny, onApplyFix,
+  onChoicePick, onChoiceCancel,
+  dispatch, cmdCtx,
 }: InputAreaProps) {
   const { exit } = useApp();
   const [inputValue, setInputValue] = useState('');
   const [sel, setSel] = useState(0);
   const [permSel, setPermSel] = useState(0); // 0=allow once  1=always  2=deny
+  const [choiceSel, setChoiceSel] = useState(0);
   const [histIdx, setHistIdx] = useState(-1);
   const [savedDraft, setSavedDraft] = useState('');
   const [stash, setStash] = useState('');
   const [history] = useState<string[]>(() => loadHistory().map(h => h.text));
   const prevPermPendingRef = useRef(false);
+  const prevChoicePendingRef = useRef(false);
   useEffect(() => {
     const isPermNow = pending === 'permission';
     if (!prevPermPendingRef.current && isPermNow) setPermSel(0);
     prevPermPendingRef.current = isPermNow;
+    const isChoiceNow = pending === 'choice';
+    if (!prevChoicePendingRef.current && isChoiceNow) setChoiceSel(0);
+    prevChoicePendingRef.current = isChoiceNow;
   }, [pending]);
   const promptHistoryRef = useRef<string[]>([]);
   const historyIdxRef = useRef(-1);
@@ -160,6 +192,11 @@ export const InputArea = React.memo(function InputArea({
       else { onPermAllow(); }
       return;
     }
+    if (!text.trim() && pending === 'choice' && choiceRequest) {
+      const opt = choiceRequest.options[choiceSel];
+      if (opt) onChoicePick(opt.id);
+      return;
+    }
     if (!text.trim() && pending === 'error') { onApplyFix(); return; }
 
     if (overlay === 'cmd') {
@@ -182,7 +219,7 @@ export const InputArea = React.memo(function InputArea({
 
     appendHistory(trimmed);
     onSubmit(trimmed);
-  }, [helpOpen, pending, permSel, overlay, cmdItems, clampedSel, onPermAllow, onPermAlwaysAllow, onPermDeny, onApplyFix, completeFile, setInput, onSubmit]);
+  }, [helpOpen, pending, permSel, choiceSel, choiceRequest, overlay, cmdItems, clampedSel, onPermAllow, onPermAlwaysAllow, onPermDeny, onApplyFix, onChoicePick, completeFile, setInput, onSubmit]);
 
   useInput((input, key) => {
     if (helpOpen) {
@@ -241,7 +278,14 @@ export const InputArea = React.memo(function InputArea({
       if (key.rightArrow) { setPermSel(s => (s + 1) % PERM_OPTIONS.length); return; }
     }
 
+    if (pending === 'choice' && !inputRef.current && choiceRequest) {
+      const count = choiceRequest.options.length;
+      if (key.upArrow)   { setChoiceSel(s => (s - 1 + count) % count); return; }
+      if (key.downArrow) { setChoiceSel(s => (s + 1) % count); return; }
+    }
+
     if (key.escape) {
+      if (pending === 'choice') { onChoiceCancel(); return; }
       if (pending) { onPermDeny(pending === 'permission' ? 'Permission denied.' : 'Left as-is.'); return; }
       if (inputRef.current.length) { setInput(''); return; }
       exit();
@@ -272,6 +316,7 @@ export const InputArea = React.memo(function InputArea({
 
   const placeholder =
     pending === 'permission' ? 'choose a permission action below…'
+    : pending === 'choice'   ? '↑↓ to select, ⏎ to confirm…'
     : pending === 'error'    ? 'redirect, or ⏎ to accept the fix'
     : overlay === 'cmd'      ? 'filter commands…'
     : overlay === 'file'     ? 'filter files…'
@@ -285,6 +330,7 @@ export const InputArea = React.memo(function InputArea({
       {!helpOpen && overlay === 'cmd' ? <CommandPalette items={cmdItems} selected={clampedSel} /> : null}
       {!helpOpen && overlay === 'file' ? <FilePicker items={fileItems} selected={clampedSel} /> : null}
       {!helpOpen && pending === 'permission' && !inputValue ? <PermissionChoiceBar selected={permSel} /> : null}
+      {!helpOpen && pending === 'choice' && choiceRequest && !inputValue ? <ChoiceBar request={choiceRequest} selected={choiceSel} /> : null}
       <Prompt
         value={inputValue}
         onChange={handleChange}

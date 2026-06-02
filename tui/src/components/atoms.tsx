@@ -87,7 +87,7 @@ function linePrefix(k: LineKind): string {
   return ' ';
 }
 
-function DiffLine({ raw }: { raw: string }) {
+const DiffLine = React.memo(function DiffLine({ raw }: { raw: string }) {
   const k = lineKind(raw);
   const prefix = linePrefix(k);
   // hunk header: show compactly
@@ -97,7 +97,7 @@ function DiffLine({ raw }: { raw: string }) {
       {prefix} {text}
     </Text>
   );
-}
+});
 
 export const DiffBlock = React.memo(function DiffBlock({ diff }: { diff: Diff }) {
   const { lines, collapsed } = diff;

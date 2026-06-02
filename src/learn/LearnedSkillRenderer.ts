@@ -1,11 +1,17 @@
+import type { SkillRoutingMetadata } from "../skills/PersonaSkillRouter.js";
 import type { LearnedSkillDraft } from "./types.js";
 import { toSkillSlug } from "./LearnedSkillName.js";
 
-export function renderLearnedSkillMarkdown(draft: LearnedSkillDraft): string {
+export function renderLearnedSkillMarkdown(
+	draft: LearnedSkillDraft,
+	routing?: SkillRoutingMetadata,
+): string {
 	const skillId = toSkillSlug(draft.name);
 	const tags = draft.tags ?? [];
-	const triggers = draft.triggers ?? [draft.description];
-	const capabilityTags = draft.capability_tags ?? tags;
+	const triggers = routing?.triggers ?? draft.triggers ?? [draft.description];
+	const capabilityTags = routing?.capability_tags ?? draft.capability_tags ?? tags;
+	const appliesToPersonas = routing?.applies_to_personas ?? ["master_planner"];
+	const stageAffinity = routing?.stage_affinity ?? ["W1"];
 	const body = draft.body.trim();
 
 	return `---
@@ -15,15 +21,15 @@ version: 1.0.0
 source: learn
 status: ${draft.status === "applied" ? "active" : "draft"}
 applies_to_personas:
-  - master_planner
+${renderList(appliesToPersonas)}
 stage_affinity:
-  - W1
+${renderList(stageAffinity)}
 routing:
-  mode: auto
-  priority: 80
-  confidence: 0.90
-  requires_confirmation: false
-  conflict_policy: prefer_more_specific_skill
+  mode: ${routing?.routing.mode ?? "auto"}
+  priority: ${routing?.routing.priority ?? 80}
+  confidence: ${(routing?.routing.confidence ?? 0.9).toFixed(2)}
+  requires_confirmation: ${routing?.routing.requires_confirmation ?? false}
+  conflict_policy: ${routing?.routing.conflict_policy ?? "prefer_more_specific_skill"}
 triggers:
 ${renderList(triggers)}
 capability_tags:

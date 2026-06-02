@@ -67,9 +67,9 @@ export function createPlannerBridge(
 	const master = getPersona("master_planner");
 	const contextBuilder = getPersona("context_builder");
 	const missionCheckerPrompt = loadInlinePrompt("mission_checker.md");
-	const sys = async (): Promise<ChatMessage> => {
+	const sys = async (objective?: string): Promise<ChatMessage> => {
 		const projectSkills = opts.projectRoot
-			? await loadProjectSkillPrompt({ projectRoot: opts.projectRoot, personaId: "master_planner", stage: "W1" })
+			? await loadProjectSkillPrompt({ projectRoot: opts.projectRoot, personaId: "master_planner", stage: "W1", objective })
 			: "";
 		return { role: "system", content: projectSkills ? `${master.systemPrompt}\n\n${projectSkills}` : master.systemPrompt };
 	};
@@ -81,7 +81,7 @@ export function createPlannerBridge(
 			collectText(
 				client,
 				[
-					await sys(),
+					await sys(userRequest),
 					{
 						role: "user",
 						content: `${memoryPrefix}\n\n# User Request\n${userRequest}\n\nCompile the coarse task DAG now. Output a single <task_dag> block.`,

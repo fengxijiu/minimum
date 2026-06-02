@@ -42,7 +42,7 @@ export interface AssignSkillInput {
 }
 
 export function assignSkillToPersona(input: AssignSkillInput): PersonaSkillAssignment[] {
-	const text = `${input.skillName} ${input.description} ${input.body}`.toLowerCase();
+	const text = routingText(input);
 	const inferred = inferRoute(text);
 	return [{
 		persona_id: inferred.persona,
@@ -53,6 +53,21 @@ export function assignSkillToPersona(input: AssignSkillInput): PersonaSkillAssig
 		reason: inferred.reason,
 		confidence: inferred.confidence,
 	}];
+}
+
+function routingText(input: AssignSkillInput): string {
+	const sanitizedBody = input.body
+		.split(/\r?\n/)
+		.filter((line) => !isRoutingBoilerplate(line))
+		.join("\n");
+	return `${input.skillName} ${input.description} ${sanitizedBody}`.toLowerCase();
+}
+
+function isRoutingBoilerplate(line: string): boolean {
+	return /^\s*#+\s+/.test(line)
+		|| /do not modify personas?/i.test(line)
+		|| /do not write (project memory directly|\.minimum\/memory)/i.test(line)
+		|| /can_modify_persona:\s*(true|false)/i.test(line);
 }
 
 export function buildRoutingMetadata(
@@ -108,6 +123,60 @@ export async function writePersonaSkillRouting(input: {
 	await atomicWriteJson(mapPath, map);
 }
 
+const PERSONA_ROUTES = [
+	{
+		persona: "master_planner", stages: ["W1", "W3.5"], priority: 90,
+		keywords: [
+			"planning", "decompos", "dispatch", "contract", "persona", "acceptance",
+			"milestone", "roadmap", "sprint", "prioriti", "orchestrat", "workflow",
+			"coordinat", "delegat", "kickoff", "breakdown", "subtask", "dependency",
+			"timeline", "objective", "goal", "strategy", "scope", "requirem",
+		],
+		reason: "planning and dispatch capability maps to master_planner",
+	},
+	{
+		persona: "reviewer", stages: ["W3"], priority: 85,
+		keywords: [
+			"review", "audit", "quality", "severity", "spec compliance",
+			"lint", "static analysis", "code smell", "best practice", "convention",
+			"standard", "guideline", "checklist", "inspect", "evaluat", "assess",
+			"feedback", "critiqu", "suggest", "improve", "issue", "violation",
+		],
+		reason: "review capability maps to reviewer W3",
+	},
+	{
+		persona: "test_runner", stages: ["W3"], priority: 82,
+		keywords: [
+			"test", "verification", "evidence", "assert", "expect",
+			"mock", "stub", "fixture", "coverage", "unit", "integration",
+			"e2e", "end-to-end", "regression", "ci", "tdd", "bdd",
+			"passing", "failing", "suite", "spec", "vitest", "jest", "pytest",
+		],
+		reason: "testing evidence capability maps to test_runner",
+	},
+	{
+		persona: "docs", stages: ["W4"], priority: 78,
+		keywords: [
+			"documentation", "docs", "readme", "changelog",
+			"docstring", "jsdoc", "typedoc", "comment", "explain", "describ",
+			"annotat", "wiki", "guide", "tutorial", "example", "usage",
+			"api doc", "reference", "glossary", "faq",
+		],
+		reason: "documentation capability maps to docs persona",
+	},
+	{
+		persona: "code_executor", stages: ["W2"], priority: 75,
+		keywords: [
+			"code", "implement", "refactor", "patch", "fix", "bug",
+			"feature", "function", "class", "module", "component", "algorithm",
+			"logic", "build", "compil", "debug", "exception", "optimiz",
+			"performance", "sql", "query", "script", "format", "typing",
+			"parse", "transform", "render", "hook", "api", "endpoint",
+		],
+		reason: "implementation capability maps to code_executor",
+	},
+] as const;
+
 function inferRoute(text: string): {
 	persona: string;
 	stages: string[];
@@ -115,26 +184,30 @@ function inferRoute(text: string): {
 	confidence: number;
 	reason: string;
 } {
-	if (matches(text, ["planning", "decompos", "task", "dispatch", "contract", "persona", "loop", "acceptance"])) {
-		return { persona: "master_planner", stages: ["W1", "W3.5"], priority: 90, confidence: 0.9, reason: "planning and dispatch capability maps to master_planner" };
-	}
-	if (matches(text, ["review", "audit", "quality", "severity", "spec compliance"])) {
-		return { persona: "reviewer", stages: ["W3"], priority: 85, confidence: 0.92, reason: "review capability maps to reviewer W3" };
-	}
-	if (matches(text, ["test", "verification", "red", "green", "runner", "evidence"])) {
-		return { persona: "test_runner", stages: ["W3"], priority: 82, confidence: 0.9, reason: "testing evidence capability maps to test_runner" };
-	}
-	if (matches(text, ["documentation", "docs", "readme", "changelog"])) {
-		return { persona: "docs", stages: ["W4"], priority: 78, confidence: 0.88, reason: "documentation capability maps to docs persona" };
-	}
-	if (matches(text, ["code", "implement", "refactor", "patch"])) {
-		return { persona: "code_executor", stages: ["W2"], priority: 75, confidence: 0.84, reason: "implementation capability maps to code_executor" };
-	}
-	return { persona: "master_planner", stages: ["W1"], priority: 50, confidence: 0.55, reason: "fallback stage-level route requires confirmation" };
-}
+	let bestScore = 0;
+	let bestRoute: typeof PERSONA_ROUTES[number] | null = null;
 
-function matches(text: string, needles: string[]): boolean {
-	return needles.some((needle) => text.includes(needle));
+	for (const route of PERSONA_ROUTES) {
+		const score = route.keywords.filter((kw) => text.includes(kw)).length;
+		if (score > bestScore) {
+			bestScore = score;
+			bestRoute = route;
+		}
+	}
+
+	if (bestScore === 0 || bestRoute === null) {
+		return { persona: "master_planner", stages: ["W1"], priority: 50, confidence: 0.55, reason: "fallback: no keywords matched, requires confirmation" };
+	}
+
+	// Scale confidence with match depth: 1 keyword → 0.90, 3 → 0.94, 5+ → 0.96
+	const confidence = Math.min(0.96, 0.90 + Math.min(bestScore - 1, 4) * 0.015);
+	return {
+		persona: bestRoute.persona,
+		stages: [...bestRoute.stages],
+		priority: bestRoute.priority,
+		confidence,
+		reason: bestRoute.reason,
+	};
 }
 
 function unique(values: string[]): string[] {

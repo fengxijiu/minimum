@@ -8,6 +8,12 @@ export {
 	type ContextPackInput,
 } from "./ContextPackBuilder.js";
 export {
+	MemoryCommandService,
+	type MemoryCommandServiceOptions,
+	type MemoryCommandState,
+	type MemoryCommandStatus,
+} from "./MemoryCommandService.js";
+export {
 	loadCanonicalMemory,
 	resolveLoadKeys,
 	type LoadOptions,

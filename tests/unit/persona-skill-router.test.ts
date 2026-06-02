@@ -62,4 +62,20 @@ describe("PersonaSkillRouter", () => {
 		expect(index).toContain("review-quality-check");
 		expect(map).toContain("reviewer");
 	});
+
+	it("ignores learned-skill boilerplate when inferring persona", () => {
+		const assignments = assignSkillToPersona({
+			skillName: "review-quality-check",
+			description: "Use when reviewing code quality and spec compliance.",
+			body: `## Purpose
+Review code quality.
+## When to Use
+Use when reviewing code.
+## Rules and Constraints
+- Do not modify personas.
+- Do not write project memory directly.`,
+			source: "learn",
+		});
+		expect(assignments[0]?.persona_id).toBe("reviewer");
+	});
 });

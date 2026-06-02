@@ -16,13 +16,19 @@ describe("Wave 2a 端到端:rateLimit 配置 → ToolRegistry 短路", () => {
 
 		// 第一次成功
 		const first = await registry.execute({
-			function: { name: "exec_shell", arguments: '{"command":"echo a"}' },
+			function: {
+				name: "exec_shell",
+				arguments: '{"command":"node -e \\"console.log(\\\\\\"a\\\\\\")\\""}',
+			},
 		});
 		expect(first.isError).toBeFalsy();
 
 		// 第二次被限流
 		const second = await registry.execute({
-			function: { name: "exec_shell", arguments: '{"command":"echo b"}' },
+			function: {
+				name: "exec_shell",
+				arguments: '{"command":"node -e \\"console.log(\\\\\\"b\\\\\\")\\""}',
+			},
 		});
 		expect(second.isError).toBe(true);
 		const parsed = parseRateLimitedToolResult(second.content);
@@ -38,7 +44,10 @@ describe("Wave 2a 端到端:rateLimit 配置 → ToolRegistry 短路", () => {
 		createMiMoStack(stub, registry, process.cwd(), { rateLimit: false });
 		for (let i = 0; i < 5; i++) {
 			const r = await registry.execute({
-				function: { name: "exec_shell", arguments: '{"command":"echo x"}' },
+				function: {
+					name: "exec_shell",
+					arguments: '{"command":"node -e \\"console.log(\\\\\\"x\\\\\\")\\""}',
+				},
 			});
 			expect(r.isError).toBeFalsy();
 		}

@@ -193,7 +193,7 @@ function tableBorderLine(colWidths: number[], edge: 'top' | 'mid' | 'bot'): stri
   return l + colWidths.map(w => '─'.repeat(w + 2)).join(j) + r;
 }
 
-function TableDataRow({ cells, colWidths, aligns, isHeader, color }: {
+const TableDataRow = React.memo(function TableDataRow({ cells, colWidths, aligns, isHeader, color }: {
   cells: string[];
   colWidths: number[];
   aligns: TableAlign[];
@@ -224,9 +224,9 @@ function TableDataRow({ cells, colWidths, aligns, isHeader, color }: {
       })}
     </Box>
   );
-}
+});
 
-function MdTable({ data, color }: { data: TableData; color?: string }) {
+const MdTable = React.memo(function MdTable({ data, color }: { data: TableData; color?: string }) {
   const { headers, aligns, rows, colWidths } = data;
   return (
     <Box flexDirection="column">
@@ -239,7 +239,7 @@ function MdTable({ data, color }: { data: TableData; color?: string }) {
       <Text color={theme.line}>{tableBorderLine(colWidths, 'bot')}</Text>
     </Box>
   );
-}
+});
 
 function parseBlocks(raw: string, cols?: number): MdBlock[] {
   const out: MdBlock[] = [];
@@ -622,11 +622,11 @@ const MessageRow = React.memo(function MessageRow({ msg, cols, verbose }: {
 
 // ── Render item dispatcher ────────────────────────────────────────────
 
-function RenderItemRow({ item, cols, verbose }: { item: RenderItem; cols: number; verbose?: boolean }) {
+const RenderItemRow = React.memo(function RenderItemRow({ item, cols, verbose }: { item: RenderItem; cols: number; verbose?: boolean }) {
   if (item.kind === 'divider') return <TurnDivider cols={cols} turnNum={item.turnNum} />;
   if (item.kind === 'toolgroup') return <ToolGroupRow tools={item.tools} verbose={verbose} />;
   return <MessageRow msg={item.msg} cols={cols} verbose={verbose} />;
-}
+});
 
 // ── Live-region height estimator ─────────────────────────────────────
 //

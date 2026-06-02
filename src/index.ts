@@ -147,6 +147,9 @@ export {
 	registerBuiltinSkills,
 } from "./skills/BuiltinSkills.js";
 
+export { loadLearnedSkills, loadLearnedSkillsSync } from "./skills/LearnedSkillLoader.js";
+export type { LoadedLearnedSkill } from "./skills/LearnedSkillLoader.js";
+
 export {
 	LearnCommandService,
 	LearnDraftStore,

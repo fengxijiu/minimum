@@ -55,6 +55,13 @@ describe("/learn command", () => {
 			kind: "learn.apply",
 			draftId: "learn_1",
 			load: true,
+			confirmRouting: false,
+		});
+		expect(runCommand("/learn apply learn_1 --confirm-routing", base)).toEqual({
+			kind: "learn.apply",
+			draftId: "learn_1",
+			load: false,
+			confirmRouting: true,
 		});
 		expect(runCommand("/learn reject learn_1", base)).toEqual({
 			kind: "learn.reject",

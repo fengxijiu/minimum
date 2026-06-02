@@ -63,7 +63,14 @@ export type PlanStep = {
 export type FileEntry = { name: string; meta: string; staged?: boolean };
 export type StagedEdit = { sign: '+' | '~' | '-'; label: string };
 
-export type PendingState = null | 'permission' | 'error';
+export type PendingState = null | 'permission' | 'error' | 'choice';
+
+export type ChoiceOption = { id: string; title: string; summary?: string };
+export type ChoiceRequest = {
+  question: string;
+  options: ChoiceOption[];
+  allowCustom: boolean;
+};
 
 /** One W0–W4 phase in the orchestrator pipeline panel, including W3.5. */
 export type PipelinePhase = {

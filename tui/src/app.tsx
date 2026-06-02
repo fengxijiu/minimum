@@ -12,15 +12,16 @@ import { createInitialState } from './seed.js';
 import {
   runCommand, type CommandOutcome, type CommandContext,
 } from './commands.js';
-import { LearnCommandService } from '../../src/learn/LearnCommandService.js';
-import { mockRunner, uiEventToMessages, summarizeTool, summarizeToolResult, describePermissionArgs, type Runner, type EngineInfo, type UiPlanStatus } from './engine.js';
+import { LearnCommandService } from '../../dist/learn/LearnCommandService.js';
+import { loadLearnedSkillsSync } from '../../dist/skills/LearnedSkillLoader.js';
+import { mockRunner, uiEventToMessages, summarizeTool, summarizeToolResult, describePermissionArgs, type Runner, type EngineInfo, type UiPlanStatus, type TuiConfirmationGate } from './engine.js';
 import { scanFiles, readBranch, touch } from './files.js';
 import {
   saveTuiSession, loadTuiSessionById, listTuiSessions, formatSessionList,
   type TuiSession,
 } from './session.js';
 import { useAgentStore, useSlice, type Dispatch } from './state/store.js';
-import type { AppState, Message, FileEntry, SessionState, PlanStep, PendingState, ApprovalMode, UsageInfo, Mode, StagedEdit } from './types.js';
+import type { AppState, Message, FileEntry, SessionState, PlanStep, PendingState, ApprovalMode, UsageInfo, Mode, StagedEdit, ChoiceRequest } from './types.js';
 
 const PLAN_STATUS: Record<UiPlanStatus, PlanStep['status']> = {
   pending: 'next',
@@ -140,7 +141,8 @@ export function App({
   runner = mockRunner,
   pipelineRunner,
   engineInfo = DEFAULT_ENGINE_INFO,
-}: { runner?: Runner; pipelineRunner?: Runner; engineInfo?: EngineInfo } = {}) {
+  choiceGate,
+}: { runner?: Runner; pipelineRunner?: Runner; engineInfo?: EngineInfo; choiceGate?: TuiConfirmationGate } = {}) {
   const { exit } = useApp();
   // ── Terminal size — width drives text wrap, height caps the live frame ─
   const [termSize, setTermSize] = useState(() => ({
@@ -164,6 +166,7 @@ export function App({
 
   const [state, dispatch] = useAgentStore(() => createInitialState(process.cwd()));
   const [activePerm, setActivePerm] = useState<ActivePermission | null>(null);
+  const [activeChoice, setActiveChoice] = useState<ChoiceRequest | null>(null);
   // Mutable refs so callbacks that close over these stay stable
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -245,6 +248,16 @@ export function App({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ── Choice gate wiring ──────────────────────────────────────────────
+  useEffect(() => {
+    if (!choiceGate) return;
+    choiceGate.onShow = (payload) => {
+      setActiveChoice({ question: payload.question, options: payload.options, allowCustom: payload.allowCustom });
+      dispatch({ type: 'pending.set', value: 'choice' });
+    };
+    return () => { choiceGate.onShow = null; };
+  }, [choiceGate, dispatch]);
 
   const cmdCtx: CommandContext = useMemo(() => ({
     model: engineInfo.model,
@@ -377,21 +390,30 @@ export function App({
         return;
       }
       case 'learn.apply': {
+        const applyRoot = stateRef.current.path;
         const service = new LearnCommandService({
-          projectRoot: stateRef.current.path,
-          reloadSkills: o.load ? runner.reloadSkills : undefined,
+          projectRoot: applyRoot,
+          reloadSkills: runner.reloadSkills,
         });
-        void service.apply(o.draftId).then(result => {
+        void service.apply(o.draftId, { confirmRouting: o.confirmRouting }).then(result => {
           const assignment = result.assignments[0];
           dispatch({
             type: 'system.push',
             text: [
               `Learned skill applied: ${result.draft.name}`,
               `Wrote: ${result.skillPath}`,
-              assignment ? `Assigned: ${assignment.persona_id} (${assignment.stage_affinity.join(', ')}, confidence ${assignment.confidence.toFixed(2)})` : null,
+              assignment ? `Persona: ${assignment.persona_id} (${assignment.stage_affinity.join(', ')}, confidence ${assignment.confidence.toFixed(2)})` : null,
+              result.routingWritten
+                ? 'Routing written.'
+                : `Routing needs confirmation — re-run: /learn apply ${result.draft.id} --confirm-routing`,
             ].filter(Boolean).join('\n'),
-            tone: 'ok',
+            tone: result.routingWritten ? 'ok' : 'warn',
           });
+          // Show all currently available learned skills so the user knows what to use
+          const freshSkills = loadLearnedSkillsSync(applyRoot);
+          if (freshSkills.length > 0) {
+            dispatch({ type: 'system.push', text: `Skills available: ${freshSkills.map(s => `/skill run ${s.name}`).join('  ·  ')}`, tone: 'info' });
+          }
         }).catch(err => {
           dispatch({ type: 'system.push', text: `Failed to apply learned skill: ${String(err?.message ?? err)}`, tone: 'warn' });
         });
@@ -409,17 +431,28 @@ export function App({
       case 'learn.status': {
         const service = new LearnCommandService({ projectRoot: stateRef.current.path });
         void service.status().then(result => {
-          const drafts = result.drafts.map(d => `  ${d.id.padEnd(32)} ${d.status} ${d.name}`);
-          const skills = result.learnedSkills.map(s => `  ${s.name.padEnd(24)} ${s.status}`);
-          dispatch({
-            type: 'system.push',
-            text: [
-              `Drafts (${result.drafts.length}):`,
-              drafts.length ? drafts.join('\n') : '  (none)',
-              `Learned skills (${result.learnedSkills.length}):`,
-              skills.length ? skills.join('\n') : '  (none)',
-            ].join('\n'),
-          });
+          const pending = result.drafts.filter(d => d.status === 'draft');
+          const rejected = result.drafts.filter(d => d.status === 'rejected' || d.status === 'invalid');
+
+          if (pending.length === 0 && result.learnedSkills.length === 0 && rejected.length === 0) {
+            dispatch({ type: 'system.push', text: 'No learned skills yet. Use /learn to create one.', tone: 'info' });
+            return;
+          }
+          if (pending.length > 0) {
+            const lines = pending.flatMap(d => [
+              `  [draft] ${d.name}`,
+              `         /learn preview ${d.id}`,
+              `         /learn apply ${d.id}`,
+            ]);
+            dispatch({ type: 'system.push', text: `Pending drafts (${pending.length}):\n${lines.join('\n')}`, tone: 'warn' });
+          }
+          if (result.learnedSkills.length > 0) {
+            const lines = result.learnedSkills.map(s => `  /skill run ${s.name}`);
+            dispatch({ type: 'system.push', text: `Applied skills (${result.learnedSkills.length}):\n${lines.join('\n')}`, tone: 'ok' });
+          }
+          if (rejected.length > 0) {
+            dispatch({ type: 'system.push', text: `Rejected/invalid: ${rejected.map(d => d.name).join(', ')}`, tone: 'info' });
+          }
         }).catch(err => {
           dispatch({ type: 'system.push', text: `Failed to read learn status: ${String(err?.message ?? err)}`, tone: 'warn' });
         });
@@ -447,6 +480,20 @@ export function App({
     dispatch({ type: 'approval.change', mode: 'full-auto' });
     dispatch({ type: 'system.push', text: `Always allowing — switched to full-auto.`, tone: 'ok' });
   }, [runner, dispatch]);
+
+  const pickChoice = useCallback((optionId: string) => {
+    choiceGate?.resolve({ type: 'pick', optionId });
+    setActiveChoice(null);
+    dispatch({ type: 'pending.clear' });
+    dispatch({ type: 'system.push', text: `Choice: ${optionId}`, tone: 'ok' });
+  }, [choiceGate, dispatch]);
+
+  const cancelChoice = useCallback(() => {
+    choiceGate?.resolve({ type: 'cancel' });
+    setActiveChoice(null);
+    dispatch({ type: 'pending.clear' });
+    dispatch({ type: 'system.push', text: 'Choice cancelled.', tone: 'warn' });
+  }, [choiceGate, dispatch]);
 
   const applyFix = useCallback(() => {
     dispatch({ type: 'pending.clear' });
@@ -837,11 +884,13 @@ export function App({
 
   const titleMode =
     sPending === 'permission' ? 'agent · paused'
+    : sPending === 'choice'   ? 'agent · waiting'
     : sPending === 'error' ? 'agent · interrupted'
     : sPlanMode ? `${sMode} · plan mode`
     : sMode;
   const statusState: SessionState =
     sPending === 'permission' ? 'paused'
+    : sPending === 'choice'   ? 'paused'
     : sPending === 'error' ? 'error'
     : sMode === 'orchestrate' ? 'orchestrate'
     : sMode === 'agent' ? 'agent' : 'mimo';
@@ -882,6 +931,7 @@ export function App({
         files={sFiles}
         helpOpen={sHelpOpen}
         pending={sPending}
+        choiceRequest={activeChoice}
         hasMessages={sHasMessages}
         mode={sMode}
         verbose={sVerbose}
@@ -891,6 +941,8 @@ export function App({
         onPermAlwaysAllow={allowPermissionAlways}
         onPermDeny={dismissPending}
         onApplyFix={applyFix}
+        onChoicePick={pickChoice}
+        onChoiceCancel={cancelChoice}
         dispatch={dispatch}
         cmdCtx={cmdCtx}
       />

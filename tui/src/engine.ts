@@ -163,9 +163,8 @@ export function summarizeToolResult(ok: boolean, content: string): string {
       if (keys.length) return `{${keys.join(', ')}}`;
     } catch { /* not JSON */ }
   }
-  // Multi-line plain text — first meaningful line + overflow count.
-  const first = lines[0]!.trim().slice(0, 60);
-  return `${first}  +${lines.length - 1}`;
+  // Multi-line plain text — show line count.
+  return `${lines.length} ln`;
 }
 
 /** Translate one normalized engine event into chat messages. */
@@ -227,15 +226,38 @@ export interface SessionFlusher {
   flushSync(): void;
 }
 
+/**
+ * TuiConfirmationGate — TUI-backed ConfirmationGate.
+ * Call gate.onShow to receive payloads; call gate.resolve(verdict) to unblock ask().
+ */
+export class TuiConfirmationGate {
+  private resolver: ((v: { type: 'pick'; optionId: string } | { type: 'text'; text: string } | { type: 'cancel' }) => void) | null = null;
+  onShow: ((payload: { question: string; options: Array<{ id: string; title: string; summary?: string }>; allowCustom: boolean }) => void) | null = null;
+
+  ask(payload: { question: string; options: Array<{ id: string; title: string; summary?: string }>; allowCustom: boolean }): Promise<{ type: 'pick'; optionId: string } | { type: 'text'; text: string } | { type: 'cancel' }> {
+    return new Promise((resolve) => {
+      this.resolver = resolve;
+      this.onShow?.(payload);
+    });
+  }
+
+  resolve(verdict: { type: 'pick'; optionId: string } | { type: 'text'; text: string } | { type: 'cancel' }): void {
+    const r = this.resolver;
+    this.resolver = null;
+    r?.(verdict);
+  }
+}
+
 export async function createEngineRunner(
   workingDirectory: string,
-): Promise<{ runner: Runner; pipelineRunner?: Runner; info: EngineInfo; sessionFlusher?: SessionFlusher }> {
+): Promise<{ runner: Runner; pipelineRunner?: Runner; info: EngineInfo; sessionFlusher?: SessionFlusher; choiceGate: TuiConfirmationGate }> {
+  const choiceGate = new TuiConfirmationGate();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let eng: any;
   try {
     eng = await import('../../dist/index.js');
   } catch (err) {
-    return { runner: mockRunner, info: fallbackInfo('not-built', String((err as Error)?.message ?? err)) };
+    return { runner: mockRunner, info: fallbackInfo('not-built', String((err as Error)?.message ?? err)), choiceGate };
   }
 
   try {
@@ -251,7 +273,7 @@ export async function createEngineRunner(
           : 'https://api.xiaomimimo.com/v1');
     const configPath = eng.getGlobalConfigPath?.() ?? path.join(process.env.HOME ?? os.homedir() ?? '~', '.minimum', 'config.json');
     if (!apiKey) {
-      return { runner: mockRunner, info: { ...fallbackInfo('no-api-key'), configPath } };
+      return { runner: mockRunner, info: { ...fallbackInfo('no-api-key'), configPath }, choiceGate };
     }
 
     const client = new eng.MiMoClient({ apiKey, baseUrl });
@@ -267,12 +289,56 @@ export async function createEngineRunner(
     ]) {
       tools.register(new Ctor());
     }
-    if (process.env.MIMO_ENABLE_SHELL === '1') {
-      tools.register(new eng.ExecShellTool());
-    }
-
     const approvalManager = new eng.ApprovalManager({ mode: userConfig.approvalMode ?? 'auto-edit' });
-    const { loop, sessionManager } = eng.createMiMoStack(client, tools, workingDirectory, userConfig, { approvalManager });
+    const { loop, sessionManager } = eng.createMiMoStack(client, tools, workingDirectory, userConfig, { approvalManager, confirmationGate: choiceGate });
+
+    // Wire learned skills into the single-agent system context using a two-tier approach:
+    //   • Brief catalog  — always shown: name + one-line description + trigger keywords
+    //   • Full expansion — only for skills whose triggers/tags match the current user input
+    // This keeps the system context small when skills are irrelevant, and rich when they're not.
+    const skillsSystemContent = async (userInput: string): Promise<string> => {
+      try {
+        type Skill = { name: string; description: string; prompt: string; triggers: string[]; capability_tags: string[] };
+        const skills: Skill[] = await eng.loadLearnedSkills(workingDirectory);
+        if (!skills.length) return '';
+
+        // Tier 1: brief catalog — always shown, one line per skill
+        const catalogLines = skills.map((s: Skill) => {
+          const kws = [...s.triggers, ...s.capability_tags].slice(0, 4).join(', ');
+          return `- **${s.name}**: ${s.description}${kws ? `  _(triggers: ${kws})_` : ''}`;
+        });
+
+        // Tier 2: full expansion — only for skills whose triggers/tags appear in the user input
+        const inputLower = userInput.toLowerCase();
+        const expanded: string[] = [];
+        if (inputLower) {
+          for (const s of skills) {
+            const triggered =
+              s.triggers.some((t: string) => inputLower.includes(t.toLowerCase())) ||
+              s.capability_tags.some((t: string) => inputLower.includes(t.toLowerCase())) ||
+              inputLower.includes(s.name.toLowerCase());
+            if (triggered) {
+              expanded.push(`### ${s.name} (active)\n${s.prompt}`);
+            }
+          }
+        }
+
+        const parts: string[] = [
+          '# Project-Local Learned Skills',
+          '',
+          'Available skills (apply when the task matches):',
+          ...catalogLines,
+        ];
+        if (expanded.length) {
+          parts.push('', '## Expanded Skills (matched to current task)', '', ...expanded);
+        }
+        return parts.join('\n');
+      } catch {
+        return '';
+      }
+    };
+    loop.configure({ skillsSystemContent });
+
     const bridge = new eng.EngineBridge(loop, { approvalManager });
     const runner: Runner = {
       send: (input: string) => bridge.send(input),
@@ -289,7 +355,10 @@ export async function createEngineRunner(
         });
         return response.content;
       },
-      reloadSkills: async () => {},
+      reloadSkills: async () => {
+        // Skills are re-read on every turn via skillsSystemContent — no cache to bust.
+        // Calling reloadSkills is a no-op at the engine level; the next turn will pick up changes.
+      },
     };
     const sessionFlusher: SessionFlusher | undefined = sessionManager
       ? { flushSync: () => sessionManager.flushSync() }
@@ -311,8 +380,8 @@ export async function createEngineRunner(
       configPath,
       memoryPath: path.join(workingDirectory, '.minimum', 'memory.md'),
     };
-    return { runner, ...(pipelineRunner && { pipelineRunner }), info, ...(sessionFlusher && { sessionFlusher }) };
+    return { runner, ...(pipelineRunner && { pipelineRunner }), info, ...(sessionFlusher && { sessionFlusher }), choiceGate };
   } catch (err) {
-    return { runner: mockRunner, info: fallbackInfo('init-error', String((err as Error)?.message ?? err)) };
+    return { runner: mockRunner, info: fallbackInfo('init-error', String((err as Error)?.message ?? err)), choiceGate };
   }
 }

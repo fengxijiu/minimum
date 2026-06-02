@@ -18,14 +18,14 @@ const MODE_BADGE: Record<ApprovalMode, { label: string; color: string }> = {
   'full-auto': { label: 'full-auto', color: '#4dff91' },
 };
 
-function Key({ k, label }: { k: string; label: string }) {
+const Key = React.memo(function Key({ k, label }: { k: string; label: string }) {
   return (
     <Text>
       <Text color={theme.ink}>{k}</Text>
       <Text color={theme.muted}> {label}  </Text>
     </Text>
   );
-}
+});
 
 export const StatusBar = React.memo(function StatusBar({ state, approvalMode, ctxUsed, ctxMax, hint, usage, mcpLoading }: {
   state: SessionState;

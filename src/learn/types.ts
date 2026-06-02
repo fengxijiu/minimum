@@ -49,6 +49,8 @@ export interface LearnApplyResult {
 	metadataPath: string;
 	assignments: PersonaSkillAssignment[];
 	routing: SkillRoutingMetadata;
+	routingWritten: boolean;
+	routingConfirmationRequired: boolean;
 }
 
 export interface LearnStatusResult {

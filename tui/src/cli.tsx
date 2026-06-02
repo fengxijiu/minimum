@@ -64,7 +64,7 @@ const flush = (): void => {
 const flushSync = (): void => { if (pending.length) flush(); };
 process.on('exit', flushSync);
 
-const { runner, pipelineRunner, info, sessionFlusher } = await createEngineRunner(process.cwd());
+const { runner, pipelineRunner, info, sessionFlusher, choiceGate } = await createEngineRunner(process.cwd());
 
 // SIGINT: flush buffered terminal frame + persist session before exit.
 process.on('SIGINT', () => {
@@ -73,7 +73,7 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
-const { waitUntilExit } = render(<App runner={runner} pipelineRunner={pipelineRunner} engineInfo={info} />);
+const { waitUntilExit } = render(<App runner={runner} pipelineRunner={pipelineRunner} engineInfo={info} choiceGate={choiceGate} />);
 await waitUntilExit();
 flushSync();
 sessionFlusher?.flushSync();

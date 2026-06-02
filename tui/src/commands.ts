@@ -1,5 +1,5 @@
 import type { AppState, ApprovalMode, Message, PlanStep, Permission, FileEntry } from './types.js';
-import { loadLearnedSkillsSync } from '../../src/skills/LearnedSkillLoader.js';
+import { loadLearnedSkillsSync } from '../../dist/skills/LearnedSkillLoader.js';
 
 export interface SkillEntry {
   name: string;
@@ -206,7 +206,7 @@ export type CommandOutcome =
   | { kind: 'plan.start'; task: string }
   | { kind: 'learn.create'; preferredName?: string; dryRun?: boolean }
   | { kind: 'learn.preview'; draftId: string }
-  | { kind: 'learn.apply'; draftId: string; load?: boolean }
+  | { kind: 'learn.apply'; draftId: string; load?: boolean; confirmRouting?: boolean }
   | { kind: 'learn.reject'; draftId: string }
   | { kind: 'learn.status' };
 
@@ -453,14 +453,16 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
       }
       if (sub === 'apply') {
         const draftId = args[1];
-        return draftId ? { kind: 'learn.apply', draftId, load: args.includes('--load') } : { kind: 'note', note: 'Usage: /learn apply <draft-id> [--load]', tone: 'warn' };
+        return draftId
+          ? { kind: 'learn.apply', draftId, load: args.includes('--load'), confirmRouting: args.includes('--confirm-routing') }
+          : { kind: 'note', note: 'Usage: /learn apply <draft-id> [--load] [--confirm-routing]', tone: 'warn' };
       }
       if (sub === 'reject') {
         const draftId = args[1];
         return draftId ? { kind: 'learn.reject', draftId } : { kind: 'note', note: 'Usage: /learn reject <draft-id>', tone: 'warn' };
       }
       if (sub === 'status') return { kind: 'learn.status' };
-      return { kind: 'note', note: 'Usage: /learn [--name <skill-name>|--dry-run|preview|apply|reject|status]', tone: 'warn' };
+      return { kind: 'note', note: 'Usage: /learn [--name <skill-name>|--dry-run|preview|apply|reject|status]\n       /learn apply <draft-id> [--load] [--confirm-routing]', tone: 'warn' };
     }
 
     case 'sessions':

@@ -74,11 +74,13 @@ export class LearnCommandService {
 		return { draft, markdown: renderLearnedSkillMarkdown(draft) };
 	}
 
-	async apply(draftId: string): Promise<LearnApplyResult> {
+	async apply(
+		draftId: string,
+		options: { confirmRouting?: boolean } = {},
+	): Promise<LearnApplyResult> {
 		const draft = await this.draftStore.read(draftId);
 		const validation = validateLearnedSkillDraft(draft);
 		if (!validation.ok) throw new Error(`invalid learned skill draft: ${validation.errors.join("; ")}`);
-		const written = await this.writer.write(draft);
 		const assignments = assignSkillToPersona({
 			skillName: draft.name,
 			description: draft.description,
@@ -86,11 +88,25 @@ export class LearnCommandService {
 			source: "learn",
 		});
 		const routing = buildRoutingMetadata(draft, assignments);
-		await writePersonaSkillRouting({
-			projectRoot: this.options.projectRoot,
-			metadata: routing,
-			assignments,
+		const written = await this.writer.write(draft, routing, {
+			allowExisting: draft.status === "applied",
 		});
+		const routingConfirmationRequired = routing.routing.requires_confirmation;
+		const routingWritten = !routingConfirmationRequired || options.confirmRouting === true;
+		const effectiveAssignments = routingWritten && routingConfirmationRequired && options.confirmRouting === true
+			? assignments.map((assignment) => ({
+				...assignment,
+				enabled: true,
+				reason: `${assignment.reason}; confirmed via /learn apply --confirm-routing`,
+			}))
+			: assignments;
+		if (routingWritten) {
+			await writePersonaSkillRouting({
+				projectRoot: this.options.projectRoot,
+				metadata: routing,
+				assignments: effectiveAssignments,
+			});
+		}
 		const appliedDraft: LearnedSkillDraft = {
 			...draft,
 			status: "applied",
@@ -104,8 +120,10 @@ export class LearnCommandService {
 			draft: appliedDraft,
 			skillPath: written.skillPath,
 			metadataPath: written.metadataPath,
-			assignments,
+			assignments: effectiveAssignments,
 			routing,
+			routingWritten,
+			routingConfirmationRequired,
 		};
 	}
 

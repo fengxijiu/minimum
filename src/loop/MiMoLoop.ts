@@ -57,6 +57,9 @@ const PRICE_OUTPUT_PER_M_USD = 1.6;
 const MEMORY_PRELUDE_START = "<!-- mimo-memory-prelude:start -->";
 const MEMORY_PRELUDE_END = "<!-- mimo-memory-prelude:end -->";
 
+const SKILLS_CONTEXT_START = "<!-- mimo-skills-context:start -->";
+const SKILLS_CONTEXT_END = "<!-- mimo-skills-context:end -->";
+
 // ============ Minimal collaborator interfaces ============
 
 export interface IStreamingClient {
@@ -138,6 +141,8 @@ export interface MiMoLoopConfig {
 		projectMemory?: MemoryPreludeRequest["projectMemory"];
 		globalMemory?: MemoryPreludeRequest["globalMemory"];
 	};
+	/** Called at the start of each turn with the current user input. Return the skills block or "" to clear. */
+	skillsSystemContent?: (userInput: string) => Promise<string>;
 }
 
 export interface LoopState {
@@ -270,6 +275,7 @@ export class MiMoLoop {
 			}
 
 			await this.refreshMemoryPrelude();
+			await this.refreshSkillsContext();
 
 			// 2. 主循环（Reasonix 风格：无限迭代，通过 return 退出）
 			const maxSteps = this.config.maxSteps || 50;
@@ -964,6 +970,44 @@ export class MiMoLoop {
 			return;
 		}
 
+		let insertAt = 0;
+		while (this.messages[insertAt]?.role === "system") insertAt++;
+		this.messages.splice(insertAt, 0, { role: "system", content });
+	}
+
+	private isSkillsContextMessage(message: ChatMessage): boolean {
+		return (
+			message.role === "system" &&
+			typeof message.content === "string" &&
+			message.content.includes(SKILLS_CONTEXT_START)
+		);
+	}
+
+	private async refreshSkillsContext(): Promise<void> {
+		const provider = this.config.skillsSystemContent;
+		if (!provider) return;
+
+		let text: string;
+		try {
+			text = (await provider(this.currentUserInput)).trim();
+		} catch {
+			return;
+		}
+
+		const existingIndex = this.messages.findIndex((m) => this.isSkillsContextMessage(m));
+
+		if (!text) {
+			if (existingIndex >= 0) this.messages.splice(existingIndex, 1);
+			return;
+		}
+
+		const content = [SKILLS_CONTEXT_START, text, SKILLS_CONTEXT_END].join("\n");
+		if (existingIndex >= 0) {
+			this.messages[existingIndex] = { ...this.messages[existingIndex]!, content };
+			return;
+		}
+
+		// Insert after memory prelude (if any) but before user messages
 		let insertAt = 0;
 		while (this.messages[insertAt]?.role === "system") insertAt++;
 		this.messages.splice(insertAt, 0, { role: "system", content });
