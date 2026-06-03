@@ -8,7 +8,9 @@ import type {
 } from "../types/validator.js";
 
 const TS_EXTS = new Set(["ts", "tsx"]);
-const WRITE_TOOLS = new Set(["write_file", "edit_file"]);
+// apply_patch is a third write path — without it, patches to .ts/.tsx files
+// skip post-edit type-checking entirely.
+const WRITE_TOOLS = new Set(["write_file", "edit_file", "apply_patch"]);
 
 /**
  * TscChecker — uses the TypeScript compiler API in-process via a cached
