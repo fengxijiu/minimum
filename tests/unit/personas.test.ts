@@ -193,4 +193,24 @@ describe("PersonaRegistry", () => {
 			}
 		});
 	});
+
+	describe("master_planner prompt", () => {
+		it("contains every registered persona id as an enumerated valid id", () => {
+			const sys = getPersona("master_planner").systemPrompt;
+			for (const id of listPersonaIds()) {
+				expect(sys).toContain(id);
+			}
+		});
+
+		it("explicitly forbids mission_checker as a coarse persona", () => {
+			const sys = getPersona("master_planner").systemPrompt;
+			expect(sys).toMatch(/mission_checker/i);
+			expect(sys.toLowerCase()).toMatch(/must not appear|forbid|not.*coarse/);
+		});
+
+		it("declares persona ids must be exact lowercase underscore", () => {
+			const sys = getPersona("master_planner").systemPrompt;
+			expect(sys.toLowerCase()).toMatch(/exact|lowercase|underscore/);
+		});
+	});
 });

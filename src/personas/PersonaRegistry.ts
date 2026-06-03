@@ -44,7 +44,39 @@ function buildPersonaPrompt(
 function buildMasterPrompt(): string {
 	const role = loadPrompt("master-planner.md");
 	const skills = renderInlineSkillsForPersona("master_planner");
-	return skills ? `${role.trimEnd()}\n\n${skills}` : role;
+	const validIds = buildValidPersonaIdsBlock();
+	const parts = [role.trimEnd(), validIds];
+	if (skills) parts.push(skills);
+	return parts.join("\n\n");
+}
+
+function buildValidPersonaIdsBlock(): string {
+	const ids = [
+		"master_planner",
+		"vision",
+		"repo_scout",
+		"context_builder",
+		"code_executor",
+		"test_writer",
+		"test_runner",
+		"runtime_debug",
+		"reviewer",
+		"docs",
+	];
+	const lines = ids.map((i) => `- ${i}`).join("\n");
+	return [
+		"## Valid Persona IDs",
+		"",
+		"Use EXACTLY one of these strings (lowercase, underscore-separated) for any",
+		"`persona` field in <task_dag> or <refine>:",
+		"",
+		lines,
+		"",
+		'Do NOT use synonyms (e.g. "developer", "tester", "qa") or alternate casings',
+		'(e.g. "Code_Executor", "code-executor"). `mission_checker` is a W3.5 inline',
+		"role and MUST NOT appear as a coarse DAG persona. Any other value is",
+		"rejected by the compiler and aborts the run.",
+	].join("\n");
 }
 
 /**

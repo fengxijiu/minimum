@@ -55,6 +55,16 @@ When compiling, output a single `<task_dag>` block with this shape:
           "needs_refine": true, "parallelGroup": "backend",
           "dependsOn": ["T0-1","T0-2"] }
       ]
+    },
+    { "id": "P3", "name": "validation_and_docs",
+      "tasks": [
+        { "id": "T3-1", "persona": "runtime_debug", "objective": "trace any failing tests to root cause",
+          "needs_refine": true, "parallelGroup": "diagnostics",
+          "dependsOn": ["T2-1"] },
+        { "id": "T3-2", "persona": "docs", "objective": "update README upload section",
+          "needs_refine": true, "parallelGroup": "docs",
+          "dependsOn": ["T2-1"] }
+      ]
     }
   ]
 }
