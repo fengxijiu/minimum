@@ -86,9 +86,11 @@ export type {
 export {
 	extractXmlBlock,
 	runTask,
+	type SchemaRepairRequest,
 	type TaskResult,
 	type TaskRunnerOptions,
 	type TaskStatus,
+	type WorkerExecutionResult,
 	type WorkerExecutor,
 } from "./TaskRunner.js";
 export {

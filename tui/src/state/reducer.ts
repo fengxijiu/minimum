@@ -197,6 +197,10 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
         reasoning: null,
         pending: null,
         activeTool: null,
+        sessionName: null,
+        planMode: false,
+        pipeline: null,
+        subagents: [],
       };
 
     case 'session.reset':
@@ -211,6 +215,10 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
         reasoning: null,
         pending: null,
         activeTool: null,
+        sessionName: null,
+        planMode: false,
+        pipeline: null,
+        subagents: [],
         ctx: { used: 0, max: state.ctx.max },
         usage: {
           promptTokens: 0,

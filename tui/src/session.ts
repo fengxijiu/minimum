@@ -1,4 +1,5 @@
 import * as fs from 'node:fs/promises';
+import * as fsSync from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { Message } from './types.js';
@@ -6,7 +7,7 @@ import type { ChatHistoryMessage } from './engine.js';
 
 // os.homedir() works cross-platform (USERPROFILE on Windows, HOME on POSIX);
 // $HOME alone is empty on Windows and made path.join produce
-// "C:\workspace\…\~\.minimum\tui-sessions" — i.e. "~" treated as a literal
+// "C:\workspace\...\~\.minimum\tui-sessions" - i.e. "~" treated as a literal
 // subdirectory under the cwd.
 const HOME_DIR = os.homedir();
 
@@ -17,6 +18,8 @@ export interface TuiSession {
   messages: Message[];
   /** Engine ChatMessage[] for AI context restoration on /load. */
   chatHistory?: ChatHistoryMessage[];
+  /** NEW: single-agent engine session id for --resume rebinding. */
+  engineSessionId?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -24,14 +27,37 @@ export interface TuiSession {
 const sessionsDir = (): string =>
   path.join(HOME_DIR, '.minimum', 'tui-sessions');
 
+/** Cache the freshest session payload for sync flush during shutdown. */
+let lastSession: TuiSession | null = null;
+
 export async function saveTuiSession(session: TuiSession): Promise<void> {
+  // NEW: cache before async I/O so SIGINT/exit can still flush the latest state.
+  lastSession = { ...session, updatedAt: Date.now() };
   const dir = sessionsDir();
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(
     path.join(dir, `${session.id}.json`),
-    JSON.stringify({ ...session, updatedAt: Date.now() }, null, 2),
+    JSON.stringify(lastSession, null, 2),
     'utf-8',
   );
+}
+
+/**
+ * Sync-flush the latest TUI session to disk for SIGINT / process.exit paths.
+ * Safe even if the async save is still pending because `lastSession` is cached first.
+ */
+export function flushTuiSessionSync(): void {
+  const session = lastSession;
+  if (!session) return;
+  try {
+    const dir = sessionsDir();
+    fsSync.mkdirSync(dir, { recursive: true });
+    fsSync.writeFileSync(
+      path.join(dir, `${session.id}.json`),
+      JSON.stringify(session, null, 2),
+      'utf-8',
+    );
+  } catch { /* best-effort during shutdown */ }
 }
 
 export async function loadTuiSessionById(id: string): Promise<TuiSession | null> {
@@ -62,6 +88,11 @@ export async function listTuiSessions(): Promise<TuiSession[]> {
   } catch {
     return [];
   }
+}
+
+export async function loadLatestTuiSession(): Promise<TuiSession | null> {
+  const sessions = await listTuiSessions();
+  return sessions[0] ?? null;
 }
 
 export function formatSessionList(sessions: TuiSession[]): string {

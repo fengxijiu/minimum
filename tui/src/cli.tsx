@@ -3,6 +3,7 @@ import React from 'react';
 import { render } from 'ink';
 import { App } from './app.js';
 import { createEngineRunner } from './engine.js';
+import { flushTuiSessionSync, loadLatestTuiSession } from './session.js';
 
 // ── Inline (non-fullscreen) rendering ────────────────────────────────
 // Claude Code style: no alternate screen and no mouse capture, so the
@@ -64,21 +65,28 @@ const flush = (): void => {
 const flushSync = (): void => { if (pending.length) flush(); };
 process.on('exit', flushSync);
 
+const args = new Set(process.argv.slice(2));
+const shouldResume = args.has('--resume');
 const { runner, pipelineRunner, info, sessionFlusher, choiceGate } = await createEngineRunner(process.cwd());
+const initialSession = shouldResume ? await loadLatestTuiSession() : null;
 
 // SIGINT: flush buffered terminal frame + persist session before exit.
 process.on('SIGINT', () => {
   flushSync();
   sessionFlusher?.flushSync();
+  // P1: 同步冲刷 TUI session，防止异步保存被 SIGINT 中断
+  flushTuiSessionSync();
   process.exit(0);
 });
 
 // exitOnCtrlC: false — Ctrl+C is repurposed as "stop current task" (press twice).
 // Without this, Ink's default handler would kill the process on the first press.
 const { waitUntilExit } = render(
-  <App runner={runner} pipelineRunner={pipelineRunner} engineInfo={info} choiceGate={choiceGate} />,
+  <App runner={runner} pipelineRunner={pipelineRunner} engineInfo={info} choiceGate={choiceGate} initialSession={initialSession} />,
   { exitOnCtrlC: false },
 );
 await waitUntilExit();
 flushSync();
 sessionFlusher?.flushSync();
+// P1: 同步冲刷 TUI session，确保正常退出时 session 不丢失
+flushTuiSessionSync();

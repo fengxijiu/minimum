@@ -109,6 +109,7 @@ describe("PersonaRegistry", () => {
 				expect(p.systemPrompt).toContain("<task_report>");
 				expect(p.systemPrompt).toContain("<memory_candidate>");
 				expect(p.systemPrompt).toContain("Blocked Protocol");
+				expect(p.systemPrompt).toContain("Do not include analysis");
 			}
 		});
 
@@ -155,6 +156,15 @@ describe("PersonaRegistry", () => {
 			for (const p of listPersonas()) {
 				if (p.id === "master_planner" || p.id === "context_builder") continue;
 				expect(p.model).toBe("mimo-v2.5");
+			}
+		});
+	});
+
+	describe("output schemas", () => {
+		it("uses task_report for every worker persona", () => {
+			for (const p of listPersonas()) {
+				if (p.kind === "master") continue;
+				expect(p.outputSchema).toBe("task_report");
 			}
 		});
 	});

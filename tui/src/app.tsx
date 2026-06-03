@@ -158,7 +158,8 @@ export function App({
   pipelineRunner,
   engineInfo = DEFAULT_ENGINE_INFO,
   choiceGate,
-}: { runner?: Runner; pipelineRunner?: Runner; engineInfo?: EngineInfo; choiceGate?: TuiConfirmationGate } = {}) {
+  initialSession,
+}: { runner?: Runner; pipelineRunner?: Runner; engineInfo?: EngineInfo; choiceGate?: TuiConfirmationGate; initialSession?: TuiSession | null } = {}) {
   const { exit } = useApp();
   // ── Terminal size — width drives text wrap, height caps the live frame ─
   const [termSize, setTermSize] = useState(() => ({
@@ -299,6 +300,28 @@ export function App({
     baseUrl: engineInfo.baseUrl,
     engineMode: engineInfo.mode,
   }), [engineInfo]);
+  const restoreSession = useCallback(async (session: TuiSession) => {
+    sessionIdRef.current = session.id;
+    sessionCreatedAtRef.current = session.createdAt;
+    prevCostRef.current = 0;
+    activeRunnerRef.current = runner;
+    // NEW: clear both histories first so a restore never leaves stale context behind.
+    runner.loadHistory?.([]);
+    pipelineRunner?.loadHistory?.([]);
+    if (session.engineSessionId) {
+      await runner.loadSessionById?.(session.engineSessionId);
+    } else {
+      await runner.loadLastSession?.();
+    }
+    if (session.chatHistory?.length) {
+      runner.loadHistory?.(session.chatHistory);
+      pipelineRunner?.loadHistory?.(session.chatHistory);
+    }
+    dispatch({ type: 'session.restore', messages: session.messages, sessionName: session.name });
+    const msgCount = session.messages.filter(m => m.type === 'user' || m.type === 'assistant').length;
+    const ctxNote = session.chatHistory?.length ? ` · AI context restored (${session.chatHistory.length} turns)` : '';
+    return { msgCount, ctxNote };
+  }, [dispatch, pipelineRunner, runner]);
   // ── Command / permission handlers ───────────────────────────────────
   const applyOutcome = useCallback((o: CommandOutcome) => {
     switch (o.kind) {
@@ -310,6 +333,21 @@ export function App({
         const b64 = Buffer.from(o.text, 'utf-8').toString('base64');
         process.stdout.write(`\x1b]52;c;${b64}\x07`);
         dispatch({ type: 'toast.show', text: 'Copied last reply', tone: 'ok', ttlMs: 2000 });
+        return;
+      }
+      case 'session.new': {
+        const name = `auto_${Date.now()}`;
+        sessionIdRef.current = name;
+        sessionCreatedAtRef.current = Date.now();
+        prevCostRef.current = 0;
+        activeRunnerRef.current = runner;
+        // NEW: make /new a real session boundary for both engine surfaces.
+        runner.loadHistory?.([]);
+        pipelineRunner?.loadHistory?.([]);
+        const freshSession = runner.startNewSession?.();
+        void freshSession?.catch(() => {});
+        dispatch({ type: 'session.reset' });
+        dispatch({ type: 'system.push', text: 'Started a fresh session.', tone: 'ok' });
         return;
       }
       case 'permission':
@@ -346,7 +384,8 @@ export function App({
           name,
           projectPath: s.path,
           messages: s.messages,
-          chatHistory: runner.getHistory?.(),
+          chatHistory: activeRunnerRef.current.getHistory?.(),
+          engineSessionId: runner.getSessionId?.() ?? undefined,
           createdAt: sessionCreatedAtRef.current,
           updatedAt: Date.now(),
         }).then(() => {
@@ -370,17 +409,11 @@ export function App({
             dispatch({ type: 'system.push', text: `Session "${name}" not found.`, tone: 'warn' });
             return;
           }
-          sessionIdRef.current = session.id;
-          sessionCreatedAtRef.current = session.createdAt;
-          prevCostRef.current = 0;
-          // Restore engine conversation history so the AI has full prior context.
-          if (session.chatHistory?.length) {
-            runner.loadHistory?.(session.chatHistory);
-          }
-          dispatch({ type: 'session.restore', messages: session.messages, sessionName: session.name });
-          const msgCount = session.messages.filter(m => m.type === 'user' || m.type === 'assistant').length;
-          const ctxNote = session.chatHistory?.length ? ` · AI context restored (${session.chatHistory.length} turns)` : '';
-          dispatch({ type: 'system.push', text: `Loaded "${session.name}" (${msgCount} messages${ctxNote}).`, tone: 'ok' });
+          // NEW: restore both the TUI snapshot and runner histories through one path.
+          void restoreSession(session).then(({ msgCount, ctxNote }) => {
+            dispatch({ type: 'system.push', text: `Loaded "${session.name}" (${msgCount} messages${ctxNote}).`, tone: 'ok' });
+          });
+          return;
         }).catch(() => {
           dispatch({ type: 'system.push', text: `Failed to load session "${name}".`, tone: 'warn' });
         });
@@ -491,13 +524,24 @@ export function App({
         return;
       }
     }
-  }, [exit, dispatch, runner]);
+  }, [exit, dispatch, pipelineRunner, restoreSession, runner]);
 
   // Track which runner owns the currently in-flight turn so permission
   // resolutions route to the right side. EngineBridge and PipelineBridge each
   // maintain their own pending-approval map; sending the verdict to the wrong
   // one leaks the worker promise.
   const activeRunnerRef = useRef<Runner>(runner);
+  const initialSessionLoadedRef = useRef(false);
+
+  useEffect(() => {
+    if (initialSessionLoadedRef.current || !initialSession) return;
+    initialSessionLoadedRef.current = true;
+    void restoreSession(initialSession).then(({ msgCount, ctxNote }) => {
+      dispatch({ type: 'system.push', text: `Resumed "${initialSession.name}" (${msgCount} messages${ctxNote}).`, tone: 'ok' });
+    }).catch(() => {
+      dispatch({ type: 'system.push', text: `Failed to resume "${initialSession.name}".`, tone: 'warn' });
+    });
+  }, [dispatch, initialSession, restoreSession]);
 
   const allowPermission = useCallback(() => {
     const perm = activePermRef.current;
@@ -956,18 +1000,23 @@ export function App({
   useEffect(() => {
     const justFinished = prevTurnInProgressRef.current && !sTurnInProgress;
     prevTurnInProgressRef.current = sTurnInProgress;
-    if (!justFinished || sMessages.length === 0) return;
+    if (!justFinished) return;
     const s = stateRef.current;
+    const msgs = s.messages;
+    if (msgs.length === 0) return;
+    // P1: 使用当前活跃 runner 获取 chatHistory，而非固定使用全局 runner
+    // P2: 从 stateRef 获取 messages，避免 sMessages 变化导致 Effect 频繁重注册
     void saveTuiSession({
       id: sessionIdRef.current,
       name: s.sessionName ?? sessionIdRef.current,
       projectPath: s.path,
-      messages: sMessages,
-      chatHistory: runner.getHistory?.(),
+      messages: msgs,
+      chatHistory: activeRunnerRef.current.getHistory?.(),
+      engineSessionId: runner.getSessionId?.() ?? undefined,
       createdAt: sessionCreatedAtRef.current,
       updatedAt: Date.now(),
     }).catch(() => {/* best-effort */});
-  }, [sTurnInProgress, sMessages]);
+  }, [sTurnInProgress]);
 
   // ── Context-window pressure warnings ───────────────────────────────
   // Fires a toast at each threshold once per session so the user knows

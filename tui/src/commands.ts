@@ -200,6 +200,7 @@ export type CommandOutcome =
   | { kind: 'pipeline'; text: string }
   | { kind: 'event'; event: import('./state/events.js').AgentEvent }
   | { kind: 'copy'; text: string }
+  | { kind: 'session.new' }
   | { kind: 'session.save'; name?: string }
   | { kind: 'session.list' }
   | { kind: 'session.load.request'; name: string }
@@ -239,18 +240,7 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
       return { kind: 'patch', patch: { messages: [] }, note: 'Chat cleared.', tone: 'ok' };
 
     case 'new':
-      return {
-        kind: 'patch',
-        patch: {
-          messages: [],
-          edits: [],
-          redo: [],
-          plan: { title: '(no plan yet)', steps: [] },
-          currentStepLabel: '',
-        },
-        note: 'Started a fresh session.',
-        tone: 'ok',
-      };
+      return { kind: 'session.new' };
 
     case 'mode': {
       const MODES = ['agent', 'chat', 'orchestrate'] as const;

@@ -77,8 +77,9 @@ src/tools/policy/
    `master_planner` only; subagents do not see it.
 2. **W1 → W2 handoff** — `ContextBuilder` extracts relevant canonical memory
    sections per downstream Persona and writes a per-task ContextPack.
-3. **Worker output** — every Persona emits two XML blocks: `<task_report>` and
-   `<memory_candidate>`; `TaskRunner` files them separately.
+3. **Worker output** — every worker persona emits the shared `<task_report>`
+   envelope plus `<memory_candidate>`; `TaskRunner` parses and files them
+   separately.
 4. **W4 single call** — `master_planner` decides patch merge order AND memory
    merge actions in one LLM call with structured JSON output (zod-validated).
 

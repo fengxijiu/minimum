@@ -196,7 +196,7 @@ describe("refineDag", () => {
 		});
 		expect(errors).toEqual([]);
 		expect(contracts[0]!.pathPolicy.allowedGlobs).toEqual([]);
-		expect(contracts[0]!.outputSchema).toBe("vision_report");
+		expect(contracts[0]!.outputSchema).toBe("task_report");
 	});
 
 	it("merges refinement constraints onto base constraints", () => {

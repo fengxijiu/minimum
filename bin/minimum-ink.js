@@ -13,7 +13,7 @@ import { resolve, dirname } from 'path';
 const dir = dirname(fileURLToPath(import.meta.url));
 const tuiEntry = resolve(dir, '..', 'tui', 'dist', 'cli.js');
 
-const child = spawn(process.execPath, [tuiEntry], {
+const child = spawn(process.execPath, [tuiEntry, ...process.argv.slice(2)], {
   stdio: 'inherit',
   env: process.env,
 });

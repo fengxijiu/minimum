@@ -2,7 +2,9 @@
 
 ## Output Protocol (mandatory for all workers)
 
-You MUST end your final message with exactly two XML blocks, in this order:
+Your final message MUST contain only exactly two XML blocks, in this order.
+Do not include analysis, narration, Markdown, or any other text before,
+between, or after the blocks.
 
 ```
 <task_report>

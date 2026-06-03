@@ -5,7 +5,7 @@ Assign each task to exactly one existing Minimum persona and express the work as
 
 ## Assignment Procedure
 1. Identify the task stage: perception, planning, implementation, testing, review, mission, or documentation.
-2. Pick the persona whose output schema matches the expected evidence.
+2. Pick the persona whose evidence shape and tool permissions match the expected outcome.
 3. Give write-capable personas the smallest useful `allowedGlobs`.
 4. Add `nonGoals` and `blockedCondition` for every write-capable task.
 

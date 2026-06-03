@@ -135,7 +135,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		},
 		maxSteps: 8,
 		maxTokens: 32_000,
-		outputSchema: "vision_report",
+		outputSchema: "task_report",
 		parallelism: { soloPerWave: false, maxConcurrent: 1 },
 	});
 
@@ -160,7 +160,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		},
 		maxSteps: 15,
 		maxTokens: 32_000,
-		outputSchema: "scout_report",
+		outputSchema: "task_report",
 		parallelism: { soloPerWave: false, maxConcurrent: 2 },
 	});
 
@@ -180,7 +180,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		},
 		maxSteps: 10,
 		maxTokens: 131_072,
-		outputSchema: "context_pack",
+		outputSchema: "task_report",
 		parallelism: { soloPerWave: false, maxConcurrent: 1 },
 	});
 
@@ -245,7 +245,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		},
 		maxSteps: 20,
 		maxTokens: 48_000,
-		outputSchema: "test_report",
+		outputSchema: "task_report",
 		parallelism: { soloPerWave: false, maxConcurrent: 2 },
 	});
 
@@ -263,7 +263,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		},
 		maxSteps: 6,
 		maxTokens: 32_000,
-		outputSchema: "test_report",
+		outputSchema: "task_report",
 		parallelism: { soloPerWave: false, maxConcurrent: 2 },
 	});
 
@@ -288,7 +288,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		},
 		maxSteps: 15,
 		maxTokens: 32_000,
-		outputSchema: "debug_report",
+		outputSchema: "task_report",
 		parallelism: { soloPerWave: true, maxConcurrent: 1 },
 	});
 
@@ -306,7 +306,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		},
 		maxSteps: 10,
 		maxTokens: 48_000,
-		outputSchema: "review_report",
+		outputSchema: "task_report",
 		parallelism: { soloPerWave: false, maxConcurrent: 1 },
 	});
 

@@ -8,8 +8,8 @@
  *
  * Hard rules:
  *  - There is exactly one `kind: 'master'` persona (master_planner).
- *  - Every worker Persona declares its own `outputSchema` so TaskRunner can
- *    deterministically split `<task_report>` from `<memory_candidate>`.
+ *  - Every worker Persona uses the shared `task_report` output schema so
+ *    TaskRunner can reliably parse the common worker envelope.
  *  - Read-only Personas (vision, repo_scout, reviewer) have `canWrite: false`
  *    on `pathPolicy` — PathPolicyEnforcer denies all writes regardless of
  *    Task Contract.
@@ -33,12 +33,6 @@ export type PersonaModel = "mimo-v2.5-pro" | "mimo-v2.5" | "mimo-omni";
 
 export type OutputSchema =
 	| "task_report"
-	| "vision_report"
-	| "scout_report"
-	| "context_pack"
-	| "review_report"
-	| "test_report"
-	| "debug_report"
 	| "planner_dag"
 	| "planner_finalize";
 

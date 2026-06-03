@@ -106,7 +106,7 @@ describe("validateContract", () => {
 			const r = validateContract(
 				makeContract({
 					personaId: "reviewer",
-					outputSchema: "review_report",
+					outputSchema: "task_report",
 					pathPolicy: { allowedGlobs: ["src/foo.ts"], forbiddenGlobs: [] },
 				}),
 			);
@@ -118,7 +118,7 @@ describe("validateContract", () => {
 			const r = validateContract(
 				makeContract({
 					personaId: "reviewer",
-					outputSchema: "review_report",
+					outputSchema: "task_report",
 					pathPolicy: { allowedGlobs: [], forbiddenGlobs: [] },
 				}),
 			);
@@ -140,7 +140,7 @@ describe("validateContract", () => {
 			const r = validateContract(
 				makeContract({
 					personaId: "test_writer",
-					outputSchema: "test_report",
+					outputSchema: "task_report",
 					pathPolicy: { allowedGlobs: [], forbiddenGlobs: [] },
 				}),
 			);
@@ -153,7 +153,7 @@ describe("validateContract", () => {
 			const r = validateContract(
 				makeContract({
 					personaId: "reviewer",
-					outputSchema: "task_report", // reviewer expects review_report
+					outputSchema: "planner_dag",
 					pathPolicy: { allowedGlobs: [], forbiddenGlobs: [] },
 				}),
 			);

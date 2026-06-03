@@ -101,6 +101,7 @@ describe("runTask", () => {
 	it("returns error when output has no task_report block", async () => {
 		const r = await runTask(mkContract(), { projectRoot: dir, executor: stubExecutor("nothing") });
 		expect(r.status).toBe("error");
+		expect(r.schemaRepairAttempted).toBe(true);
 	});
 
 	it("surfaces a descriptive error and raw excerpt when task_report is missing", async () => {
@@ -117,6 +118,40 @@ describe("runTask", () => {
 		expect(r.status).toBe("error");
 		expect(r.errors.length).toBeGreaterThan(0);
 		expect(r.errors.join("\n")).toMatch(/empty|no output/i);
+	});
+
+	it("retries once and succeeds when schema repair returns a valid task_report", async () => {
+		let calls = 0;
+		const executor: WorkerExecutor = {
+			run: async (_contract, _tools, repair) => {
+				calls++;
+				if (!repair) return "I started analyzing the repo layout.";
+				return {
+					text: `<task_report><status>ok</status>\nRecovered.</task_report>`,
+					attempt: repair.attempt,
+					hitStepLimit: false,
+				};
+			},
+		};
+		const r = await runTask(mkContract(), { projectRoot: dir, executor });
+		expect(r.status).toBe("ok");
+		expect(r.report).toContain("Recovered.");
+		expect(r.schemaRepairAttempted).toBe(true);
+		expect(calls).toBe(2);
+	});
+
+	it("reports step-limit-specific schema failures after the retry", async () => {
+		const executor: WorkerExecutor = {
+			run: async (_contract, _tools, repair) => {
+				if (!repair) return { text: "partial analysis", hitStepLimit: true };
+				return { text: "still partial", hitStepLimit: true, attempt: repair.attempt };
+			},
+		};
+		const r = await runTask(mkContract(), { projectRoot: dir, executor });
+		expect(r.status).toBe("error");
+		expect(r.hitStepLimit).toBe(true);
+		expect(r.errors.join("\n")).toMatch(/maxSteps|step limit/i);
+		expect(r.errors.join("\n")).toMatch(/schema repair retry/i);
 	});
 
 	it("includes durationMs in result", async () => {
@@ -175,7 +210,7 @@ describe("runTask", () => {
 		const contract = mkContract({
 			taskId: "T-review-1",
 			personaId: "reviewer",
-			outputSchema: "review_report",
+			outputSchema: "task_report",
 			pathPolicy: { allowedGlobs: [], forbiddenGlobs: [] },
 		});
 		const output = `<task_report><status>ok</status>\nLGTM</task_report>`;

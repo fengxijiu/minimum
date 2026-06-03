@@ -128,14 +128,14 @@ describe("schedule", () => {
 		const a = mkContract({
 			taskId: "TR1",
 			personaId: "runtime_debug",
-			outputSchema: "debug_report",
+			outputSchema: "task_report",
 			parallelGroup: "run-a",
 			pathPolicy: { allowedGlobs: [], forbiddenGlobs: [] },
 		});
 		const b = mkContract({
 			taskId: "TR2",
 			personaId: "runtime_debug",
-			outputSchema: "debug_report",
+			outputSchema: "task_report",
 			parallelGroup: "run-b",
 			pathPolicy: { allowedGlobs: [], forbiddenGlobs: [] },
 		});

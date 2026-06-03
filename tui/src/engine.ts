@@ -83,6 +83,14 @@ export interface Runner {
   getHistory?(): ChatHistoryMessage[];
   /** Seed the engine with a prior conversation history (used by /load). */
   loadHistory?(messages: ChatHistoryMessage[]): void;
+  /** Return the active single-agent engine session id when one exists. */
+  getSessionId?(): string | null;
+  /** Restore a specific single-agent engine session by id. */
+  loadSessionById?(sessionId: string): Promise<boolean>;
+  /** Restore the single-agent engine session pointed to by `.minimum/sessions/last`. */
+  loadLastSession?(): Promise<boolean>;
+  /** Start a fresh single-agent engine session and clear its in-memory history. */
+  startNewSession?(): Promise<void>;
   /** Enable or disable plan mode (blocks mutating tools so the AI only plans). */
   setPlanMode?(enabled: boolean): void;
   /** One-shot text completion used by local command services such as /learn. */
@@ -421,6 +429,24 @@ export async function createEngineRunner(
       setApprovalMode: (mode) => approvalManager.setMode(mode),
       getHistory: () => bridge.getHistory(),
       loadHistory: (msgs) => bridge.loadHistory(msgs),
+      getSessionId: () => sessionManager.getCurrentSession()?.id ?? null,
+      loadSessionById: async (sessionId: string) => {
+        // NEW: rebind SessionManager and loop history together for resume flows.
+        const session = await sessionManager.loadSession(sessionId);
+        if (!session) return false;
+        bridge.loadHistory(session.messages);
+        return true;
+      },
+      loadLastSession: async () => {
+        const session = await sessionManager.loadLastSession?.();
+        if (!session) return false;
+        bridge.loadHistory(session.messages);
+        return true;
+      },
+      startNewSession: async () => {
+        await sessionManager.createSession();
+        bridge.loadHistory([]);
+      },
       setPlanMode: (enabled) => bridge.setPlanMode(enabled),
       completeText: async (prompt: string) => {
         const response = await client.chat({
@@ -467,6 +493,8 @@ export async function createEngineRunner(
         send: (input: string) => pipelineBridge.send(input),
         resolvePermission: (id, decision) => pipelineBridge.resolvePermission(id, decision),
         setApprovalMode: (mode) => approvalManager.setMode(mode),
+        getHistory: () => pipelineBridge.getHistory?.() ?? [],
+        loadHistory: (msgs) => pipelineBridge.loadHistory?.(msgs),
       };
     }
     const toolNames: string[] = (tools.getDefinitions?.() ?? []).map((d: { name: string }) => d.name);

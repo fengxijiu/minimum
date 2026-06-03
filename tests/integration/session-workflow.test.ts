@@ -62,6 +62,13 @@ describe("Session Workflow", () => {
 		expect(sessions.length).toBe(3);
 	});
 
+	it("should load the last persisted session", async () => {
+		await manager.persistFromLoop([{ role: "user", content: "latest" }], { steps: 1 });
+		const loaded = await manager.loadLastSession();
+		expect(loaded?.messages).toEqual([{ role: "user", content: "latest" }]);
+		expect(manager.getCurrentSession()?.id).toBe(loaded?.id);
+	});
+
 	it("should list checkpoints", async () => {
 		await manager.createSession("checkpoint-list-test");
 		await manager.addMessage({ role: "user", content: "Hello" });

@@ -18,14 +18,34 @@ export interface TaskResult {
 	/** Raw body of the <memory_candidate> block, if the worker emitted one. */
 	memoryCandidateBody: string | undefined;
 	errors: string[];
-	/** Set when staging write succeeds but fails to persist — task status is still valid. */
+	/** Set when staging write succeeds but fails to persist; task status is still valid. */
 	stagingError?: string;
+	/** True when the worker loop exhausted maxSteps before producing a final answer. */
+	hitStepLimit?: boolean;
+	/** True when TaskRunner retried once to repair a missing <task_report> envelope. */
+	schemaRepairAttempted?: boolean;
 	durationMs: number;
 }
 
-/** Injectable worker executor — real impl calls the LLM; tests use stubs. */
+export interface SchemaRepairRequest {
+	feedback: string;
+	rawOutput: string;
+	attempt: number;
+}
+
+export interface WorkerExecutionResult {
+	text: string;
+	hitStepLimit?: boolean;
+	attempt?: number;
+}
+
+/** Injectable worker executor; real impl calls the LLM, tests may still return plain text. */
 export interface WorkerExecutor {
-	run(contract: TaskContract, filteredTools: string[]): Promise<string>;
+	run(
+		contract: TaskContract,
+		filteredTools: string[],
+		repair?: SchemaRepairRequest,
+	): Promise<string | WorkerExecutionResult>;
 }
 
 export interface TaskRunnerOptions {
@@ -37,11 +57,12 @@ export interface TaskRunnerOptions {
  * Run a single contracted task end-to-end.
  *
  * Pipeline:
- *   1. Validate contract — abort with contract_invalid if invalid.
+ *   1. Validate contract and abort with contract_invalid if invalid.
  *   2. Filter tools to the persona's effective allowlist.
  *   3. Execute via the injected WorkerExecutor.
  *   4. Parse <task_report> and optional <memory_candidate> from output.
- *   5. If a candidate was emitted, persist it to _staging/.
+ *   5. Retry once if the worker omitted the required <task_report> envelope.
+ *   6. If a candidate was emitted, persist it to _staging/.
  */
 export async function runTask(
 	contract: TaskContract,
@@ -65,9 +86,11 @@ export async function runTask(
 	const persona = getPersona(contract.personaId);
 	const filteredTools = filterAllowedTools(persona.toolAllowlist, persona);
 
-	let rawOutput: string;
+	let execution: WorkerExecutionResult;
 	try {
-		rawOutput = await opts.executor.run(contract, filteredTools);
+		execution = normalizeWorkerExecution(
+			await opts.executor.run(contract, filteredTools),
+		);
 	} catch (err: unknown) {
 		return {
 			...base,
@@ -79,9 +102,36 @@ export async function runTask(
 		};
 	}
 
-	const report = extractXmlBlock(rawOutput, "task_report");
-	const memBlock = extractXmlBlock(rawOutput, "memory_candidate") || undefined;
-	const status = detectStatus(report);
+	let rawOutput = execution.text;
+	let report = extractXmlBlock(rawOutput, "task_report");
+	let memBlock = extractXmlBlock(rawOutput, "memory_candidate") || undefined;
+	let status = detectStatus(report);
+	let schemaRepairAttempted = false;
+
+	if (!report) {
+		schemaRepairAttempted = true;
+		const repair = buildSchemaRepairRequest(rawOutput, execution.hitStepLimit);
+		try {
+			execution = normalizeWorkerExecution(
+				await opts.executor.run(contract, filteredTools, repair),
+			);
+			rawOutput = execution.text;
+			report = extractXmlBlock(rawOutput, "task_report");
+			memBlock = extractXmlBlock(rawOutput, "memory_candidate") || undefined;
+			status = detectStatus(report);
+		} catch (err: unknown) {
+			return {
+				...base,
+				status: "error",
+				report: "",
+				memoryCandidateBody: undefined,
+				errors: [err instanceof Error ? err.message : String(err)],
+				hitStepLimit: execution.hitStepLimit,
+				schemaRepairAttempted,
+				durationMs: Date.now() - start,
+			};
+		}
+	}
 
 	let stagingError: string | undefined;
 	if (memBlock) {
@@ -94,17 +144,12 @@ export async function runTask(
 		}
 	}
 
-	const errors: string[] = [];
-	if (status === "error" && !report) {
-		const trimmed = rawOutput.trim();
-		if (!trimmed) {
-			errors.push("worker returned empty output — no <task_report> block was emitted");
-		} else {
-			errors.push("worker output did not contain a <task_report> block; the model likely responded outside the required schema");
-			const excerpt = summarizeRawOutput(trimmed);
-			if (excerpt) errors.push(`raw excerpt: ${excerpt}`);
-		}
-	}
+	const errors = report
+		? []
+		: buildMissingReportErrors(rawOutput, {
+			hitStepLimit: execution.hitStepLimit,
+			schemaRepairAttempted,
+		});
 
 	return {
 		...base,
@@ -113,14 +158,59 @@ export async function runTask(
 		memoryCandidateBody: memBlock,
 		errors,
 		...(stagingError !== undefined && { stagingError }),
+		...(execution.hitStepLimit !== undefined && { hitStepLimit: execution.hitStepLimit }),
+		...(schemaRepairAttempted && { schemaRepairAttempted }),
 		durationMs: Date.now() - start,
 	};
+}
+
+function normalizeWorkerExecution(
+	output: string | WorkerExecutionResult,
+): WorkerExecutionResult {
+	if (typeof output === "string") return { text: output };
+	return output;
+}
+
+function buildSchemaRepairRequest(
+	rawOutput: string,
+	hitStepLimit: boolean | undefined,
+): SchemaRepairRequest {
+	const excerpt = summarizeRawOutput(rawOutput.trim()) || "(empty)";
+	const prefix = hitStepLimit
+		? "Previous attempt hit the worker step limit before producing a valid <task_report>."
+		: "Previous attempt did not produce a valid <task_report>.";
+	return {
+		attempt: 2,
+		rawOutput,
+		feedback: `${prefix} Re-emit only the required XML blocks with no surrounding prose. Reuse facts already gathered; do not continue analysis or expand scope.\nRaw excerpt: ${excerpt}`,
+	};
+}
+
+function buildMissingReportErrors(
+	rawOutput: string,
+	opts: { hitStepLimit?: boolean; schemaRepairAttempted?: boolean },
+): string[] {
+	const errors: string[] = [];
+	const trimmed = rawOutput.trim();
+	if (!trimmed) {
+		errors.push("worker returned empty output - no <task_report> block was emitted");
+	} else if (opts.hitStepLimit) {
+		errors.push("worker hit maxSteps before emitting a <task_report> block");
+	} else {
+		errors.push("worker output did not contain a <task_report> block; the model likely responded outside the required schema");
+	}
+	if (opts.schemaRepairAttempted) {
+		errors.push("schema repair retry was attempted once and still did not produce a valid <task_report>");
+	}
+	const excerpt = summarizeRawOutput(trimmed);
+	if (excerpt) errors.push(`raw excerpt: ${excerpt}`);
+	return errors;
 }
 
 function summarizeRawOutput(text: string): string {
 	const collapsed = text.replace(/\s+/g, " ").trim();
 	if (collapsed.length <= 240) return collapsed;
-	return `${collapsed.slice(0, 240)}…`;
+	return `${collapsed.slice(0, 240)}...`;
 }
 
 /** Extract the trimmed content between <tag> and </tag>; returns "" if absent. */
@@ -189,8 +279,6 @@ function parseMemoryCandidate(
 			relatedFiles.push(fileM[1]!.trim());
 			continue;
 		}
-		// Unrecognized key — skip it rather than breaking so that future
-		// frontmatter fields added after this one are still parsed.
 		inFiles = false;
 	}
 

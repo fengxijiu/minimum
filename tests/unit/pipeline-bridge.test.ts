@@ -156,7 +156,7 @@ describe("createWorkerExecutor", () => {
 			},
 			[],
 		);
-		expect(out).toContain("<task_report>");
+		expect(out.text).toContain("<task_report>");
 	});
 });
 
@@ -273,5 +273,23 @@ describe("PipelineBridge", () => {
 		for await (const e of bridge.send("x")) events.push(e);
 		expect(events.some((e) => e.kind === "error")).toBe(true);
 		expect(events[events.length - 1]).toEqual({ kind: "done", success: false });
+	});
+
+	it("stores and reloads top-level orchestrate history", async () => {
+		const client = scriptedClient([DAG, WORKER, REFINE, WORKER, MISSION, FINALIZE]);
+		const bridge = new PipelineBridge(client, { projectRoot: dir, choiceGate: new ScriptedChoiceGate() });
+		for await (const _ of bridge.send("build an upload endpoint")) {
+			/* drain */
+		}
+		const history = bridge.getHistory();
+		expect(history.at(-2)).toMatchObject({ role: "user", content: "build an upload endpoint" });
+		expect(history.at(-1)).toMatchObject({ role: "assistant" });
+
+		const resumed = new PipelineBridge(scriptedClient([DAG, WORKER, REFINE, WORKER, MISSION, FINALIZE]), {
+			projectRoot: dir,
+			choiceGate: new ScriptedChoiceGate(),
+		});
+		resumed.loadHistory(history);
+		expect(resumed.getHistory()).toEqual(history);
 	});
 });

@@ -15,7 +15,12 @@ import type { MissionCheckInput } from "./MissionChecker.js";
 import type { CoarseDag } from "./TaskContract.js";
 import type { TaskContract } from "./TaskContract.js";
 import type { PlannerBridge } from "./MiMoPipeline.js";
-import type { TaskResult, WorkerExecutor } from "./TaskRunner.js";
+import type {
+	SchemaRepairRequest,
+	TaskResult,
+	WorkerExecutionResult,
+	WorkerExecutor,
+} from "./TaskRunner.js";
 import {
 	WorkerLoop,
 	type WorkerEvent,
@@ -241,7 +246,11 @@ export function createWorkerExecutor(
 		: undefined;
 
 	return {
-		run: async (contract: TaskContract) => {
+		run: async (
+			contract: TaskContract,
+			_filteredTools: string[],
+			repair?: SchemaRepairRequest,
+		): Promise<WorkerExecutionResult> => {
 			const persona = getPersona(contract.personaId);
 			const max = opts.maxTokens ?? persona.maxTokens;
 			const projectSkills = opts.projectRoot
@@ -270,8 +279,11 @@ export function createWorkerExecutor(
 				lines.push(`\n# Constraints\n${contract.inputs.constraints.map((c) => `- ${c}`).join("\n")}`);
 			}
 			lines.push(
-				"\nComplete the task. End with a <task_report> block and, if you learned something durable, a <memory_candidate> block.",
+				"\nComplete the task. Your final response must consist only of the required XML blocks from the system prompt, with no prose before or after them.",
 			);
+			if (repair) {
+				lines.push(`\n# Schema Repair\n${repair.feedback}`);
+			}
 			const userPrompt = lines.join("\n");
 
 			if (workerLoop) {
@@ -286,12 +298,16 @@ export function createWorkerExecutor(
 						: undefined,
 				});
 				opts.onTaskUsage?.(contract, result.usage);
-				return result.text;
+				return {
+					text: result.text,
+					hitStepLimit: result.hitStepLimit,
+					...(repair && { attempt: repair.attempt }),
+				};
 			}
 
 			// Legacy single-shot path — no tool host wired. Worker still
 			// produces a <task_report> string; just no real tool execution.
-			return collectText(
+			const text = await collectText(
 				client,
 				[
 					{ role: "system", content: systemPrompt },
@@ -299,6 +315,11 @@ export function createWorkerExecutor(
 				],
 				max,
 			);
+			return {
+				text,
+				hitStepLimit: false,
+				...(repair && { attempt: repair.attempt }),
+			};
 		},
 	};
 }

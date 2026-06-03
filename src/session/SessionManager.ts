@@ -108,10 +108,23 @@ export class SessionManager {
 		}
 	}
 
+	async loadLastSession(): Promise<SessionState | null> {
+		try {
+			// NEW: resume the most recently-persisted engine session from the `last` pointer.
+			const lastId = (await fsPromises.readFile(path.join(this.basePath, "last"), "utf-8")).trim();
+			if (!lastId) return null;
+			return this.loadSession(lastId);
+		} catch {
+			return null;
+		}
+	}
+
 	async saveSession(session: SessionState): Promise<void> {
 		session.updatedAt = Date.now();
 		const filePath = path.join(this.basePath, `${session.id}.json`);
 		await fsPromises.writeFile(filePath, JSON.stringify(session, null, 2));
+		// NEW: keep `last` aligned with any session we explicitly activate/save.
+		await fsPromises.writeFile(path.join(this.basePath, "last"), session.id, "utf-8");
 	}
 
 	async addMessage(message: ChatMessage): Promise<void> {

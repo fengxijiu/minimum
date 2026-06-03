@@ -293,6 +293,15 @@ export class MiMoLoop {
 		this.lastDiagByFile.clear();
 		this.lastContentByFile.clear();
 
+		// P3: 首轮完成前预创建 session，确保即使提前退出也有 session 文件
+		this.config.sessionPersister?.persistFromLoop([], {
+			totalCost: 0,
+			totalCostCurrency: this.state.totalCostCurrency,
+			totalTokens: 0,
+			toolCalls: 0,
+			steps: 0,
+		}).catch(() => {});
+
 		try {
 			// 1. 添加用户消息
 			this.messages.push({ role: "user", content: userInput });

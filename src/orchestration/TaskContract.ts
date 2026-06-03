@@ -43,7 +43,7 @@ export interface TaskContract {
 	/** Structured W0.5 launch gate evidence required before scheduling. */
 	launchRequirements?: LaunchRequirement[];
 
-	/** Output schema expected from the worker; mirrors persona.outputSchema. */
+	/** Output schema expected from the worker; worker personas use task_report. */
 	outputSchema: OutputSchema;
 
 	/**

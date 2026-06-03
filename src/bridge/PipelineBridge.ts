@@ -9,6 +9,7 @@ import {
 	runPipeline,
 	type CompletionClient,
 	type PipelineEvent,
+	type PipelineResult,
 	type TaskResult,
 	type WaveEvent,
 } from "../orchestration/index.js";
@@ -47,6 +48,7 @@ export interface PipelineBridgeOptions {
 
 export class PipelineBridge {
 	private pendingApprovals = new Map<string, (response: ApprovalResponse) => void>();
+	private history: import("../types/common.js").ChatMessage[] = [];
 
 	constructor(
 		private client: CompletionClient,
@@ -83,7 +85,17 @@ export class PipelineBridge {
 		}
 	}
 
+	getHistory(): import("../types/common.js").ChatMessage[] {
+		return this.history.map((message) => ({ ...message }));
+	}
+
+	loadHistory(messages: import("../types/common.js").ChatMessage[]): void {
+		// NEW: restore only the top-level orchestrate conversation we emit back to the TUI.
+		this.history = messages.map((message) => ({ ...message }));
+	}
+
 	async *send(userInput: string): AsyncGenerator<UiEvent> {
+		const effectiveInput = this.buildUserRequest(userInput);
 		const queue: UiEvent[] = [];
 		let notify: (() => void) | undefined;
 		const wake = () => {
@@ -245,7 +257,7 @@ export class PipelineBridge {
 		});
 
 		let done = false;
-		const finished = runPipeline(userInput, {
+		const finished = runPipeline(effectiveInput, {
 			projectRoot: this.opts.projectRoot,
 			planner,
 			executor,
@@ -253,9 +265,14 @@ export class PipelineBridge {
 			choiceGate: this.opts.choiceGate,
 		})
 			.then((r) => {
+				this.recordTurn(userInput, summarizePipelineResult(r));
 				queue.push({ kind: "done", success: r.ok });
 			})
 			.catch((err: unknown) => {
+				this.recordTurn(
+					userInput,
+					`Pipeline failed: ${err instanceof Error ? err.message : String(err)}`,
+				);
 				queue.push({ kind: "error", text: err instanceof Error ? err.message : String(err) });
 				queue.push({ kind: "done", success: false });
 			})
@@ -281,6 +298,30 @@ export class PipelineBridge {
 			// hanging and resolve it against the next run.
 			this.pendingApprovals.clear();
 		}
+	}
+
+	private buildUserRequest(userInput: string): string {
+		if (this.history.length === 0) return userInput;
+		const recent = this.history.slice(-8);
+		return [
+			"Previous orchestrate conversation context:",
+			renderPipelineHistory(recent),
+			"",
+			"Current user request:",
+			userInput,
+			"",
+			"Preserve relevant context from the prior conversation only when it helps with the current request.",
+		].join("\n");
+	}
+
+	private recordTurn(userInput: string, assistantSummary: string): void {
+		const next: import("../types/common.js").ChatMessage[] = [
+			...this.history,
+			{ role: "user", content: userInput },
+			{ role: "assistant", content: assistantSummary },
+		];
+		// NEW: cap stored orchestrate history so resumed prompts stay bounded.
+		this.history = next.slice(-12).map((message) => ({ ...message }));
 	}
 }
 
@@ -472,6 +513,8 @@ function formatTaskError(result: TaskResult): string {
 	} else if (result.errors.length === 0) {
 		lines.push("error: no detailed output captured — check the worker log or task_report artifact");
 	}
+	if (result.schemaRepairAttempted) lines.push("schema_repair_attempted: true");
+	if (result.hitStepLimit !== undefined) lines.push(`hit_step_limit: ${result.hitStepLimit}`);
 	if (result.stagingError) lines.push(`staging_error: ${result.stagingError}`);
 	if (Number.isFinite(result.durationMs)) lines.push(`duration_ms: ${result.durationMs}`);
 	return lines.join("\n");
@@ -482,4 +525,25 @@ function summarizeTaskResult(result: TaskResult): string {
 	if (result.errors.length > 0) return result.errors.join("; ");
 	if (report) return report.slice(0, 240);
 	return "no detailed task report returned";
+}
+
+function renderPipelineHistory(messages: import("../types/common.js").ChatMessage[]): string {
+	return messages
+		.map((message) => `${message.role.toUpperCase()}: ${String(message.content ?? "").trim()}`)
+		.join("\n");
+}
+
+function summarizePipelineResult(result: PipelineResult): string {
+	const okCount = result.results.filter((item) => item.status === "ok").length;
+	const blockedCount = result.results.filter((item) => item.status === "blocked").length;
+	const errorCount = result.results.length - okCount - blockedCount;
+	const summary = [
+		result.ok ? "Pipeline completed." : "Pipeline failed.",
+		`Tasks: ${result.results.length} total, ${okCount} ok, ${blockedCount} blocked, ${errorCount} error.`,
+		result.statusReason ? `Reason: ${result.statusReason}.` : "",
+		result.error ? `Error: ${result.error}` : "",
+	]
+		.filter(Boolean)
+		.join(" ");
+	return summary.length <= 400 ? summary : `${summary.slice(0, 397)}...`;
 }
