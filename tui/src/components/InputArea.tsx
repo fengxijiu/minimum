@@ -78,6 +78,8 @@ export interface InputAreaProps {
   mode: Mode;
   verbose: boolean;
   hasEdits: boolean;
+  /** Whether an LLM turn is currently in flight. Ctrl+C ×2 only cancels if true. */
+  turnInProgress: boolean;
   onSubmit: (text: string) => void;
   onPermAllow: () => void;
   onPermAlwaysAllow: () => void;
@@ -85,14 +87,20 @@ export interface InputAreaProps {
   onApplyFix: () => void;
   onChoicePick: (optionId: string) => void;
   onChoiceCancel: () => void;
+  /** Abort the current turn — invoked by the second Ctrl+C within DOUBLE_CTRLC_MS. */
+  onCancelTurn: () => void;
   dispatch: Dispatch;
   cmdCtx: CommandContext;
 }
 
+/** Window (ms) within which a second Ctrl+C is treated as a confirmation. */
+const DOUBLE_CTRLC_MS = 2000;
+
 export const InputArea = React.memo(function InputArea({
   files, helpOpen, pending, choiceRequest, hasMessages, mode, verbose, hasEdits,
+  turnInProgress,
   onSubmit, onPermAllow, onPermAlwaysAllow, onPermDeny, onApplyFix,
-  onChoicePick, onChoiceCancel,
+  onChoicePick, onChoiceCancel, onCancelTurn,
   dispatch, cmdCtx,
 }: InputAreaProps) {
   const { exit } = useApp();
@@ -117,6 +125,10 @@ export const InputArea = React.memo(function InputArea({
   const promptHistoryRef = useRef<string[]>([]);
   const historyIdxRef = useRef(-1);
   const inputRef = useRef('');
+  // Timestamp of the last Ctrl+C press; a second press within DOUBLE_CTRLC_MS
+  // is treated as confirmation to abort the in-flight turn. Process exit on
+  // Ctrl+C is blocked at the Ink layer (exitOnCtrlC: false in cli.tsx).
+  const lastCtrlCRef = useRef(0);
 
   const setInput = useCallback((v: string) => {
     inputRef.current = v;
@@ -222,6 +234,29 @@ export const InputArea = React.memo(function InputArea({
   }, [helpOpen, pending, permSel, choiceSel, choiceRequest, overlay, cmdItems, clampedSel, onPermAllow, onPermAlwaysAllow, onPermDeny, onApplyFix, onChoicePick, completeFile, setInput, onSubmit]);
 
   useInput((input, key) => {
+    // ── Ctrl+C: blocks process exit; double-press cancels in-flight turn ──
+    // First press: warn via toast; second press within DOUBLE_CTRLC_MS:
+    //   - if a turn is running → abort it
+    //   - otherwise → reset the lastCtrlC clock (no-op exit; user must use
+    //     Ctrl+D or /quit to leave)
+    if (key.ctrl && input === 'c') {
+      const now = Date.now();
+      const isSecondPress = now - lastCtrlCRef.current < DOUBLE_CTRLC_MS;
+      if (isSecondPress) {
+        lastCtrlCRef.current = 0;
+        if (turnInProgress) {
+          onCancelTurn();
+        }
+        return;
+      }
+      lastCtrlCRef.current = now;
+      const hint = turnInProgress
+        ? 'Press Ctrl+C again to stop the current task'
+        : 'Ctrl+C does not exit — use Ctrl+D or /quit';
+      dispatch({ type: 'toast.show', text: hint, tone: 'warn', ttlMs: DOUBLE_CTRLC_MS });
+      return;
+    }
+
     if (helpOpen) {
       if (key.escape || key.return) dispatch({ type: 'help.toggle' });
       return;

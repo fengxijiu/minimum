@@ -14,7 +14,7 @@ import {
 } from './commands.js';
 import { LearnCommandService } from '../../dist/learn/LearnCommandService.js';
 import { loadLearnedSkillsSync } from '../../dist/skills/LearnedSkillLoader.js';
-import { mockRunner, uiEventToMessages, summarizeTool, summarizeToolResult, describePermissionArgs, type Runner, type EngineInfo, type UiPlanStatus, type TuiConfirmationGate } from './engine.js';
+import { mockRunner, uiEventToMessages, summarizeTool, summarizeToolResult, describePermissionArgs, type Runner, type EngineInfo, type UiEvent, type UiPlanStatus, type TuiConfirmationGate } from './engine.js';
 import { scanFiles, readBranch, touch } from './files.js';
 import {
   saveTuiSession, loadTuiSessionById, listTuiSessions, formatSessionList,
@@ -55,6 +55,21 @@ const DEFAULT_ENGINE_INFO: EngineInfo = { mode: 'mock', reason: 'not-built' };
 // ── Loop-guard tunables ───────────────────────────────────────────────
 /** Abort turn when the same tool+args fires this many times in a row. */
 const STORM_THRESHOLD = 3;
+/**
+ * Tools exempt from storm detection. These are status/polling calls the model
+ * legitimately re-issues with identical args during a single turn:
+ *   - todo_write / todo_read: progress-tracking state refreshes
+ *   - wait_for_job: blocking poll on a background job's completion
+ *   - list_jobs / job_output: incremental status/output reads on the same job id
+ * Duplicates here are normal flow, not a stuck-loop signal.
+ */
+const STORM_EXEMPT_TOOLS = new Set([
+  'todo_write',
+  'todo_read',
+  'wait_for_job',
+  'list_jobs',
+  'job_output',
+]);
 /** Cap on accumulated reasoning text (~2 k tokens) to keep state bounded. */
 const REASONING_CHAR_CAP = 8_000;
 /** Context-fill ratios at which a warning toast fires (each fires once per session). */
@@ -188,6 +203,10 @@ export function App({
   const turnUsageRef = useRef<{ totalTokens: number; toolCalls: number; steps: number; totalCostUsd: number } | null>(null);
   // Tracks cumulative cost at the start of the current turn to compute per-turn delta.
   const prevCostRef = useRef(0);
+
+  // Abort controller for the in-flight turn — set on turn start, cleared on end.
+  // Double Ctrl+C calls .abort() so the for-await loop in runTurn bails out.
+  const turnAbortRef = useRef<AbortController | null>(null);
 
   // ── Streaming chunk buffer (adaptive ~120ms coalescing flush) ────────
   // Buffers both answer text and reasoning text, draining them together on an
@@ -520,20 +539,42 @@ export function App({
       turnToolCountRef.current = 0;
       turnUsageRef.current = null;
       stormMapRef.current.clear();
+      const ac = new AbortController();
+      turnAbortRef.current = ac;
       dispatch({ type: 'turn.start' });
       if (isPipeline) dispatch({ type: 'pipeline.start' });
       try {
         // ── Auto-retry wrapper (transient network / rate-limit errors) ──────
         let lastErr: unknown = null;
         for (let attempt = 0; attempt < 3; attempt++) {
+          if (ac.signal.aborted) break;
           if (attempt > 0) {
             const delayMs = 500 * Math.pow(2, attempt - 1);
             dispatch({ type: 'system.push', text: `Network error — retrying in ${(delayMs / 1000).toFixed(1)}s (attempt ${attempt + 1}/3)…`, tone: 'warn' });
             await new Promise<void>(r => setTimeout(r, delayMs));
             stormMapRef.current.clear();
+            if (ac.signal.aborted) break;
           }
           try {
-        for await (const ev of activeRunner.send(trimmed)) {
+        const iter = activeRunner.send(trimmed)[Symbol.asyncIterator]();
+        // Manual iteration so we can race the next event against the abort
+        // signal — double-Ctrl+C flips ac.abort() and we break out of the loop
+        // even if the underlying stream is still mid-read.
+        while (true) {
+          if (ac.signal.aborted) break;
+          const abortPromise = new Promise<{ aborted: true }>(resolve => {
+            if (ac.signal.aborted) { resolve({ aborted: true }); return; }
+            ac.signal.addEventListener('abort', () => resolve({ aborted: true }), { once: true });
+          });
+          type Next = { aborted: false; result: IteratorResult<UiEvent> };
+          const raced = await Promise.race<Next | { aborted: true }>([
+            iter.next().then((r): Next => ({ aborted: false, result: r as IteratorResult<UiEvent> })),
+            abortPromise,
+          ]);
+          if (raced.aborted) break;
+          const result = raced.result;
+          if (result.done) break;
+          const ev = result.value;
           if (ev.kind === 'pipeline') {
             if (W_PHASES.has(ev.phase)) {
               dispatch({ type: 'pipeline.phase', phase: ev.phase, label: ev.label, detail: ev.detail });
@@ -565,15 +606,20 @@ export function App({
             }
             turnToolCountRef.current += 1;
             // ── Storm detection ────────────────────────────────────────────
-            const stormKey = `${ev.name}\x00${ev.args.slice(0, 120)}`;
-            const stormCount = (stormMapRef.current.get(stormKey) ?? 0) + 1;
-            stormMapRef.current.set(stormKey, stormCount);
-            if (stormCount >= STORM_THRESHOLD) {
-              dispatch({ type: 'error.push', title: `Loop detected — turn aborted`, lines: [
-                `${ev.name} called ${stormCount}× with identical args.`,
-                'The model may be stuck in a loop. Try rephrasing your request.',
-              ], hint: '/clear to reset · u to undo last edit' });
-              break;
+            // Status-update tools (todo_write/todo_read) are exempt — the model
+            // legitimately re-emits them per progress tick, and duplicates here
+            // don't mean it's stuck.
+            if (!STORM_EXEMPT_TOOLS.has(ev.name)) {
+              const stormKey = `${ev.name}\x00${ev.args.slice(0, 120)}`;
+              const stormCount = (stormMapRef.current.get(stormKey) ?? 0) + 1;
+              stormMapRef.current.set(stormKey, stormCount);
+              if (stormCount >= STORM_THRESHOLD) {
+                dispatch({ type: 'error.push', title: `Loop detected — turn aborted`, lines: [
+                  `${ev.name} called ${stormCount}× with identical args.`,
+                  'The model may be stuck in a loop. Try rephrasing your request.',
+                ], hint: '/clear to reset · u to undo last edit' });
+                break;
+              }
             }
             const toolId = tid();
             const displayArgs = summarizeTool(ev.name, ev.args);
@@ -694,9 +740,14 @@ export function App({
       } catch (err: any) {
         dispatch({ type: 'error.push', title: 'runner error', lines: [String(err?.message ?? err)] });
       } finally {
+        const wasAborted = ac.signal.aborted;
+        if (turnAbortRef.current === ac) turnAbortRef.current = null;
         stopChunkFlusher();
         if (isPipeline) dispatch({ type: 'pipeline.end' });
-        dispatch({ type: 'turn.end', success: true });
+        if (wasAborted) {
+          dispatch({ type: 'system.push', text: 'Task cancelled (Ctrl+C ×2).', tone: 'warn' });
+        }
+        dispatch({ type: 'turn.end', success: !wasAborted });
         // End-of-turn telemetry summary, rendered as an informative divider.
         const u = turnUsageRef.current;
         const tools = turnToolCountRef.current;
@@ -714,6 +765,11 @@ export function App({
       }
     })();
   }, [dispatch, startChunkFlusher, scheduleChunkFlush, stopChunkFlusher, W_PHASES]);
+
+  const cancelCurrentTurn = useCallback(() => {
+    const ac = turnAbortRef.current;
+    if (ac && !ac.signal.aborted) ac.abort();
+  }, []);
 
   const handleSubmit = useCallback((text: string) => {
     const st = stateRef.current;
@@ -936,6 +992,7 @@ export function App({
         mode={sMode}
         verbose={sVerbose}
         hasEdits={sHasEdits}
+        turnInProgress={sTurnInProgress}
         onSubmit={handleSubmit}
         onPermAllow={allowPermission}
         onPermAlwaysAllow={allowPermissionAlways}
@@ -943,6 +1000,7 @@ export function App({
         onApplyFix={applyFix}
         onChoicePick={pickChoice}
         onChoiceCancel={cancelChoice}
+        onCancelTurn={cancelCurrentTurn}
         dispatch={dispatch}
         cmdCtx={cmdCtx}
       />

@@ -73,7 +73,12 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
-const { waitUntilExit } = render(<App runner={runner} pipelineRunner={pipelineRunner} engineInfo={info} choiceGate={choiceGate} />);
+// exitOnCtrlC: false — Ctrl+C is repurposed as "stop current task" (press twice).
+// Without this, Ink's default handler would kill the process on the first press.
+const { waitUntilExit } = render(
+  <App runner={runner} pipelineRunner={pipelineRunner} engineInfo={info} choiceGate={choiceGate} />,
+  { exitOnCtrlC: false },
+);
 await waitUntilExit();
 flushSync();
 sessionFlusher?.flushSync();
