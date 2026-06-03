@@ -77,18 +77,22 @@ export function createPlannerBridge(
 	const max = opts.maxTokens ?? master.maxTokens;
 
 	return {
-		compile: async (userRequest, memoryPrefix) =>
-			collectText(
-				client,
-				[
-					await sys(userRequest),
-					{
-						role: "user",
-						content: `${memoryPrefix}\n\n# User Request\n${userRequest}\n\nCompile the coarse task DAG now. Output a single <task_dag> block.`,
-					},
-				],
-				max,
-			),
+		compile: async (userRequest, memoryPrefix, feedback) => {
+			const messages: ChatMessage[] = [
+				await sys(userRequest),
+				{
+					role: "user",
+					content: `${memoryPrefix}\n\n# User Request\n${userRequest}\n\nCompile the coarse task DAG now. Output a single <task_dag> block.`,
+				},
+			];
+			if (feedback) {
+				messages.push({
+					role: "user",
+					content: `# Compiler Feedback (previous attempt failed)\n${feedback}\n\nRe-emit the ENTIRE <task_dag> block using only the allowed persona ids.`,
+				});
+			}
+			return collectText(client, messages, max);
+		},
 		refine: async (dag: CoarseDag, perception: TaskResult[], memoryPrefix: string) =>
 			collectText(
 				client,

@@ -70,8 +70,13 @@ export type PipelineEvent =
 
 /** Planner/checker LLM touchpoints used by the pipeline. */
 export interface PlannerBridge {
-	/** W0: returns master output containing a <task_dag> block. */
-	compile(userRequest: string, memoryPrefix: string): Promise<string>;
+	/**
+	 * W0: returns master output containing a <task_dag> block.
+	 * `feedback` is optional retry context — when present, the implementation
+	 * MUST surface it to the LLM as an additional user message so the model
+	 * can self-correct (e.g. compiler validation error from a prior attempt).
+	 */
+	compile(userRequest: string, memoryPrefix: string, feedback?: string): Promise<string>;
 	/** W0.5: returns master output containing a <refine> block. */
 	refine(dag: CoarseDag, perception: TaskResult[], memoryPrefix: string): Promise<string>;
 	/** W3.5: returns a mission checker Markdown report. */
