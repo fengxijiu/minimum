@@ -711,6 +711,7 @@ describe("mapLoopEvent", () => {
 		const e: LoopEvent = {
 			type: "usage",
 			usage: {
+				contextTokens: 600,
 				totalTokens: 1500,
 				totalPromptTokens: 1000,
 				totalCompletionTokens: 500,
@@ -723,6 +724,7 @@ describe("mapLoopEvent", () => {
 		};
 		expect(mapLoopEvent(e)).toEqual({
 			kind: "usage",
+			contextTokens: 600,
 			totalTokens: 1500,
 			promptTokens: 1000,
 			completionTokens: 500,
@@ -738,12 +740,41 @@ describe("mapLoopEvent", () => {
 		const e: LoopEvent = { type: "usage", usage: null };
 		expect(mapLoopEvent(e)).toEqual({
 			kind: "usage",
+			contextTokens: 0,
 			totalTokens: 0,
 			promptTokens: 0,
 			completionTokens: 0,
 			cachedTokens: 0,
 			toolCalls: 0,
 			steps: 0,
+			totalCost: 0,
+			currency: "CNY",
+		});
+	});
+
+	it("falls back to prompt tokens when contextTokens is absent", () => {
+		const e: LoopEvent = {
+			type: "usage",
+			usage: {
+				totalTokens: 2048,
+				totalPromptTokens: 512,
+				totalCompletionTokens: 128,
+				totalCachedTokens: 64,
+				toolCalls: 1,
+				steps: 2,
+				totalCost: 0,
+				totalCostCurrency: "CNY",
+			},
+		};
+		expect(mapLoopEvent(e)).toEqual({
+			kind: "usage",
+			contextTokens: 512,
+			totalTokens: 2048,
+			promptTokens: 512,
+			completionTokens: 128,
+			cachedTokens: 64,
+			toolCalls: 1,
+			steps: 2,
 			totalCost: 0,
 			currency: "CNY",
 		});

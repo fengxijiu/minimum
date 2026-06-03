@@ -30,6 +30,7 @@ export type UiEvent =
 	| { kind: "error"; text: string }
 	| {
 			kind: "usage";
+			contextTokens: number;
 			totalTokens: number;
 			/** Sum of prompt_tokens across the turn (includes cached portion). */
 			promptTokens: number;
@@ -168,8 +169,12 @@ export function mapLoopEvent(e: LoopEvent): UiEvent | null {
 		case "steer_accepted":
 			return { kind: "notice", text: `steer: ${e.content}`, tone: "info" };
 		case "usage":
+			// NEW: `contextTokens` is the live context-window occupancy; fall back
+			// to prompt totals for compatibility with older loop payloads.
 			return {
 				kind: "usage",
+				contextTokens:
+					e.usage?.contextTokens ?? e.usage?.totalPromptTokens ?? 0,
 				totalTokens: e.usage?.totalTokens ?? 0,
 				promptTokens: e.usage?.totalPromptTokens ?? 0,
 				completionTokens: e.usage?.totalCompletionTokens ?? 0,

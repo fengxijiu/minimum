@@ -184,6 +184,7 @@ describe("P0-1 EngineBridge", () => {
 			mapLoopEvent({
 				type: "usage",
 				usage: {
+					contextTokens: 8,
 					totalTokens: 12,
 					totalPromptTokens: 8,
 					totalCompletionTokens: 4,
@@ -196,6 +197,7 @@ describe("P0-1 EngineBridge", () => {
 			} as any),
 		).toEqual({
 			kind: "usage",
+			contextTokens: 8,
 			totalTokens: 12,
 			promptTokens: 8,
 			completionTokens: 4,

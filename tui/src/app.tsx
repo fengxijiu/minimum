@@ -17,6 +17,7 @@ import { LearnCommandService } from '../../dist/learn/LearnCommandService.js';
 import { loadLearnedSkillsSync } from '../../dist/skills/LearnedSkillLoader.js';
 import { mockRunner, uiEventToMessages, summarizeTool, summarizeToolResult, describePermissionArgs, buildErrorLines, type Runner, type EngineInfo, type UiEvent, type UiPlanStatus, type TuiConfirmationGate } from './engine.js';
 import { scanFiles, readBranch, touch } from './files.js';
+import { getContextUsageK } from './context-usage.js';
 import {
   saveTuiSession, loadTuiSessionById, listTuiSessions, formatSessionList,
   type TuiSession,
@@ -738,8 +739,9 @@ export function App({
               totalCost: ev.totalCost,
               currency: ev.currency,
             };
-            // ctx.used is shown in k-tokens to match ctx.max (also k-tokens).
-            dispatch({ type: 'ctx.update', used: Number((ev.totalTokens / 1000).toFixed(1)) });
+            // NEW: drive the Context meter from live context occupancy rather
+            // than cumulative session token spend.
+            dispatch({ type: 'ctx.update', used: getContextUsageK(ev) });
             // Always thread token splits — they're cumulative session totals
             // so the meter/cacheHit reflect the latest snapshot even on a
             // cost-free turn (full cache hit).

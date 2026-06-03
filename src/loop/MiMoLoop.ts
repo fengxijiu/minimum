@@ -934,6 +934,8 @@ export class MiMoLoop {
 		yield {
 			type: "usage",
 			usage: {
+				// NEW: report live context occupancy separately from cumulative usage totals.
+				contextTokens: countMessagesTokens(this.messages),
 				totalTokens: this.state.totalTokens,
 				totalPromptTokens: this.state.totalPromptTokens,
 				totalCompletionTokens: this.state.totalCompletionTokens,

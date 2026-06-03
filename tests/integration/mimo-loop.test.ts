@@ -91,6 +91,8 @@ describe("MiMoLoop Integration", () => {
 		const usageEvent = events.find((e) => e.type === "usage");
 		expect(usageEvent).toBeDefined();
 		expect(usageEvent.usage).toBeDefined();
+		expect(usageEvent.usage.contextTokens).toBeTypeOf("number");
+		expect(usageEvent.usage.contextTokens).toBeGreaterThan(0);
 		expect(usageEvent.usage.totalTokens).toBeDefined();
 	});
 

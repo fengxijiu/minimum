@@ -37,6 +37,7 @@ export type UiEvent =
   | { kind: 'error'; text: string }
   | {
       kind: 'usage';
+      contextTokens: number;
       totalTokens: number;
       promptTokens: number;
       completionTokens: number;
