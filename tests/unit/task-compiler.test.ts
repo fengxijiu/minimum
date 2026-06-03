@@ -98,6 +98,93 @@ describe("compileCoarse", () => {
 			expect(r.dag.phases[0]!.tasks[0]!.needsRefine).toBe(true);
 		}
 	});
+
+	it("normalizes case for persona", () => {
+		const dag = `
+<task_dag>
+{ "epic": "e", "phases": [ { "id": "P0", "name": "p", "tasks": [
+  { "id": "T0-1", "persona": "Vision", "objective": "test",
+    "parallelGroup": "g", "dependsOn": [], "needsRefine": false } ] } ] }
+</task_dag>`;
+		const r = compileCoarse(dag);
+		expect(r.ok).toBe(true);
+		if (r.ok) expect(r.dag.phases[0]!.tasks[0]!.personaId).toBe("vision");
+	});
+
+	it("normalizes dashes to underscores for persona", () => {
+		const dag = `
+<task_dag>
+{ "epic": "e", "phases": [ { "id": "P0", "name": "p", "tasks": [
+  { "id": "T0-1", "persona": "code-executor", "objective": "test",
+    "parallelGroup": "g", "dependsOn": [], "needsRefine": false } ] } ] }
+</task_dag>`;
+		const r = compileCoarse(dag);
+		expect(r.ok).toBe(true);
+		if (r.ok) expect(r.dag.phases[0]!.tasks[0]!.personaId).toBe("code_executor");
+	});
+
+	it("normalizes combined case + dash + whitespace", () => {
+		const dag = `
+<task_dag>
+{ "epic": "e", "phases": [ { "id": "P0", "name": "p", "tasks": [
+  { "id": "T0-1", "persona": "  Code-Executor  ", "objective": "test",
+    "parallelGroup": "g", "dependsOn": [], "needsRefine": false } ] } ] }
+</task_dag>`;
+		const r = compileCoarse(dag);
+		expect(r.ok).toBe(true);
+		if (r.ok) expect(r.dag.phases[0]!.tasks[0]!.personaId).toBe("code_executor");
+	});
+
+	it("rejects synonyms with original value in error", () => {
+		const dag = `
+<task_dag>
+{ "epic": "e", "phases": [ { "id": "P0", "name": "p", "tasks": [
+  { "id": "T0-1", "persona": "developer", "objective": "test",
+    "parallelGroup": "g", "dependsOn": [], "needsRefine": false } ] } ] }
+</task_dag>`;
+		const r = compileCoarse(dag);
+		expect(r.ok).toBe(false);
+		if (!r.ok) {
+			expect(r.error).toMatch(/persona must be one of/);
+			expect(r.error).toMatch(/got "developer"/);
+		}
+	});
+
+	it("rejects mission_checker (W3.5 inline role)", () => {
+		const dag = `
+<task_dag>
+{ "epic": "e", "phases": [ { "id": "P0", "name": "p", "tasks": [
+  { "id": "T0-1", "persona": "mission_checker", "objective": "test",
+    "parallelGroup": "g", "dependsOn": [], "needsRefine": false } ] } ] }
+</task_dag>`;
+		const r = compileCoarse(dag);
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.error).toMatch(/got "mission_checker"/);
+	});
+
+	it("rejects non-string persona with informative error", () => {
+		const dag = `
+<task_dag>
+{ "epic": "e", "phases": [ { "id": "P0", "name": "p", "tasks": [
+  { "id": "T0-1", "persona": 123, "objective": "test",
+    "parallelGroup": "g", "dependsOn": [], "needsRefine": false } ] } ] }
+</task_dag>`;
+		const r = compileCoarse(dag);
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.error).toMatch(/persona must be one of/);
+	});
+
+	it("accepts role alias field with normalization", () => {
+		const dag = `
+<task_dag>
+{ "epic": "e", "phases": [ { "id": "P0", "name": "p", "tasks": [
+  { "id": "T0-1", "role": "Repo-Scout", "objective": "test",
+    "parallelGroup": "g", "dependsOn": [], "needsRefine": false } ] } ] }
+</task_dag>`;
+		const r = compileCoarse(dag);
+		expect(r.ok).toBe(true);
+		if (r.ok) expect(r.dag.phases[0]!.tasks[0]!.personaId).toBe("repo_scout");
+	});
 });
 
 describe("classifyTaskType", () => {

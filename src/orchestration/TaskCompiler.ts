@@ -88,6 +88,12 @@ function validatePhase(
 	return { ok: true, phase: { id: raw.id, name: raw.name, tasks } };
 }
 
+/** Normalize surface variations the LLM commonly emits. Strict semantics
+ * only: accept case + dash differences but reject synonyms. */
+function normalizePersona(s: string): string {
+	return s.trim().toLowerCase().replace(/-/g, "_");
+}
+
 function validateTask(
 	raw: unknown,
 	prefix: string,
@@ -96,7 +102,9 @@ function validateTask(
 	| { ok: false; error: string } {
 	if (!isObj(raw)) return { ok: false, error: `${prefix} must be an object` };
 	const id = raw.id;
-	const persona = raw.persona ?? raw.role;
+	const rawPersona = raw.persona ?? raw.role;
+	const persona =
+		typeof rawPersona === "string" ? normalizePersona(rawPersona) : undefined;
 	const objective = raw.objective;
 	const parallelGroup = raw.parallelGroup ?? raw.parallel_group;
 	const dependsOn = raw.dependsOn ?? raw.depends_on ?? [];
@@ -105,8 +113,11 @@ function validateTask(
 
 	if (typeof id !== "string" || !id)
 		return { ok: false, error: `${prefix}.id required` };
-	if (typeof persona !== "string" || !VALID_PERSONA_IDS.has(persona as PersonaId))
-		return { ok: false, error: `${prefix}.persona must be one of ${[...VALID_PERSONA_IDS].join(",")}` };
+	if (!persona || !VALID_PERSONA_IDS.has(persona as PersonaId))
+		return {
+			ok: false,
+			error: `${prefix}.persona must be one of ${[...VALID_PERSONA_IDS].join(",")} (got ${JSON.stringify(rawPersona)})`,
+		};
 	if (typeof objective !== "string" || objective.trim().length < 4)
 		return { ok: false, error: `${prefix}.objective must be a non-empty string` };
 	if (typeof parallelGroup !== "string" || !parallelGroup)
