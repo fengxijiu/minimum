@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	runPipeline,
 	type PipelineEvent,
@@ -12,6 +12,19 @@ import type { TaskResult, WorkerExecutor } from "../../src/orchestration/index.j
 import { listCandidates } from "../../src/memory/governance/index.js";
 
 const OK = `<task_report><status>ok</status>done</task_report>`;
+
+async function runMinimalPipeline(
+	planner: PlannerBridge,
+	onEvent: (e: PipelineEvent) => void,
+) {
+	const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mimo-w0-"));
+	const executor: WorkerExecutor = {
+		async run() {
+			return OK;
+		},
+	};
+	return runPipeline("test request", { projectRoot, planner, executor, onEvent });
+}
 
 function okExecutor(): WorkerExecutor {
 	return { run: async () => OK };
@@ -359,5 +372,56 @@ Reason:
 		expect(result.ok).toBe(false);
 		expect(result.error).toMatch(/another loop-back/);
 		expect(events.some((e) => e.type === "pipeline_error" && (e as any).phase === "W3.5")).toBe(true);
+	});
+});
+
+describe("MiMoPipeline W0 compile retry", () => {
+	const validDagText = `<task_dag>
+{ "epic": "e", "phases": [ { "id": "P0", "name": "p", "tasks": [
+  { "id": "T0-1", "persona": "vision", "objective": "scan the repo",
+    "parallelGroup": "g", "dependsOn": [], "needsRefine": false } ] } ] }
+</task_dag>`;
+
+	const invalidDagText = `<task_dag>
+{ "epic": "e", "phases": [ { "id": "P0", "name": "p", "tasks": [
+  { "id": "T0-1", "persona": "developer", "objective": "scan the repo",
+    "parallelGroup": "g", "dependsOn": [], "needsRefine": false } ] } ] }
+</task_dag>`;
+
+	function mkPlanner(outputs: string[]): PlannerBridge {
+		const compile = vi.fn(async (_r: string, _m: string, _f?: string) => outputs.shift() ?? "");
+		return {
+			compile,
+			refine: vi.fn(async () => `<refine>{"tasks":[]}</refine>`),
+			checkMission: vi.fn(async () => "Decision: APPROVED_TO_W4"),
+			finalize: vi.fn(async () => `<finalize>{"memory_decisions":[]}</finalize>`),
+		};
+	}
+
+	it("retries once and succeeds when planner self-corrects", async () => {
+		const events: PipelineEvent[] = [];
+		const planner = mkPlanner([invalidDagText, validDagText]);
+		const result = await runMinimalPipeline(planner, (e) => events.push(e));
+		const compileCalls = (planner.compile as ReturnType<typeof vi.fn>).mock.calls;
+		expect(compileCalls.length).toBe(2);
+		expect(compileCalls[1]![2]).toMatch(/persona must be one of/);
+		expect(events.some((e) => e.type === "compile_retry")).toBe(true);
+		expect(events.some((e) => e.type === "pipeline_error")).toBe(false);
+		expect(result.ok).toBe(true);
+	});
+
+	it("fails after two compile errors with combined error message", async () => {
+		const events: PipelineEvent[] = [];
+		const planner = mkPlanner([invalidDagText, invalidDagText]);
+		const result = await runMinimalPipeline(planner, (e) => events.push(e));
+		expect((planner.compile as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2);
+		const errEvent = events.find((e) => e.type === "pipeline_error");
+		expect(errEvent).toBeDefined();
+		if (errEvent && errEvent.type === "pipeline_error") {
+			expect(errEvent.error).toMatch(/twice/);
+			expect(errEvent.error).toMatch(/first:/);
+			expect(errEvent.error).toMatch(/retry:/);
+		}
+		expect(result.ok).toBe(false);
 	});
 });

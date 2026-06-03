@@ -62,6 +62,7 @@ export type PipelineEvent =
 	| { type: "phase_start"; phase: PipelinePhase; label: string }
 	| { type: "memory_loaded"; includedKeys: string[]; approxTokens: number; truncated: boolean }
 	| { type: "dag_compiled"; epicId: string; taskCount: number }
+	| { type: "compile_retry"; phase: "W0"; attempt: 1; error: string }
 	| { type: "wave"; event: WaveEvent }
 	| { type: "refine_done"; contractCount: number; errorCount: number }
 	| { type: "finalize_done"; report: FinalizeReport }
@@ -129,15 +130,27 @@ export async function runPipeline(
 	});
 
 	let compiledText: string;
+	let compiled: ReturnType<typeof compileCoarse>;
 	try {
 		compiledText = await opts.planner.compile(userRequest, memory.text);
 	} catch (e) {
 		return fail(emit, "W0", e);
 	}
-	const compiled = compileCoarse(compiledText);
+	compiled = compileCoarse(compiledText);
 	if (!compiled.ok) {
-		emit({ type: "pipeline_error", phase: "W0", error: compiled.error });
-		return { ok: false, results: [], error: compiled.error };
+		const firstError = compiled.error;
+		emit({ type: "compile_retry", phase: "W0", attempt: 1, error: firstError });
+		try {
+			compiledText = await opts.planner.compile(userRequest, memory.text, firstError);
+		} catch (e) {
+			return fail(emit, "W0", e);
+		}
+		compiled = compileCoarse(compiledText);
+		if (!compiled.ok) {
+			const combined = `W0 compile failed twice; first: ${firstError}; retry: ${compiled.error}`;
+			emit({ type: "pipeline_error", phase: "W0", error: combined });
+			return { ok: false, results: [], error: combined };
+		}
 	}
 	const dag = compiled.dag;
 	const taskCount = dag.phases.reduce((n, p) => n + p.tasks.length, 0);
