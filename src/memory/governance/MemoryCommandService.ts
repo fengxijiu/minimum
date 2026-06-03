@@ -21,7 +21,7 @@ import type { MemoryCandidate } from "./types.js";
 const DEFAULT_INJECTION_BUDGET_TOKENS = 8_000;
 const STATE_FILE = "memory-state.json";
 const GLOBAL_CANONICAL_PATH = path.join(
-	os.homedir() || process.env.HOME || "~",
+	os.homedir(),
 	".minimum",
 	"memory",
 	"global.md",

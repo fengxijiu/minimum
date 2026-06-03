@@ -1,4 +1,5 @@
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 import type { ChatMessage } from "../types/common.js";
 import type { Checkpoint, SessionState } from "./types.js";
@@ -8,8 +9,11 @@ export class CheckpointManager {
 	private currentState: SessionState | null = null;
 
 	constructor(basePath?: string) {
+		// os.homedir() works on Windows (USERPROFILE) and POSIX (HOME); the
+		// previous `$HOME || "~"` fell back to a literal "~" on Windows,
+		// producing cwd-relative paths like "C:\workspace\…\~\.minimum\…".
 		this.basePath =
-			basePath || path.join(process.env.HOME || "~", ".minimum", "checkpoints");
+			basePath || path.join(os.homedir(), ".minimum", "checkpoints");
 	}
 
 	async initialize(): Promise<void> {

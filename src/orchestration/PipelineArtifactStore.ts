@@ -8,6 +8,7 @@ export interface ArtifactPaths {
 	dag?: string;
 	refinements: string[];
 	contracts: string[];
+	confirmations: string[];
 	missionChecks: string[];
 	repairDags: string[];
 	memoryIndex?: string;
@@ -22,6 +23,7 @@ export function emptyArtifactPaths(): ArtifactPaths {
 	return {
 		refinements: [],
 		contracts: [],
+		confirmations: [],
 		missionChecks: [],
 		repairDags: [],
 	};
@@ -71,6 +73,18 @@ export async function writeContracts(
 		contracts,
 		errors,
 	});
+}
+
+export async function writeDagConfirmation(
+	projectRoot: string,
+	epicId: string,
+	passId: string,
+	markdown: string,
+): Promise<string> {
+	const filePath = artifactPath(projectRoot, ["tasks", epicId, "confirmations", `${passId}.md`]);
+	await fs.mkdir(path.dirname(filePath), { recursive: true });
+	await fs.writeFile(filePath, markdown.endsWith("\n") ? markdown : `${markdown}\n`, "utf-8");
+	return filePath;
 }
 
 export async function writeMissionCheck(

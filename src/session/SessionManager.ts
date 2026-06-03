@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as fsPromises from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 import type { ChatMessage } from "../types/common.js";
 import { CheckpointManager } from "./CheckpointManager.js";
@@ -19,8 +20,10 @@ export class SessionManager {
 	private currentSession: SessionState | null = null;
 
 	constructor(basePath?: string) {
+		// os.homedir() is cross-platform; $HOME alone is empty on Windows and
+		// fell back to a literal "~" subdir of the cwd.
 		this.basePath =
-			basePath || path.join(process.env.HOME || "~", ".minimum", "sessions");
+			basePath || path.join(os.homedir(), ".minimum", "sessions");
 		this.checkpointManager = new CheckpointManager();
 	}
 

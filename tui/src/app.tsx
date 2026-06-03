@@ -14,7 +14,7 @@ import {
 } from './commands.js';
 import { LearnCommandService } from '../../dist/learn/LearnCommandService.js';
 import { loadLearnedSkillsSync } from '../../dist/skills/LearnedSkillLoader.js';
-import { mockRunner, uiEventToMessages, summarizeTool, summarizeToolResult, describePermissionArgs, type Runner, type EngineInfo, type UiEvent, type UiPlanStatus, type TuiConfirmationGate } from './engine.js';
+import { mockRunner, uiEventToMessages, summarizeTool, summarizeToolResult, describePermissionArgs, buildErrorLines, type Runner, type EngineInfo, type UiEvent, type UiPlanStatus, type TuiConfirmationGate } from './engine.js';
 import { scanFiles, readBranch, touch } from './files.js';
 import {
   saveTuiSession, loadTuiSessionById, listTuiSessions, formatSessionList,
@@ -649,7 +649,7 @@ export function App({
               dispatch({
                 type: 'error.push',
                 title: `${ev.name} failed`,
-                lines: ev.content.split('\n').filter(l => l.trim() !== '').slice(0, 6),
+                lines: buildErrorLines(`${ev.name} failed`, ev.content),
                 context: lastToolDescRef.current ?? undefined,
                 hint: 'ctrl+r expand full output · u undo last edit',
               });
@@ -738,7 +738,7 @@ export function App({
         } // end retry loop
         if (lastErr) throw lastErr;
       } catch (err: any) {
-        dispatch({ type: 'error.push', title: 'runner error', lines: [String(err?.message ?? err)] });
+        dispatch({ type: 'error.push', title: 'runner error', lines: buildErrorLines('runner error', String(err?.message ?? err)) });
       } finally {
         const wasAborted = ac.signal.aborted;
         if (turnAbortRef.current === ac) turnAbortRef.current = null;

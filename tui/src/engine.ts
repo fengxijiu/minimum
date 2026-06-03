@@ -167,6 +167,51 @@ export function summarizeToolResult(ok: boolean, content: string): string {
   return `${lines.length} ln`;
 }
 
+export function buildErrorLines(title: string, content: string): string[] {
+  const trimmed = content.trim();
+  const status = inferFailureStatus(title, trimmed);
+  if (!trimmed) {
+    return [
+      `status: ${status}`,
+      'detail: no detailed output returned',
+      'next: inspect the task report, logs, or upstream contract context',
+    ];
+  }
+
+  const rawLines = trimmed.split('\n').map(l => l.trim()).filter(Boolean);
+  if (rawLines.length === 1) {
+    const line = rawLines[0]!;
+    if (/^[a-z_ -]+$/i.test(line) && line.length < 40) {
+      return [
+        `status: ${line}`,
+        `detail: ${explainFailureKeyword(line)}`,
+        'next: inspect the task report, logs, or upstream contract context',
+      ];
+    }
+    return [`status: ${status}`, `detail: ${line}`];
+  }
+
+  const first = rawLines[0]!;
+  const firstIsStatus = /^(status:|exit\s+\d+|[a-z_]+$)/i.test(first);
+  const lines = firstIsStatus ? [`status: ${first.replace(/^status:\s*/i, '')}`] : [`status: ${status}`, first];
+  return [...lines, ...rawLines.slice(1)].slice(0, 8);
+}
+
+function inferFailureStatus(title: string, content: string): string {
+  const first = content.split('\n').map(l => l.trim()).find(Boolean);
+  if (first && /^(exit\s+\d+|[a-z_]+)$/i.test(first)) return first.replace(/^status:\s*/i, '');
+  const m = title.match(/\b(blocked|failed|error|contract_invalid|deferred|gate_retry)\b/i);
+  return (m?.[1] ?? 'failed').toLowerCase();
+}
+
+function explainFailureKeyword(keyword: string): string {
+  const normalized = keyword.trim().toLowerCase();
+  if (normalized === 'contract_invalid') return 'the task contract or launch requirements are incomplete or inconsistent';
+  if (normalized === 'error' || normalized === 'failed') return 'the task failed; detailed stderr or task report was not provided';
+  if (normalized === 'blocked') return 'the task was blocked by missing context, an ambiguous contract, or a forbidden path';
+  return `the runner returned ${keyword} without additional detail`;
+}
+
 /** Translate one normalized engine event into chat messages. */
 export function uiEventToMessages(ev: UiEvent): Message[] {
   switch (ev.kind) {
@@ -179,11 +224,11 @@ export function uiEventToMessages(ev: UiEvent): Message[] {
     case 'tool_result':
       return ev.ok
         ? []
-        : [{ id: id('e'), type: 'error', error: { title: ev.name + ' failed', lines: ev.content.split('\n').slice(0, 6) } }];
+        : [{ id: id('e'), type: 'error', error: { title: ev.name + ' failed', lines: buildErrorLines(ev.name + ' failed', ev.content) } }];
     case 'notice':
       return [{ id: id('n'), type: 'system', text: ev.text, tone: ev.tone }];
     case 'error':
-      return [{ id: id('x'), type: 'error', error: { title: 'error', lines: [ev.text] } }];
+      return [{ id: id('x'), type: 'error', error: { title: 'error', lines: buildErrorLines('error', ev.text) } }];
     case 'usage':
     case 'plan':
     case 'permission_request':
@@ -210,7 +255,7 @@ function fallbackInfo(reason: EngineFallbackReason, error?: string): EngineInfo 
     mode: 'mock',
     reason,
     error,
-    configPath: path.join(process.env.HOME ?? os.homedir() ?? '~', '.minimum', 'config.json'),
+    configPath: path.join(os.homedir(), '.minimum', 'config.json'),
   };
 }
 
@@ -271,7 +316,7 @@ export async function createEngineRunner(
       || (apiKey?.startsWith('tp-')
           ? 'https://token-plan-cn.xiaomimimo.com/v1'
           : 'https://api.xiaomimimo.com/v1');
-    const configPath = eng.getGlobalConfigPath?.() ?? path.join(process.env.HOME ?? os.homedir() ?? '~', '.minimum', 'config.json');
+    const configPath = eng.getGlobalConfigPath?.() ?? path.join(os.homedir(), '.minimum', 'config.json');
     if (!apiKey) {
       return { runner: mockRunner, info: { ...fallbackInfo('no-api-key'), configPath }, choiceGate };
     }
@@ -368,7 +413,7 @@ export async function createEngineRunner(
     // when the built engine exposes PipelineBridge.
     let pipelineRunner: Runner | undefined;
     if (eng.PipelineBridge) {
-      const pipelineBridge = new eng.PipelineBridge(client, { projectRoot: workingDirectory });
+      const pipelineBridge = new eng.PipelineBridge(client, { projectRoot: workingDirectory, choiceGate });
       pipelineRunner = { send: (input: string) => pipelineBridge.send(input) };
     }
     const toolNames: string[] = (tools.getDefinitions?.() ?? []).map((d: { name: string }) => d.name);

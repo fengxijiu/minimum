@@ -10,8 +10,26 @@ import {
 import type { CoarseDag } from "../../src/orchestration/index.js";
 import type { TaskResult, WorkerExecutor } from "../../src/orchestration/index.js";
 import { listCandidates } from "../../src/memory/governance/index.js";
+import type { ChoicePayload, ChoiceVerdict, ConfirmationGate } from "../../src/tools/choice/ConfirmationGate.js";
 
 const OK = `<task_report><status>ok</status>done</task_report>`;
+const OK_WITH_FILE_LIST = `<task_report><status>ok</status><file_list>
+- src/upload.ts
+</file_list>done</task_report>`;
+const BLOCKED_CONTEXT = `<task_report><status>blocked</status>missing T0-1.file_list</task_report>`;
+
+class ScriptedChoiceGate implements ConfirmationGate {
+	payloads: ChoicePayload[] = [];
+	constructor(private verdicts: ChoiceVerdict[] = [{ type: "pick", optionId: "continue_w23" }]) {}
+	async ask(payload: ChoicePayload): Promise<ChoiceVerdict> {
+		this.payloads.push(payload);
+		return this.verdicts.shift() ?? { type: "pick", optionId: "continue_w23" };
+	}
+}
+
+function continueGate(): ScriptedChoiceGate {
+	return new ScriptedChoiceGate([{ type: "pick", optionId: "continue_w23" }]);
+}
 
 async function runMinimalPipeline(
 	planner: PlannerBridge,
@@ -23,7 +41,7 @@ async function runMinimalPipeline(
 			return OK;
 		},
 	};
-	return runPipeline("test request", { projectRoot, planner, executor, onEvent });
+	return runPipeline("test request", { projectRoot, planner, executor, onEvent, choiceGate: continueGate() });
 }
 
 function okExecutor(): WorkerExecutor {
@@ -54,7 +72,7 @@ function stubPlanner(over: Partial<PlannerBridge> = {}): PlannerBridge {
 	return {
 		compile: async () => `<task_dag>${DAG_JSON}</task_dag>`,
 		refine: async () =>
-			`<refine>{"tasks":[{"taskId":"T2-1","allowedGlobs":["src/upload.ts"],"acceptance":["returns 201"]}]}</refine>`,
+			`<refine>{"tasks":[{"taskId":"T2-1","allowedGlobs":["src/upload.ts"],"acceptance":["returns 201"],"blockedCondition":"blocked if T0-1.file_list is unavailable or incomplete"}]}</refine>`,
 		checkMission: async () => `# W3.5 Loop Detection Report
 
 ## 1. Final Decision
@@ -84,6 +102,7 @@ describe("runPipeline", () => {
 			planner: stubPlanner(),
 			executor: okExecutor(),
 			onEvent: (e) => events.push(e),
+			choiceGate: continueGate(),
 		});
 		expect(result.ok).toBe(true);
 		const phases = events.filter((e) => e.type === "phase_start").map((e) => (e as any).phase);
@@ -109,10 +128,254 @@ describe("runPipeline", () => {
 			projectRoot: dir,
 			planner: stubPlanner(),
 			executor,
+			choiceGate: continueGate(),
 		});
 		expect(ran).toContain("T0-1"); // perception
 		expect(ran).toContain("T2-1"); // implementation
 		expect(ran.indexOf("T0-1")).toBeLessThan(ran.indexOf("T2-1"));
+	});
+
+	it("allows one same-contract downstream run when launchRequirements are missing", async () => {
+		const ran: string[] = [];
+		const events: PipelineEvent[] = [];
+		const executor: WorkerExecutor = {
+			run: async (contract) => {
+				ran.push(contract.taskId);
+				return OK;
+			},
+		};
+		const planner = stubPlanner({
+			refine: async () =>
+				`<refine>${JSON.stringify({
+					tasks: [
+						{
+							taskId: "T2-1",
+							allowedGlobs: ["src/upload.ts"],
+							acceptance: ["returns 201"],
+							blockedCondition: "blocked if T0-1.file_list is unavailable or incomplete",
+							launchRequirements: [
+								{ sourceTaskId: "T0-1", artifact: "file_list", required: true },
+							],
+						},
+					],
+				})}</refine>`,
+		});
+
+		const result = await runPipeline("image upload backend", {
+			projectRoot: dir,
+			planner,
+			executor,
+			onEvent: (e) => events.push(e),
+			choiceGate: continueGate(),
+		});
+
+		expect(result.ok).toBe(true);
+		expect(ran.filter((id) => id === "T2-1")).toHaveLength(1);
+		expect(events.some((e) => e.type === "gate_retry" && (e as any).taskId === "T2-1")).toBe(true);
+	});
+
+	it("defers a downstream task after its one context-gap retry still blocks", async () => {
+		const ran: string[] = [];
+		const events: PipelineEvent[] = [];
+		const executor: WorkerExecutor = {
+			run: async (contract) => {
+				ran.push(contract.taskId);
+				return contract.taskId === "T2-1" ? BLOCKED_CONTEXT : OK;
+			},
+		};
+		const planner = stubPlanner({
+			refine: async () =>
+				`<refine>${JSON.stringify({
+					tasks: [
+						{
+							taskId: "T2-1",
+							allowedGlobs: ["src/upload.ts"],
+							acceptance: ["returns 201"],
+							blockedCondition: "blocked if T0-1.file_list is unavailable or incomplete",
+							launchRequirements: [
+								{ sourceTaskId: "T0-1", artifact: "file_list", required: true },
+							],
+						},
+					],
+				})}</refine>`,
+		});
+
+		const result = await runPipeline("image upload backend", {
+			projectRoot: dir,
+			planner,
+			executor,
+			onEvent: (e) => events.push(e),
+			choiceGate: continueGate(),
+		});
+
+		expect(result.ok).toBe(true);
+		expect(ran.filter((id) => id === "T2-1")).toHaveLength(1);
+		expect(events.some((e) => e.type === "task_deferred" && (e as any).taskId === "T2-1")).toBe(true);
+	});
+
+	it("runs downstream normally when required W1 artifacts are available", async () => {
+		const ran: string[] = [];
+		const events: PipelineEvent[] = [];
+		const executor: WorkerExecutor = {
+			run: async (contract) => {
+				ran.push(contract.taskId);
+				return contract.taskId === "T0-1" ? OK_WITH_FILE_LIST : OK;
+			},
+		};
+		const planner = stubPlanner({
+			refine: async () =>
+				`<refine>${JSON.stringify({
+					tasks: [
+						{
+							taskId: "T2-1",
+							allowedGlobs: ["src/upload.ts"],
+							acceptance: ["returns 201"],
+							blockedCondition: "blocked if T0-1.file_list is unavailable or incomplete",
+							launchRequirements: [
+								{ sourceTaskId: "T0-1", artifact: "file_list", required: true },
+							],
+						},
+					],
+				})}</refine>`,
+		});
+
+		const result = await runPipeline("image upload backend", {
+			projectRoot: dir,
+			planner,
+			executor,
+			onEvent: (e) => events.push(e),
+			choiceGate: continueGate(),
+		});
+
+		expect(result.ok).toBe(true);
+		expect(ran).toContain("T2-1");
+		expect(events.some((e) => e.type === "gate_retry")).toBe(false);
+	});
+
+	it("asks for W0.5 DAG confirmation before W2/3 starts", async () => {
+		const gate = continueGate();
+		const events: PipelineEvent[] = [];
+		const result = await runPipeline("image upload backend", {
+			projectRoot: dir,
+			planner: stubPlanner(),
+			executor: okExecutor(),
+			onEvent: (e) => events.push(e),
+			choiceGate: gate,
+		});
+
+		expect(result.ok).toBe(true);
+		expect(gate.payloads).toHaveLength(1);
+		expect(gate.payloads[0]!.question).toContain("W0.5 DAG 确认");
+		const confirmIndex = events.findIndex((e) => e.type === "dag_confirmation_requested");
+		const w23Index = events.findIndex((e) => e.type === "phase_start" && (e as any).phase === "W2/3");
+		expect(confirmIndex).toBeGreaterThan(-1);
+		expect(w23Index).toBeGreaterThan(confirmIndex);
+		expect(fs.existsSync(path.join(dir, ".minimum", "tasks", "image_upload", "confirmations", "initial.md"))).toBe(true);
+	});
+
+	it("reruns W0.5 refine once when the user chooses rerun_refine", async () => {
+		const gate = new ScriptedChoiceGate([
+			{ type: "pick", optionId: "rerun_refine" },
+			{ type: "pick", optionId: "continue_w23" },
+		]);
+		const refine = vi.fn(async () =>
+			`<refine>{"tasks":[{"taskId":"T2-1","allowedGlobs":["src/upload.ts"],"acceptance":["returns 201"],"blockedCondition":"blocked if T0-1.file_list is unavailable or incomplete"}]}</refine>`);
+		const planner = stubPlanner({ refine });
+		const result = await runPipeline("image upload backend", {
+			projectRoot: dir,
+			planner,
+			executor: okExecutor(),
+			choiceGate: gate,
+		});
+
+		expect(result.ok).toBe(true);
+		expect(refine).toHaveBeenCalledTimes(2);
+		expect(refine.mock.calls[1]![3]).toContain("rerun_refine");
+		expect(gate.payloads).toHaveLength(2);
+		expect(fs.existsSync(path.join(dir, ".minimum", "tasks", "image_upload", "confirmations", "initial-refine-retry.md"))).toBe(true);
+	});
+
+	it("stops gracefully when W0.5 confirmation is cancelled", async () => {
+		const events: PipelineEvent[] = [];
+		const gate = new ScriptedChoiceGate([{ type: "cancel" }]);
+		const result = await runPipeline("image upload backend", {
+			projectRoot: dir,
+			planner: stubPlanner(),
+			executor: okExecutor(),
+			onEvent: (e) => events.push(e),
+			choiceGate: gate,
+		});
+
+		expect(result.ok).toBe(false);
+		expect(result.statusReason).toBe("human_confirmation");
+		expect(events.some((e) => e.type === "human_confirmation_required" && (e as any).phase === "W0.5")).toBe(true);
+		expect(events.some((e) => e.type === "pipeline_error")).toBe(false);
+		expect(events.some((e) => e.type === "phase_start" && (e as any).phase === "W2/3")).toBe(false);
+	});
+
+	it("retries W3.5 once after an invalid mission report when the user chooses retry_w35", async () => {
+		const events: PipelineEvent[] = [];
+		const gate = new ScriptedChoiceGate([
+			{ type: "pick", optionId: "continue_w23" },
+			{ type: "pick", optionId: "retry_w35" },
+		]);
+		const checkMission = vi.fn(async (_input, feedback?: string) => {
+			if (!feedback) return "missing a legal decision";
+			return "Decision: APPROVED_TO_W4";
+		});
+		const result = await runPipeline("image upload backend", {
+			projectRoot: dir,
+			planner: stubPlanner({ checkMission }),
+			executor: okExecutor(),
+			onEvent: (e) => events.push(e),
+			choiceGate: gate,
+		});
+
+		expect(result.ok).toBe(true);
+		expect(checkMission).toHaveBeenCalledTimes(2);
+		expect(checkMission.mock.calls[1]![1]).toContain("mission check report must include Decision");
+		expect(events.some((e) => e.type === "mission_parse_failed")).toBe(true);
+		expect(events.some((e) => e.type === "pipeline_error" && (e as any).phase === "W3.5")).toBe(false);
+	});
+
+	it("stops gracefully after W3.5 parse failure when the user chooses human confirmation", async () => {
+		const events: PipelineEvent[] = [];
+		const gate = new ScriptedChoiceGate([
+			{ type: "pick", optionId: "continue_w23" },
+			{ type: "pick", optionId: "needs_human_confirmation" },
+		]);
+		const result = await runPipeline("image upload backend", {
+			projectRoot: dir,
+			planner: stubPlanner({ checkMission: async () => "missing a legal decision" }),
+			executor: okExecutor(),
+			onEvent: (e) => events.push(e),
+			choiceGate: gate,
+		});
+
+		expect(result.ok).toBe(false);
+		expect(result.statusReason).toBe("human_confirmation");
+		expect(events.some((e) => e.type === "mission_parse_failed")).toBe(true);
+		expect(events.some((e) => e.type === "pipeline_error")).toBe(false);
+	});
+
+	it("continues to W4 after W3.5 parse failure when the user explicitly approves override", async () => {
+		const events: PipelineEvent[] = [];
+		const gate = new ScriptedChoiceGate([
+			{ type: "pick", optionId: "continue_w23" },
+			{ type: "pick", optionId: "approve_to_w4" },
+		]);
+		const result = await runPipeline("image upload backend", {
+			projectRoot: dir,
+			planner: stubPlanner({ checkMission: async () => "missing a legal decision" }),
+			executor: okExecutor(),
+			onEvent: (e) => events.push(e),
+			choiceGate: gate,
+		});
+
+		expect(result.ok).toBe(true);
+		expect(result.statusReason).toBe("user_override");
+		expect(events.some((e) => e.type === "pipeline_choice" && (e as any).choiceId === "approve_to_w4")).toBe(true);
+		expect(events.some((e) => e.type === "phase_start" && (e as any).phase === "W4")).toBe(true);
 	});
 
 	it("emits dag_compiled with the epic id and task count", async () => {
@@ -122,6 +385,7 @@ describe("runPipeline", () => {
 			planner: stubPlanner(),
 			executor: okExecutor(),
 			onEvent: (e) => events.push(e),
+			choiceGate: continueGate(),
 		});
 		const compiled = events.find((e) => e.type === "dag_compiled") as any;
 		expect(compiled.epicId).toBe("image_upload");
@@ -135,6 +399,7 @@ describe("runPipeline", () => {
 			planner: stubPlanner({ compile: async () => "no dag block here" }),
 			executor: okExecutor(),
 			onEvent: (e) => events.push(e),
+			choiceGate: continueGate(),
 		});
 		expect(result.ok).toBe(false);
 		expect(events.some((e) => e.type === "pipeline_error" && (e as any).phase === "W0")).toBe(true);
@@ -156,6 +421,7 @@ describe("runPipeline", () => {
 			projectRoot: dir,
 			planner,
 			executor: withMem,
+			choiceGate: continueGate(),
 		});
 		expect(result.ok).toBe(true);
 		expect(result.finalize!.applied.length).toBeGreaterThan(0);
@@ -187,6 +453,7 @@ describe("runPipeline", () => {
 			planner: stubPlanner({ compile: async () => `<task_dag>${cyclicDag}</task_dag>` }),
 			executor: okExecutor(),
 			onEvent: (e) => events.push(e),
+			choiceGate: continueGate(),
 		});
 		expect(result.ok).toBe(false);
 		expect(events.some((e) => e.type === "pipeline_error" && (e as any).phase === "W2/3")).toBe(true);
@@ -199,6 +466,7 @@ describe("runPipeline", () => {
 			projectRoot: dir,
 			planner: stubPlanner({ refine: async () => "garbage, no refine block" }),
 			executor: okExecutor(),
+			choiceGate: continueGate(),
 		});
 		// needs_refine task without globs → refine errors, but pipeline still completes
 		expect(result.ok).toBe(true);
@@ -231,6 +499,7 @@ describe("runPipeline", () => {
 			projectRoot: dir,
 			planner,
 			executor,
+			choiceGate: continueGate(),
 		});
 
 		expect(result.ok).toBe(true);
@@ -299,6 +568,7 @@ Reason:
 			planner,
 			executor,
 			onEvent: (e) => events.push(e),
+			choiceGate: continueGate(),
 		});
 
 		expect(result.ok).toBe(true);
@@ -367,6 +637,7 @@ Reason:
 			planner,
 			executor: okExecutor(),
 			onEvent: (e) => events.push(e),
+			choiceGate: continueGate(),
 		});
 
 		expect(result.ok).toBe(false);

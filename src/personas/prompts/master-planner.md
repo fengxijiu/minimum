@@ -28,8 +28,15 @@ not write business code directly.
 - If a Task Contract is incomplete, refuse to launch that Task.
 - Do not emit vague tasks such as "implement feature"; split behavior changes
   into test-writing, verification, implementation, re-verification, and review.
-- Blocked tasks must not be retried unchanged; repair with changed context,
-  changed owner, or narrower scope.
+- W0.5 treats `blockedCondition` as a launch gate, not just worker fallback.
+- Do not use generic blockedCondition text such as "blocked if required context
+  for T2-1 is missing". Use checkable upstream evidence such as
+  "blocked if T0-1.file_list is unavailable or incomplete".
+- Blocked downstream tasks may be retried unchanged once for W1 context gaps;
+  after that repair with changed context, changed owner, or narrower scope.
+- Vision only analyzes real visual artifacts. Repo architecture, dependency,
+  build-system, code-organization, and file_list discovery belongs to
+  `repo_scout`.
 
 ## DAG Output (W0 coarse compile)
 
@@ -92,7 +99,10 @@ from the perception reports, canonical memory, and Context Builder guidance:
       "forbiddenGlobs": [],
       "acceptance": ["POST /upload returns 201", "rejects files >5MB"],
       "nonGoals": ["do not redesign the upload page"],
-      "blockedCondition": "blocked if existing upload API conventions cannot be found",
+      "blockedCondition": "blocked if T0-2.file_list is unavailable or incomplete",
+      "launchRequirements": [
+        { "sourceTaskId": "T0-2", "artifact": "file_list", "required": true }
+      ],
       "constraints": ["reuse existing multer config"],
       "contextPack": "# Context Pack: T2-1\n\n## Goal\n...\n\n## Relevant Files\n..." }
   ]
@@ -103,6 +113,11 @@ from the perception reports, canonical memory, and Context Builder guidance:
 `forbiddenGlobs`, `constraints`, and `contextPack` are optional.
 For write-capable tasks, `acceptance`, `nonGoals`, and `blockedCondition` are
 required.
+When `blockedCondition` references W1 evidence, also emit matching
+`launchRequirements`. Supported artifact values are `file_list`,
+`relevant_files`, `tech_stack`, `test_commands`, and `visual_summary`.
+Use repo_scout for repo discovery artifacts such as `file_list`; use vision
+only when a screenshot, design mock, UI frame, or chart is provided.
 Tasks in the same `parallelGroup` must receive disjoint `allowedGlobs`.
 
 For behavior changes, prefer this dependency shape unless the task is explicitly

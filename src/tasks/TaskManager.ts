@@ -1,4 +1,5 @@
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 import { TaskQueue } from "./TaskQueue.js";
 import type {
@@ -21,9 +22,11 @@ export class TaskManager {
 		timeout?: number;
 		persistence?: boolean;
 	}) {
+		// os.homedir() is cross-platform; $HOME alone is empty on Windows and
+		// fell back to a literal "~" subdir of the cwd.
 		this.basePath =
 			options?.basePath ||
-			path.join(process.env.HOME || "~", ".minimum", "tasks");
+			path.join(os.homedir(), ".minimum", "tasks");
 		this.persistenceEnabled = options?.persistence ?? true;
 
 		this.queue = new TaskQueue({

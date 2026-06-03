@@ -93,56 +93,70 @@ export function createPlannerBridge(
 			}
 			return collectText(client, messages, max);
 		},
-		refine: async (dag: CoarseDag, perception: TaskResult[], memoryPrefix: string) =>
-			collectText(
+		refine: async (dag: CoarseDag, perception: TaskResult[], memoryPrefix: string, feedback?: string) => {
+			const userContent = [
+				`# Coarse DAG\n${JSON.stringify(dag)}`,
+				`# Perception Reports\n${renderResults(perception)}`,
+				`# Canonical Project Memory\n${memoryPrefix || "(none)"}`,
+				`# Context Builder Guidance\n${contextBuilder.systemPrompt}`,
+				[
+					"Refine the needs_refine tasks.",
+					"Use the context-builder guidance to synthesize concise per-task ContextPack markdown when it helps downstream workers.",
+					"Output a single <refine> block. Each task may include an optional string field named contextPack.",
+				].join(" "),
+			];
+			if (feedback) {
+				userContent.push(
+					`# Refine Feedback\n${feedback}\n\nRe-emit the ENTIRE <refine> block, preserving task ids and correcting launchRequirements / blockedCondition as needed.`,
+				);
+			}
+			return collectText(
 				client,
 				[
 					await sys(),
 					{
 						role: "user",
-						content: [
-							`# Coarse DAG\n${JSON.stringify(dag)}`,
-							`# Perception Reports\n${renderResults(perception)}`,
-							`# Canonical Project Memory\n${memoryPrefix || "(none)"}`,
-							`# Context Builder Guidance\n${contextBuilder.systemPrompt}`,
-							[
-								"Refine the needs_refine tasks.",
-								"Use the context-builder guidance to synthesize concise per-task ContextPack markdown when it helps downstream workers.",
-								"Output a single <refine> block. Each task may include an optional string field named contextPack.",
-							].join(" "),
-						].join("\n\n"),
+						content: userContent.join("\n\n"),
 					},
 				],
 				max,
-			),
-		checkMission: (input: MissionCheckInput) =>
-			collectText(
+			);
+		},
+		checkMission: (input: MissionCheckInput, feedback?: string) => {
+			const userContent = [
+				"# W3.5 Mission Check Input",
+				`## Original User Request\n${input.userRequest}`,
+				`## Loop State\nCurrent loop index: ${input.loopIndex}\nMax automatic repair loops: ${input.maxRepairLoops}`,
+				`## Coarse DAG\n${JSON.stringify(input.dag)}`,
+				`## Persisted Artifacts\n${renderArtifactPaths(input.artifactPaths)}`,
+				`## W0.5 Refinement Entries\n${renderRefinements(input.refinements)}`,
+				`## Task Results\n${renderResults(input.results)}`,
+				`## Known Issues\n${renderKnownIssues(input.knownIssues)}`,
+				`## Canonical Project Memory\n${input.canonicalMemory || "(none)"}`,
+				[
+					"Run the W3.5 acceptance loop now.",
+					"Keep the exact Markdown report shape required by your persona prompt.",
+					"Use Decision: APPROVED_TO_W4, LOOP_BACK_TO_W1, or NEEDS_HUMAN_CONFIRMATION.",
+					"When looping back, include concrete W1 tasks with suggested owner agent names from the existing worker roster.",
+				].join(" "),
+			];
+			if (feedback) {
+				userContent.push(
+					`## Parser Feedback\n${feedback}\n\nRe-emit the complete W3.5 report and include exactly one valid Decision line.`,
+				);
+			}
+			return collectText(
 				client,
 				[
 					missionSys(),
 					{
 						role: "user",
-						content: [
-							"# W3.5 Mission Check Input",
-							`## Original User Request\n${input.userRequest}`,
-							`## Loop State\nCurrent loop index: ${input.loopIndex}\nMax automatic repair loops: ${input.maxRepairLoops}`,
-							`## Coarse DAG\n${JSON.stringify(input.dag)}`,
-							`## Persisted Artifacts\n${renderArtifactPaths(input.artifactPaths)}`,
-							`## W0.5 Refinement Entries\n${renderRefinements(input.refinements)}`,
-							`## Task Results\n${renderResults(input.results)}`,
-							`## Known Issues\n${renderKnownIssues(input.knownIssues)}`,
-							`## Canonical Project Memory\n${input.canonicalMemory || "(none)"}`,
-							[
-								"Run the W3.5 acceptance loop now.",
-								"Keep the exact Markdown report shape required by your persona prompt.",
-								"Use Decision: APPROVED_TO_W4, LOOP_BACK_TO_W1, or NEEDS_HUMAN_CONFIRMATION.",
-								"When looping back, include concrete W1 tasks with suggested owner agent names from the existing worker roster.",
-							].join(" "),
-						].join("\n\n"),
+						content: userContent.join("\n\n"),
 					},
 				],
 				max,
-			),
+			);
+		},
 		finalize: async (results, candidates, canonicalText) =>
 			collectText(
 				client,
@@ -255,6 +269,7 @@ function renderArtifactPaths(paths: MissionCheckInput["artifactPaths"]): string 
 	if (paths.memoryIndex) lines.push(`- memoryIndex: ${paths.memoryIndex}`);
 	for (const p of paths.refinements) lines.push(`- refinement: ${p}`);
 	for (const p of paths.contracts) lines.push(`- contracts: ${p}`);
+	for (const p of paths.confirmations) lines.push(`- confirmation: ${p}`);
 	for (const p of paths.repairDags) lines.push(`- repairDag: ${p}`);
 	for (const p of paths.missionChecks) lines.push(`- missionCheck: ${p}`);
 	return lines.length > 0 ? lines.join("\n") : "(none)";

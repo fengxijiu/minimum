@@ -1,7 +1,14 @@
 import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import type { Message } from './types.js';
 import type { ChatHistoryMessage } from './engine.js';
+
+// os.homedir() works cross-platform (USERPROFILE on Windows, HOME on POSIX);
+// $HOME alone is empty on Windows and made path.join produce
+// "C:\workspace\…\~\.minimum\tui-sessions" — i.e. "~" treated as a literal
+// subdirectory under the cwd.
+const HOME_DIR = os.homedir();
 
 export interface TuiSession {
   id: string;
@@ -15,7 +22,7 @@ export interface TuiSession {
 }
 
 const sessionsDir = (): string =>
-  path.join(process.env.HOME ?? '~', '.minimum', 'tui-sessions');
+  path.join(HOME_DIR, '.minimum', 'tui-sessions');
 
 export async function saveTuiSession(session: TuiSession): Promise<void> {
   const dir = sessionsDir();
@@ -65,7 +72,7 @@ export function formatSessionList(sessions: TuiSession[]): string {
     const d = new Date(s.updatedAt);
     const date = `${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')} ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
     const msgCount = s.messages.filter(m => m.type === 'user' || m.type === 'assistant').length;
-    const proj = s.projectPath.replace(process.env.HOME ?? '', '~');
+    const proj = HOME_DIR ? s.projectPath.replace(HOME_DIR, '~') : s.projectPath;
     return `  ${i + 1}. ${s.name}  (${date})  ${proj}  [${msgCount} msg${msgCount !== 1 ? 's' : ''}]`;
   });
   return `Sessions (${sessions.length}):\n${lines.join('\n')}\nUse /load <name> to restore.`;

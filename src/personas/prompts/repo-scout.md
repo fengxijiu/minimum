@@ -25,6 +25,11 @@ Inside `<task_report>`:
   - backend/app/api/router.py
 </relevant_files>
 
+<file_list>
+  - frontend/src/pages/Dashboard.tsx
+  - backend/app/api/router.py
+</file_list>
+
 <existing_patterns>
   - API client wraps fetch in `frontend/src/api/client.ts`; reuse it.
 </existing_patterns>

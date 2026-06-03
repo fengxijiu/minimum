@@ -16,6 +16,7 @@ import { compileCoarse, classifyTaskType } from "./TaskCompiler.js";
 import { buildWaves } from "./TaskGraph.js";
 import type { CoarseDag, TaskContract, TaskInputs } from "./TaskContract.js";
 import { compileRefinement, refineDag, type RefinementEntry } from "./Refiner.js";
+import { buildArtifactMap, evaluateLaunchGate, isContextGapBlocked } from "./LaunchGate.js";
 import {
 	compileMissionCheck,
 	loopBackTasksToCoarseTasks,
@@ -26,6 +27,7 @@ import {
 	emptyArtifactPaths,
 	writeContracts,
 	writeDag,
+	writeDagConfirmation,
 	writeMissionCheck,
 	writeRefinement,
 	writeRepairDag,
@@ -33,6 +35,7 @@ import {
 } from "./PipelineArtifactStore.js";
 import { schedule, type WaveEvent } from "./WaveScheduler.js";
 import type { TaskResult, WorkerExecutor } from "./TaskRunner.js";
+import type { ChoicePayload, ConfirmationGate } from "../tools/choice/ConfirmationGate.js";
 
 /**
  * MiMoPipeline — drive a user request through the W0–W4 wave pipeline.
@@ -65,6 +68,12 @@ export type PipelineEvent =
 	| { type: "compile_retry"; phase: "W0"; attempt: 1; error: string }
 	| { type: "wave"; event: WaveEvent }
 	| { type: "refine_done"; contractCount: number; errorCount: number }
+	| { type: "dag_confirmation_requested"; phase: "W0.5"; passId: string; brief: string; flow: string; artifactPath?: string }
+	| { type: "mission_parse_failed"; phase: "W3.5"; error: string; rawExcerpt: string; loopIndex: number; attempt: number }
+	| { type: "pipeline_choice"; phase: PipelinePhase; choiceId: string; reason: string }
+	| { type: "human_confirmation_required"; phase: PipelinePhase; reason: string }
+	| { type: "gate_retry"; phase: "W2/3"; taskId: string; attempt: 1; reason: string }
+	| { type: "task_deferred"; phase: "W2/3"; taskId: string; reason: string; blockedCondition?: string }
 	| { type: "finalize_done"; report: FinalizeReport }
 	| { type: "pipeline_complete"; results: TaskResult[] }
 	| { type: "pipeline_error"; phase: PipelinePhase; error: string };
@@ -79,9 +88,9 @@ export interface PlannerBridge {
 	 */
 	compile(userRequest: string, memoryPrefix: string, feedback?: string): Promise<string>;
 	/** W0.5: returns master output containing a <refine> block. */
-	refine(dag: CoarseDag, perception: TaskResult[], memoryPrefix: string): Promise<string>;
+	refine(dag: CoarseDag, perception: TaskResult[], memoryPrefix: string, feedback?: string): Promise<string>;
 	/** W3.5: returns a mission checker Markdown report. */
-	checkMission(input: MissionCheckInput): Promise<string>;
+	checkMission(input: MissionCheckInput, feedback?: string): Promise<string>;
 	/** W4: returns master output containing a <finalize> block. */
 	finalize(
 		results: TaskResult[],
@@ -96,6 +105,7 @@ export interface PipelineOptions {
 	executor: WorkerExecutor;
 	onEvent?: (event: PipelineEvent) => void;
 	maxMissionRepairLoops?: number;
+	choiceGate?: ConfirmationGate;
 }
 
 export interface PipelineResult {
@@ -103,6 +113,7 @@ export interface PipelineResult {
 	results: TaskResult[];
 	finalize?: FinalizeReport;
 	error?: string;
+	statusReason?: "human_confirmation" | "user_override" | "complete" | "error";
 }
 
 export async function runPipeline(
@@ -115,9 +126,11 @@ export async function runPipeline(
 	const resolvedContracts: TaskContract[] = [];
 	const refinements: RefinementEntry[] = [];
 	const knownIssues: string[] = [];
+	const gateRetryKeys = new Set<string>();
 	const artifactPaths = emptyArtifactPaths();
 	artifactPaths.memoryIndex = memoryIndexPath(opts.projectRoot);
 	const maxMissionRepairLoops = opts.maxMissionRepairLoops ?? 1;
+	let statusReason: PipelineResult["statusReason"] = "complete";
 
 	// ── W0: load memory, compile coarse DAG ──────────────────────────────────
 	emit({ type: "phase_start", phase: "W0", label: "compile" });
@@ -177,6 +190,7 @@ export async function runPipeline(
 		labelSuffix: "",
 		passId: "initial",
 		artifactPaths,
+		gateRetryKeys,
 	});
 	if (!initialPass.ok) return initialPass.result;
 
@@ -184,26 +198,78 @@ export async function runPipeline(
 	while (true) {
 		emit({ type: "phase_start", phase: "W3.5", label: "mission check" });
 		let missionText: string;
-		try {
-			missionText = await opts.planner.checkMission({
-				userRequest,
-				dag,
-				refinements,
-				results: allResults,
-				canonicalMemory: memory.text,
-				knownIssues,
-				loopIndex: missionLoopIndex,
-				maxRepairLoops: maxMissionRepairLoops,
-				artifactPaths,
-			});
-		} catch (e) {
-			return fail(emit, "W3.5", e, allResults);
-		}
+		let missionFeedback: string | undefined;
+		let missionParseRetryUsed = false;
+		let mission = undefined as ReturnType<typeof compileMissionCheck> | undefined;
+		while (true) {
+			try {
+				missionText = await opts.planner.checkMission({
+					userRequest,
+					dag,
+					refinements,
+					results: allResults,
+					canonicalMemory: memory.text,
+					knownIssues,
+					loopIndex: missionLoopIndex,
+					maxRepairLoops: maxMissionRepairLoops,
+					artifactPaths,
+				}, missionFeedback);
+			} catch (e) {
+				return fail(emit, "W3.5", e, allResults);
+			}
 
-		const mission = compileMissionCheck(missionText);
-		if (!mission.ok) {
-			return fail(emit, "W3.5", mission.error, allResults);
+			mission = compileMissionCheck(missionText);
+			if (mission.ok) break;
+
+			const rawExcerpt = summarizeRawReport(mission.raw ?? missionText);
+			emit({
+				type: "mission_parse_failed",
+				phase: "W3.5",
+				error: mission.error,
+				rawExcerpt,
+				loopIndex: missionLoopIndex,
+				attempt: missionParseRetryUsed ? 2 : 1,
+			});
+			const choice = await askPipelineChoice(opts.choiceGate, {
+				question: [
+					"W3.5 mission check 报告解析失败。",
+					`错误: ${mission.error}`,
+					`Loop: ${missionLoopIndex}`,
+					`原始摘要: ${rawExcerpt || "无内容"}`,
+					"请选择恢复方式。",
+				].join("\n"),
+				options: [
+					{ id: "retry_w35", title: "重试 W3.5", summary: missionParseRetryUsed ? "已重试过一次；仍会再次询问，不会无限自动重试。" : "带解析反馈重新运行一次 mission checker。" },
+					{ id: "needs_human_confirmation", title: "人工确认", summary: "安全停止，不发 pipeline_error。" },
+					{ id: "approve_to_w4", title: "推进到 W4", summary: "显式用户 override，记录后继续 finalize。" },
+				],
+				allowCustom: false,
+			});
+			if (!choice || choice === "needs_human_confirmation") {
+				const reason = choice ? "W3.5 parse failure requires human confirmation" : "W3.5 parse failure choice cancelled";
+				emit({ type: "human_confirmation_required", phase: "W3.5", reason });
+				return { ok: false, results: allResults, statusReason: "human_confirmation", error: reason };
+			}
+			emit({ type: "pipeline_choice", phase: "W3.5", choiceId: choice, reason: "mission parse failure" });
+			if (choice === "approve_to_w4") {
+				statusReason = "user_override";
+				knownIssues.push(`W3.5 mission parse failure overridden by user: ${mission.error}`);
+				break;
+			}
+			if (choice !== "retry_w35") {
+				const reason = `unsupported W3.5 choice: ${choice}`;
+				emit({ type: "human_confirmation_required", phase: "W3.5", reason });
+				return { ok: false, results: allResults, statusReason: "human_confirmation", error: reason };
+			}
+			if (missionParseRetryUsed) {
+				const reason = "W3.5 parse retry already used";
+				emit({ type: "human_confirmation_required", phase: "W3.5", reason });
+				return { ok: false, results: allResults, statusReason: "human_confirmation", error: reason };
+			}
+			missionFeedback = `${mission.error}\nRaw report excerpt:\n${rawExcerpt || "(empty)"}`;
+			missionParseRetryUsed = true;
 		}
+		if (!mission?.ok) break;
 		try {
 			const written = await writeMissionCheck(
 				opts.projectRoot,
@@ -222,12 +288,9 @@ export async function runPipeline(
 			break;
 		}
 		if (mission.report.decision === "NEEDS_HUMAN_CONFIRMATION") {
-			return fail(
-				emit,
-				"W3.5",
-				`mission checker requires human confirmation${mission.report.reason ? `: ${mission.report.reason}` : ""}`,
-				allResults,
-			);
+			const reason = `mission checker requires human confirmation${mission.report.reason ? `: ${mission.report.reason}` : ""}`;
+			emit({ type: "human_confirmation_required", phase: "W3.5", reason });
+			return { ok: false, results: allResults, statusReason: "human_confirmation", error: reason };
 		}
 		if (missionLoopIndex >= maxMissionRepairLoops) {
 			return fail(
@@ -268,6 +331,7 @@ export async function runPipeline(
 			labelSuffix: " repair",
 			passId: `repair-${missionLoopIndex}`,
 			artifactPaths,
+			gateRetryKeys,
 		});
 		if (!repairPass.ok) return repairPass.result;
 	}
@@ -293,7 +357,7 @@ export async function runPipeline(
 	}
 
 	emit({ type: "pipeline_complete", results: allResults });
-	return { ok: true, results: allResults, ...(finalizeReport && { finalize: finalizeReport }) };
+	return { ok: true, results: allResults, statusReason, ...(finalizeReport && { finalize: finalizeReport }) };
 }
 
 interface DagPassOptions {
@@ -309,6 +373,7 @@ interface DagPassOptions {
 	labelSuffix: string;
 	passId: string;
 	artifactPaths: ArtifactPaths;
+	gateRetryKeys: Set<string>;
 }
 
 type DagPassResult = { ok: true } | { ok: false; result: PipelineResult };
@@ -327,6 +392,7 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 		labelSuffix,
 		passId,
 		artifactPaths,
+		gateRetryKeys,
 	} = args;
 
 	// ── W1: perception ───────────────────────────────────────────────────────
@@ -346,80 +412,322 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 	}
 
 	// ── W0.5: refine ──────────────────────────────────────────────────────────
-	emit({ type: "phase_start", phase: "W0.5", label: `refine${labelSuffix}` });
-	let refinement: Map<string, RefinementEntry> = new Map();
-	let refinementParsed = false;
-	try {
-		const refineText = await opts.planner.refine(dag, allResults, memoryText);
-		const parsed = compileRefinement(refineText);
-		if (parsed.ok) {
-			refinement = parsed.entries;
-			refinementParsed = true;
-			await writeInlineContextPacks(opts.projectRoot, dag.epicId, refinement);
-			refinements.push(...refinement.values());
-		} else {
-			knownIssues.push(`W0.5 refine parse failed for ${dag.epicId}: ${parsed.error}`);
-			const refinementPath = await writeRefinement(
-				opts.projectRoot,
-				dag.epicId,
-				passId,
-				[],
-				parsed.error,
-			);
-			artifactPaths.refinements.push(refinementPath);
-			await refreshMemoryIndex(opts.projectRoot);
-		}
-	} catch (e) {
-		return { ok: false, result: fail(emit, "W0.5", e, allResults) };
-	}
-	if (refinementParsed) {
+	let allContracts: TaskContract[] = [];
+	let refineErrors: ReturnType<typeof refineDag>["errors"] = [];
+	let refineFeedback: string | undefined;
+	let refineRetryUsed = false;
+	while (true) {
+		emit({ type: "phase_start", phase: "W0.5", label: `refine${labelSuffix}${refineRetryUsed ? " retry" : ""}` });
+		const currentPassId = refineRetryUsed ? `${passId}-refine-retry` : passId;
+		let refinement: Map<string, RefinementEntry> = new Map();
+		let refinementParsed = false;
 		try {
-			const refinementPath = await writeRefinement(
-				opts.projectRoot,
-				dag.epicId,
-				passId,
-				refinement.values(),
-			);
-			artifactPaths.refinements.push(refinementPath);
+			const refineText = await opts.planner.refine(dag, allResults, memoryText, refineFeedback);
+			const parsed = compileRefinement(refineText);
+			if (parsed.ok) {
+				refinement = parsed.entries;
+				refinementParsed = true;
+				await writeInlineContextPacks(opts.projectRoot, dag.epicId, refinement);
+				refinements.push(...refinement.values());
+			} else {
+				knownIssues.push(`W0.5 refine parse failed for ${dag.epicId}: ${parsed.error}`);
+				const refinementPath = await writeRefinement(
+					opts.projectRoot,
+					dag.epicId,
+					currentPassId,
+					[],
+					parsed.error,
+				);
+				artifactPaths.refinements.push(refinementPath);
+				await refreshMemoryIndex(opts.projectRoot);
+			}
+		} catch (e) {
+			return { ok: false, result: fail(emit, "W0.5", e, allResults) };
+		}
+		if (refinementParsed) {
+			try {
+				const refinementPath = await writeRefinement(
+					opts.projectRoot,
+					dag.epicId,
+					currentPassId,
+					refinement.values(),
+				);
+				artifactPaths.refinements.push(refinementPath);
+				await refreshMemoryIndex(opts.projectRoot);
+			} catch (e) {
+				return { ok: false, result: fail(emit, "W0.5", e, allResults) };
+			}
+		}
+		const refined = refineDag(dag, {
+			inputs: baseInputs,
+			refinement,
+		});
+		allContracts = refined.contracts;
+		refineErrors = refined.errors;
+		if (refineErrors.length > 0) {
+			for (const error of refineErrors) {
+				knownIssues.push(`W0.5 ${error.taskId}: ${error.errors.join("; ")}`);
+			}
+		}
+		try {
+			const contractsPath = await writeContracts(opts.projectRoot, dag.epicId, currentPassId, allContracts, refineErrors);
+			artifactPaths.contracts.push(contractsPath);
+			const confirmation = buildDagConfirmation({
+				userRequest: baseInputs.userGoal,
+				dag,
+				contracts: allContracts,
+				refineErrors,
+				results: allResults,
+				knownIssues,
+				passId: currentPassId,
+			});
+			const confirmationPath = await writeDagConfirmation(opts.projectRoot, dag.epicId, currentPassId, confirmation.markdown);
+			artifactPaths.confirmations.push(confirmationPath);
 			await refreshMemoryIndex(opts.projectRoot);
+			emit({ type: "refine_done", contractCount: allContracts.length, errorCount: refineErrors.length });
+			emit({
+				type: "dag_confirmation_requested",
+				phase: "W0.5",
+				passId: currentPassId,
+				brief: confirmation.brief,
+				flow: confirmation.flow,
+				artifactPath: confirmationPath,
+			});
+			const choice = await askPipelineChoice(opts.choiceGate, {
+				question: `${confirmation.brief}\n\n${confirmation.flow}\n\n请确认是否进入 W2/3。`,
+				options: [
+					{ id: "continue_w23", title: "继续 W2/3", summary: "确认当前 DAG 和 launch gate，进入实现/验证。" },
+					{ id: "rerun_refine", title: "重跑 W0.5", summary: refineRetryUsed ? "已重跑过一次；再次选择会安全停止。" : "带用户确认反馈重新 refine 一次。" },
+					{ id: "stop_for_human", title: "暂停人工确认", summary: "安全停止，不发 pipeline_error。" },
+				],
+				allowCustom: false,
+			});
+			if (!choice || choice === "stop_for_human") {
+				const reason = choice ? "W0.5 DAG confirmation stopped for human review" : "W0.5 DAG confirmation cancelled";
+				emit({ type: "human_confirmation_required", phase: "W0.5", reason });
+				return { ok: false, result: { ok: false, results: allResults, statusReason: "human_confirmation", error: reason } };
+			}
+			emit({ type: "pipeline_choice", phase: "W0.5", choiceId: choice, reason: "dag confirmation" });
+			if (choice === "continue_w23") break;
+			if (choice === "rerun_refine" && !refineRetryUsed) {
+				refineRetryUsed = true;
+				refineFeedback = "User selected rerun_refine at the W0.5 DAG confirmation gate. Re-check task contracts, launchRequirements, blockedCondition, and downstream readiness.";
+				continue;
+			}
+			const reason = choice === "rerun_refine" ? "W0.5 refine retry already used" : `unsupported W0.5 choice: ${choice}`;
+			emit({ type: "human_confirmation_required", phase: "W0.5", reason });
+			return { ok: false, result: { ok: false, results: allResults, statusReason: "human_confirmation", error: reason } };
 		} catch (e) {
 			return { ok: false, result: fail(emit, "W0.5", e, allResults) };
 		}
 	}
-	const { contracts: allContracts, errors: refineErrors } = refineDag(dag, {
-		inputs: baseInputs,
-		refinement,
-	});
 	resolvedContracts.push(...allContracts);
-	if (refineErrors.length > 0) {
-		for (const error of refineErrors) {
-			knownIssues.push(`W0.5 ${error.taskId}: ${error.errors.join("; ")}`);
-		}
-	}
-	try {
-		const contractsPath = await writeContracts(opts.projectRoot, dag.epicId, passId, allContracts, refineErrors);
-		artifactPaths.contracts.push(contractsPath);
-		await refreshMemoryIndex(opts.projectRoot);
-	} catch (e) {
-		return { ok: false, result: fail(emit, "W0.5", e, allResults) };
-	}
-	emit({ type: "refine_done", contractCount: allContracts.length, errorCount: refineErrors.length });
 
 	// ── W2/3: implementation + validation (exclude perception, already run) ───
 	emit({ type: "phase_start", phase: "W2/3", label: `implement + validate${labelSuffix}` });
-	const implContracts = stripPerceptionDeps(
-		allContracts.filter((c) => !PERCEPTION_PERSONAS.has(c.personaId)),
-	);
+	const implContracts = allContracts.filter((c) => !PERCEPTION_PERSONAS.has(c.personaId));
 	if (implContracts.length > 0) {
 		try {
-			const implResults = await runWaves(implContracts, opts, emit);
+			const { runnable } = applyLaunchGate({
+				contracts: implContracts,
+				allResults,
+				knownIssues,
+				emit,
+				gateRetryKeys,
+			});
+			const implResults = await runWaves(stripPerceptionDeps(runnable), opts, emit);
 			allResults.push(...implResults);
+			const retryResults = await retryBlockedContextGaps({
+				results: implResults,
+				contracts: runnable,
+				opts,
+				emit,
+				knownIssues,
+				gateRetryKeys,
+			});
+			allResults.push(...retryResults);
 		} catch (e) {
 			return { ok: false, result: fail(emit, "W2/3", e, allResults) };
 		}
 	}
 
 	return { ok: true };
+}
+
+async function askPipelineChoice(
+	choiceGate: ConfirmationGate | undefined,
+	payload: ChoicePayload,
+): Promise<string | undefined> {
+	if (!choiceGate) return undefined;
+	const verdict = await choiceGate.ask(payload);
+	if (verdict.type !== "pick") return undefined;
+	return verdict.optionId;
+}
+
+function buildDagConfirmation(args: {
+	userRequest: string;
+	dag: CoarseDag;
+	contracts: TaskContract[];
+	refineErrors: ReturnType<typeof refineDag>["errors"];
+	results: TaskResult[];
+	knownIssues: string[];
+	passId: string;
+}): { brief: string; flow: string; markdown: string } {
+	const perception = args.results.filter((r) => PERCEPTION_PERSONAS.has(r.personaId));
+	const launchRequirementCount = args.contracts.reduce((n, c) => n + (c.launchRequirements?.length ?? 0), 0);
+	const runnable = args.contracts.filter((c) => !PERCEPTION_PERSONAS.has(c.personaId));
+	const briefLines = [
+		"# W0.5 DAG 确认",
+		`目标: ${args.userRequest}`,
+		`passId: ${args.passId}`,
+		`W1 感知结果: ${perception.length ? perception.map((r) => `${r.taskId}/${r.personaId}/${r.status}`).join(", ") : "无感知任务"}`,
+		`W0.5 contracts: ${args.contracts.length} 个，预计 W2/3 启动: ${runnable.length} 个`,
+		`launchRequirements: ${launchRequirementCount} 条`,
+		`refine errors: ${args.refineErrors.length ? args.refineErrors.map((e) => `${e.taskId}: ${e.errors.join("; ")}`).join(" | ") : "无"}`,
+		`known issues: ${args.knownIssues.length ? args.knownIssues.slice(-3).join(" | ") : "无"}`,
+	];
+	const flow = buildDagFlow(args.dag, args.contracts, args.refineErrors, args.results);
+	const requirements = args.contracts.flatMap((contract) =>
+		(contract.launchRequirements ?? []).map((r) => `- ${contract.taskId}: ${r.sourceTaskId}.${r.artifact}${r.required === false ? " (optional)" : ""}`),
+	);
+	const markdown = [
+		...briefLines,
+		"",
+		"## DAG Flow",
+		"```text",
+		flow,
+		"```",
+		"",
+		"## Launch Requirements",
+		requirements.length ? requirements.join("\n") : "(none)",
+		"",
+		"## Contracts",
+		args.contracts.map((c) => `- ${c.taskId} [${c.personaId}] dependsOn=${c.dependsOn.join(",") || "(none)"} blockedCondition=${c.blockedCondition ?? "(none)"}`).join("\n") || "(none)",
+	].join("\n");
+	return { brief: briefLines.join("\n"), flow, markdown };
+}
+
+function buildDagFlow(
+	dag: CoarseDag,
+	contracts: TaskContract[],
+	refineErrors: ReturnType<typeof refineDag>["errors"],
+	results: TaskResult[],
+): string {
+	const contractsById = new Map(contracts.map((c) => [c.taskId, c]));
+	const errorIds = new Set(refineErrors.map((e) => e.taskId));
+	const resultById = new Map(results.map((r) => [r.taskId, r]));
+	const lines: string[] = [];
+	for (const phase of dag.phases) {
+		lines.push(`${phase.id} ${phase.name}`);
+		for (const task of phase.tasks) {
+			const contract = contractsById.get(task.id);
+			const result = resultById.get(task.id);
+			const status = errorIds.has(task.id)
+				? "contract-error"
+				: result
+					? result.status === "ok" ? "ok" : result.status
+					: contract?.launchRequirements?.length ? "deferred-risk" : "ready";
+			const deps = task.dependsOn.length ? ` <- ${task.dependsOn.join(", ")}` : "";
+			lines.push(`  [${status}] ${task.id} ${task.personaId}${deps}`);
+			if (contract?.launchRequirements?.length) {
+				for (const req of contract.launchRequirements) {
+					lines.push(`      requires ${req.sourceTaskId}.${req.artifact}`);
+				}
+			}
+		}
+	}
+	return lines.join("\n");
+}
+
+function summarizeRawReport(raw: string): string {
+	const trimmed = raw.replace(/\s+/g, " ").trim();
+	return trimmed.length > 360 ? `${trimmed.slice(0, 360)}...` : trimmed;
+}
+
+function applyLaunchGate(args: {
+	contracts: TaskContract[];
+	allResults: TaskResult[];
+	knownIssues: string[];
+	emit: (e: PipelineEvent) => void;
+	gateRetryKeys: Set<string>;
+}): { runnable: TaskContract[] } {
+	const { contracts, allResults, knownIssues, emit, gateRetryKeys } = args;
+	const artifacts = buildArtifactMap(allResults);
+	const runnable: TaskContract[] = [];
+	const deferred = new Set<string>();
+
+	for (const contract of contracts) {
+		const deferredDep = contract.dependsOn.find((dep) => deferred.has(dep));
+		if (deferredDep) {
+			const reason = `${contract.taskId} deferred because dependency ${deferredDep} was deferred`;
+			deferred.add(contract.taskId);
+			knownIssues.push(`W2/3 ${reason}`);
+			emit({ type: "task_deferred", phase: "W2/3", taskId: contract.taskId, reason, ...(contract.blockedCondition && { blockedCondition: contract.blockedCondition }) });
+			continue;
+		}
+
+		const decision = evaluateLaunchGate(contract, allResults, artifacts);
+		if (decision.ok) {
+			runnable.push(contract);
+			continue;
+		}
+
+		const reason = decision.issues.map((issue) => issue.reason).join("; ");
+		if (!gateRetryKeys.has(contract.taskId)) {
+			gateRetryKeys.add(contract.taskId);
+			knownIssues.push(`W2/3 ${contract.taskId} launch gate missing context; allowing one same-contract retry: ${reason}`);
+			emit({ type: "gate_retry", phase: "W2/3", taskId: contract.taskId, attempt: 1, reason });
+			runnable.push(contract);
+			continue;
+		}
+
+		deferred.add(contract.taskId);
+		knownIssues.push(`W2/3 ${contract.taskId} deferred after one same-contract retry: ${reason}`);
+		emit({ type: "task_deferred", phase: "W2/3", taskId: contract.taskId, reason, ...(contract.blockedCondition && { blockedCondition: contract.blockedCondition }) });
+	}
+
+	return { runnable };
+}
+
+async function retryBlockedContextGaps(args: {
+	results: TaskResult[];
+	contracts: TaskContract[];
+	opts: PipelineOptions;
+	emit: (e: PipelineEvent) => void;
+	knownIssues: string[];
+	gateRetryKeys: Set<string>;
+}): Promise<TaskResult[]> {
+	const { results, contracts, opts, emit, knownIssues, gateRetryKeys } = args;
+	const byId = new Map(contracts.map((c) => [c.taskId, c]));
+	const retryContracts: TaskContract[] = [];
+
+	for (const result of results) {
+		if (!isContextGapBlocked(result)) continue;
+		const contract = byId.get(result.taskId);
+		if (!contract) continue;
+		if (gateRetryKeys.has(result.taskId)) {
+			const reason = `${result.taskId} remained blocked after one same-contract context retry`;
+			knownIssues.push(`W2/3 ${reason}`);
+			emit({ type: "task_deferred", phase: "W2/3", taskId: result.taskId, reason, ...(contract.blockedCondition && { blockedCondition: contract.blockedCondition }) });
+			continue;
+		}
+		gateRetryKeys.add(result.taskId);
+		const reason = `${result.taskId} returned blocked for missing W1 context`;
+		knownIssues.push(`W2/3 ${reason}; allowing one same-contract retry`);
+		emit({ type: "gate_retry", phase: "W2/3", taskId: result.taskId, attempt: 1, reason });
+		retryContracts.push(contract);
+	}
+
+	if (retryContracts.length === 0) return [];
+	const retryResults = await runWaves(stripPerceptionDeps(retryContracts), opts, emit);
+	for (const result of retryResults) {
+		if (!isContextGapBlocked(result)) continue;
+		const contract = byId.get(result.taskId);
+		const reason = `${result.taskId} remained blocked after one same-contract context retry`;
+		knownIssues.push(`W2/3 ${reason}`);
+		emit({ type: "task_deferred", phase: "W2/3", taskId: result.taskId, reason, ...(contract?.blockedCondition && { blockedCondition: contract.blockedCondition }) });
+	}
+	return retryResults;
 }
 
 async function runWaves(
@@ -500,5 +808,5 @@ function fail(
 ): PipelineResult {
 	const error = e instanceof Error ? e.message : String(e);
 	emit({ type: "pipeline_error", phase, error });
-	return { ok: false, results, error };
+	return { ok: false, results, error, statusReason: "error" };
 }

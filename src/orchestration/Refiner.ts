@@ -4,6 +4,8 @@ import { findGlobConflicts, validateContract } from "./ContractValidator.js";
 import type {
 	CoarseDag,
 	CoarseTask,
+	LaunchArtifact,
+	LaunchRequirement,
 	TaskContract,
 	TaskInputs,
 } from "./TaskContract.js";
@@ -26,6 +28,7 @@ export interface RefinementEntry {
 	acceptance?: string[];
 	nonGoals?: string[];
 	blockedCondition?: string;
+	launchRequirements?: LaunchRequirement[];
 	constraints?: string[];
 	/** Inline markdown emitted by the master during W0.5; persisted before launch. */
 	contextPack?: string;
@@ -95,6 +98,12 @@ function validateEntry(
 	if (blockedCondition !== undefined && typeof blockedCondition !== "string")
 		return { ok: false, error: `refine entry ${taskId}: blockedCondition must be string or omitted` };
 
+	const launchRequirements = raw.launchRequirements ?? raw.launch_requirements;
+	if (launchRequirements !== undefined) {
+		const lr = validateLaunchRequirements(launchRequirements, taskId);
+		if (!lr.ok) return { ok: false, error: lr.error };
+	}
+
 	const constraints = raw.constraints;
 	if (constraints !== undefined && !Array.isArray(constraints))
 		return { ok: false, error: `refine entry ${taskId}: constraints must be array or omitted` };
@@ -112,10 +121,41 @@ function validateEntry(
 			...(acceptance !== undefined && { acceptance: acceptance as string[] }),
 			...(nonGoals !== undefined && { nonGoals: nonGoals as string[] }),
 			...(blockedCondition !== undefined && { blockedCondition }),
+			...(launchRequirements !== undefined && {
+				launchRequirements: launchRequirements as LaunchRequirement[],
+			}),
 			...(constraints !== undefined && { constraints: constraints as string[] }),
 			...(contextPack !== undefined && { contextPack }),
 		},
 	};
+}
+
+const LAUNCH_ARTIFACTS = new Set<LaunchArtifact>([
+	"file_list",
+	"relevant_files",
+	"tech_stack",
+	"test_commands",
+	"visual_summary",
+]);
+
+function validateLaunchRequirements(
+	raw: unknown,
+	taskId: string,
+): { ok: true } | { ok: false; error: string } {
+	if (!Array.isArray(raw))
+		return { ok: false, error: `refine entry ${taskId}: launchRequirements must be array or omitted` };
+	for (const [i, item] of raw.entries()) {
+		if (!isObj(item))
+			return { ok: false, error: `refine entry ${taskId}: launchRequirements[${i}] must be an object` };
+		if (typeof item.sourceTaskId !== "string" || !item.sourceTaskId)
+			return { ok: false, error: `refine entry ${taskId}: launchRequirements[${i}].sourceTaskId required` };
+		if (typeof item.artifact !== "string" || !LAUNCH_ARTIFACTS.has(item.artifact as LaunchArtifact))
+			return { ok: false, error: `refine entry ${taskId}: launchRequirements[${i}].artifact must be one of ${[...LAUNCH_ARTIFACTS].join(",")}` };
+		if (item.required !== undefined && typeof item.required !== "boolean")
+			return { ok: false, error: `refine entry ${taskId}: launchRequirements[${i}].required must be boolean or omitted` };
+		item.required = item.required ?? true;
+	}
+	return { ok: true };
 }
 
 export interface RefineOptions {
@@ -205,6 +245,9 @@ function assembleContract(
 		[`complete: ${task.objective}`];
 	const nonGoals = entry?.nonGoals ?? [`do not change files outside ${task.id}'s Task Contract`];
 	const blockedCondition = entry?.blockedCondition ?? `blocked if required context for ${task.id} is missing or contradictory`;
+	if (persona.readOnly === false && task.needsRefine && entry && !entry.blockedCondition) {
+		error = mergeError(error, `task ${task.id} needs_refine write contract requires explicit blockedCondition`);
+	}
 
 	const contract: TaskContract = {
 		taskId: task.id,
@@ -226,6 +269,7 @@ function assembleContract(
 		acceptance,
 		nonGoals,
 		blockedCondition,
+		...(entry?.launchRequirements && { launchRequirements: entry.launchRequirements }),
 		outputSchema: persona.outputSchema,
 		parallelGroup: task.parallelGroup,
 		dependsOn: task.dependsOn,
@@ -233,6 +277,10 @@ function assembleContract(
 	};
 
 	return { contract, ...(error && { error }) };
+}
+
+function mergeError(current: string | undefined, next: string): string {
+	return current ? `${current}; ${next}` : next;
 }
 
 function safeOutputSchema(

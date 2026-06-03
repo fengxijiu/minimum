@@ -38,7 +38,7 @@ function mkDag(over: Partial<CoarseDag> = {}): CoarseDag {
 describe("compileRefinement", () => {
 	it("parses a valid refine block", () => {
 		const text = `<refine>{"tasks":[
-			{"taskId":"T2-1","allowedGlobs":["src/upload.ts"],"acceptance":["returns 201"],"contextPack":"# Context Pack"}
+			{"taskId":"T2-1","allowedGlobs":["src/upload.ts"],"acceptance":["returns 201"],"blockedCondition":"blocked if T0-1.file_list is unavailable or incomplete","launchRequirements":[{"sourceTaskId":"T0-1","artifact":"file_list","required":true}],"contextPack":"# Context Pack"}
 		]}</refine>`;
 		const r = compileRefinement(text);
 		expect(r.ok).toBe(true);
@@ -46,6 +46,10 @@ describe("compileRefinement", () => {
 			const e = r.entries.get("T2-1")!;
 			expect(e.allowedGlobs).toEqual(["src/upload.ts"]);
 			expect(e.acceptance).toEqual(["returns 201"]);
+			expect(e.blockedCondition).toContain("T0-1.file_list");
+			expect(e.launchRequirements).toEqual([
+				{ sourceTaskId: "T0-1", artifact: "file_list", required: true },
+			]);
 			expect(e.contextPack).toBe("# Context Pack");
 		}
 	});
@@ -83,6 +87,14 @@ describe("compileRefinement", () => {
 		expect(r.ok).toBe(false);
 		if (!r.ok) expect(r.error).toContain("duplicate");
 	});
+
+	it("rejects invalid launchRequirements", () => {
+		const r = compileRefinement(
+			`<refine>{"tasks":[{"taskId":"T2-1","allowedGlobs":["a.ts"],"launchRequirements":[{"sourceTaskId":"T0-1","artifact":"unknown"}]}]}</refine>`,
+		);
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.error).toContain("launchRequirements");
+	});
 });
 
 describe("refineDag", () => {
@@ -94,13 +106,32 @@ describe("refineDag", () => {
 		const { contracts, errors } = refineDag(mkDag(), {
 			inputs: baseInputs,
 			refinement: refinement([
-				{ taskId: "T2-1", allowedGlobs: ["src/upload.ts"], acceptance: ["ok"] },
+				{
+					taskId: "T2-1",
+					allowedGlobs: ["src/upload.ts"],
+					acceptance: ["ok"],
+					blockedCondition: "blocked if T0-1.file_list is unavailable or incomplete",
+					launchRequirements: [{ sourceTaskId: "T0-1", artifact: "file_list", required: true }],
+				},
 			]),
 		});
 		expect(errors).toEqual([]);
 		expect(contracts[0]!.pathPolicy.allowedGlobs).toEqual(["src/upload.ts"]);
 		expect(contracts[0]!.acceptance).toEqual(["ok"]);
+		expect(contracts[0]!.launchRequirements).toEqual([
+			{ sourceTaskId: "T0-1", artifact: "file_list", required: true },
+		]);
 		expect(contracts[0]!.outputSchema).toBe("task_report");
+	});
+
+	it("rejects write-capable needs_refine tasks without an explicit blockedCondition", () => {
+		const { errors } = refineDag(mkDag(), {
+			inputs: baseInputs,
+			refinement: refinement([
+				{ taskId: "T2-1", allowedGlobs: ["src/upload.ts"], acceptance: ["ok"] },
+			]),
+		});
+		expect(errors.some((e) => e.taskId === "T2-1" && e.errors.some((m) => m.includes("blockedCondition")))).toBe(true);
 	});
 
 	it("errors when a needs_refine task lacks a refinement entry", () => {

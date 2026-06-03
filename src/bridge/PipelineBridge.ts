@@ -4,9 +4,11 @@ import {
 	runPipeline,
 	type CompletionClient,
 	type PipelineEvent,
+	type TaskResult,
 	type WaveEvent,
 } from "../orchestration/index.js";
 import type { UiEvent } from "./EngineBridge.js";
+import type { ConfirmationGate } from "../tools/choice/ConfirmationGate.js";
 
 /**
  * PipelineBridge — wrap the W0–W4 orchestrator as a normalized UiEvent stream,
@@ -20,6 +22,7 @@ import type { UiEvent } from "./EngineBridge.js";
 export interface PipelineBridgeOptions {
 	projectRoot: string;
 	maxTokens?: number;
+	choiceGate?: ConfirmationGate;
 }
 
 export class PipelineBridge {
@@ -55,6 +58,7 @@ export class PipelineBridge {
 			planner,
 			executor,
 			onEvent: push,
+			choiceGate: this.opts.choiceGate,
 		})
 			.then((r) => {
 				queue.push({ kind: "done", success: r.ok });
@@ -107,6 +111,54 @@ export function translatePipelineEvent(e: PipelineEvent): UiEvent[] {
 					tone: e.errorCount ? "warn" : "ok",
 				},
 			];
+		case "dag_confirmation_requested":
+			return [
+				{
+					kind: "notice",
+					text: `W0.5 DAG confirmation requested\n${e.brief}\n\n${e.flow}${e.artifactPath ? `\nartifact: ${e.artifactPath}` : ""}`,
+					tone: "warn",
+				},
+			];
+		case "mission_parse_failed":
+			return [
+				{
+					kind: "notice",
+					text: `W3.5 mission parse failed (attempt ${e.attempt}, loop ${e.loopIndex})\nerror: ${e.error}\nraw: ${e.rawExcerpt || "no detailed output returned"}`,
+					tone: "warn",
+				},
+			];
+		case "pipeline_choice":
+			return [
+				{
+					kind: "notice",
+					text: `choice: ${e.phase} ${e.choiceId} - ${e.reason}`,
+					tone: e.choiceId === "approve_to_w4" ? "warn" : "info",
+				},
+			];
+		case "human_confirmation_required":
+			return [
+				{
+					kind: "notice",
+					text: `human confirmation required: [${e.phase}] ${e.reason}`,
+					tone: "warn",
+				},
+			];
+		case "gate_retry":
+			return [
+				{
+					kind: "notice",
+					text: `gate retry: ${e.taskId} attempt ${e.attempt} - ${e.reason}`,
+					tone: "warn",
+				},
+			];
+		case "task_deferred":
+			return [
+				{
+					kind: "notice",
+					text: `deferred: ${e.taskId} - ${e.reason}${e.blockedCondition ? ` (${e.blockedCondition})` : ""}`,
+					tone: "warn",
+				},
+			];
 		case "finalize_done": {
 			const r = e.report;
 			const merged = r.applied.filter((a) => a.action === "merge" || a.action === "update").length;
@@ -135,12 +187,29 @@ function translateWaveEvent(w: WaveEvent): UiEvent[] {
 		case "wave_start":
 			return [{ kind: "pipeline", phase: "wave", label: `wave ${w.waveIndex}`, detail: `${w.taskCount} task(s)` }];
 		case "task_done":
+			if (w.result.status === "ok") {
+				return [
+					{
+						kind: "tool_result",
+						name: `${w.result.taskId} (${w.result.personaId})`,
+						ok: true,
+						content: "ok",
+					},
+				];
+			}
+			if (w.result.status === "blocked") {
+				return [
+					{
+						kind: "notice",
+						text: `blocked: ${w.result.taskId} (${w.result.personaId}) - ${summarizeTaskResult(w.result)}`,
+						tone: "warn",
+					},
+				];
+			}
 			return [
 				{
-					kind: "tool_result",
-					name: `${w.result.taskId} (${w.result.personaId})`,
-					ok: w.result.status === "ok",
-					content: w.result.status,
+					kind: "error",
+					text: formatTaskError(w.result),
 				},
 			];
 		case "stage_pause":
@@ -148,4 +217,23 @@ function translateWaveEvent(w: WaveEvent): UiEvent[] {
 		default:
 			return [];
 	}
+}
+
+function formatTaskError(result: TaskResult): string {
+	return [
+		`task: ${result.taskId}`,
+		`persona: ${result.personaId}`,
+		`status: ${result.status}`,
+		...result.errors.map((e) => `error: ${e}`),
+		result.report ? `report: ${summarizeTaskResult(result)}` : "",
+	]
+		.filter(Boolean)
+		.join("\n");
+}
+
+function summarizeTaskResult(result: TaskResult): string {
+	const report = result.report.replace(/\s+/g, " ").trim();
+	if (result.errors.length > 0) return result.errors.join("; ");
+	if (report) return report.slice(0, 240);
+	return "no detailed task report returned";
 }

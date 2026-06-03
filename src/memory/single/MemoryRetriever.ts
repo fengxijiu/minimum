@@ -344,5 +344,7 @@ function normalizeRelPath(value: string): string {
 }
 
 function resolveHome(): string {
-	return process.env.HOME ?? os.homedir() ?? "~";
+	// os.homedir() is cross-platform — $HOME is empty on Windows and a literal
+	// "~" fallback would turn into a cwd-relative path.
+	return os.homedir();
 }

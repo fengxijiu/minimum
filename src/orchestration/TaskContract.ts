@@ -1,5 +1,18 @@
 import type { OutputSchema, PersonaId } from "../personas/Persona.js";
 
+export type LaunchArtifact =
+	| "file_list"
+	| "relevant_files"
+	| "tech_stack"
+	| "test_commands"
+	| "visual_summary";
+
+export interface LaunchRequirement {
+	sourceTaskId: string;
+	artifact: LaunchArtifact;
+	required: boolean;
+}
+
 /**
  * TaskContract — the binding agreement between master_planner and a worker.
  *
@@ -27,6 +40,8 @@ export interface TaskContract {
 	nonGoals?: string[];
 	/** Concrete condition that should stop the task and trigger changed repair context. */
 	blockedCondition?: string;
+	/** Structured W0.5 launch gate evidence required before scheduling. */
+	launchRequirements?: LaunchRequirement[];
 
 	/** Output schema expected from the worker; mirrors persona.outputSchema. */
 	outputSchema: OutputSchema;

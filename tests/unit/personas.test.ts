@@ -212,5 +212,20 @@ describe("PersonaRegistry", () => {
 			const sys = getPersona("master_planner").systemPrompt;
 			expect(sys.toLowerCase()).toMatch(/exact|lowercase|underscore/);
 		});
+
+		it("defines blockedCondition as a launch gate with launchRequirements", () => {
+			const sys = getPersona("master_planner").systemPrompt;
+			expect(sys).toContain("launchRequirements");
+			expect(sys).toContain("T0-1.file_list");
+			expect(sys.toLowerCase()).toContain("launch gate");
+			expect(sys.toLowerCase()).toContain("do not use generic blockedcondition");
+		});
+
+		it("routes repo discovery to repo_scout and visual artifacts to vision", () => {
+			const sys = getPersona("master_planner").systemPrompt;
+			expect(sys).toContain("repo_scout");
+			expect(sys).toContain("file_list");
+			expect(sys.toLowerCase()).toContain("vision only");
+		});
 	});
 });

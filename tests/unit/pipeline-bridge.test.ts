@@ -10,6 +10,7 @@ import {
 } from "../../src/orchestration/index.js";
 import { PipelineBridge, translatePipelineEvent } from "../../src/bridge/index.js";
 import type { UiEvent } from "../../src/bridge/index.js";
+import type { ChoicePayload, ChoiceVerdict, ConfirmationGate } from "../../src/tools/choice/ConfirmationGate.js";
 
 /** A client that returns a scripted response per call, in order. */
 function scriptedClient(responses: string[]): CompletionClient {
@@ -40,6 +41,15 @@ Reason:
 - Ready.
 `;
 const FINALIZE = `<finalize>{"memory_decisions":[]}</finalize>`;
+
+class ScriptedChoiceGate implements ConfirmationGate {
+	payloads: ChoicePayload[] = [];
+	constructor(private verdicts: ChoiceVerdict[] = [{ type: "pick", optionId: "continue_w23" }]) {}
+	async ask(payload: ChoicePayload): Promise<ChoiceVerdict> {
+		this.payloads.push(payload);
+		return this.verdicts.shift() ?? { type: "pick", optionId: "continue_w23" };
+	}
+}
 
 describe("collectText", () => {
 	it("concatenates content chunks", async () => {
@@ -108,6 +118,7 @@ describe("createPlannerBridge", () => {
 				dag: ".minimum/tasks/e/dag.json",
 				refinements: [".minimum/tasks/e/refinements/initial.json"],
 				contracts: [".minimum/tasks/e/contracts/initial.json"],
+				confirmations: [],
 				missionChecks: [],
 				repairDags: [],
 				memoryIndex: ".minimum/index.json",
@@ -160,6 +171,29 @@ describe("translatePipelineEvent", () => {
 		expect(out[0]).toEqual({ kind: "error", text: "[W4] bad" });
 	});
 
+	it("maps W0.5 confirmation and W3.5 parse failure to notices", () => {
+		const confirmation = translatePipelineEvent({
+			type: "dag_confirmation_requested",
+			phase: "W0.5",
+			passId: "initial",
+			brief: "W0.5 DAG 确认",
+			flow: "[ready] T2-1",
+			artifactPath: ".minimum/tasks/e/confirmations/initial.md",
+		});
+		const parseFailure = translatePipelineEvent({
+			type: "mission_parse_failed",
+			phase: "W3.5",
+			error: "missing Decision",
+			rawExcerpt: "bad report",
+			loopIndex: 0,
+			attempt: 1,
+		});
+		expect(confirmation[0]).toMatchObject({ kind: "notice", tone: "warn" });
+		expect(parseFailure[0]).toMatchObject({ kind: "notice", tone: "warn" });
+		expect(confirmation[0]!.kind).not.toBe("error");
+		expect(parseFailure[0]!.kind).not.toBe("error");
+	});
+
 	it("maps a task_done wave event to a tool_result", () => {
 		const out = translatePipelineEvent({
 			type: "wave",
@@ -170,6 +204,43 @@ describe("translatePipelineEvent", () => {
 			},
 		});
 		expect(out[0]!.kind).toBe("tool_result");
+	});
+
+	it("maps blocked task_done to a warning notice instead of a failed tool_result", () => {
+		const out = translatePipelineEvent({
+			type: "wave",
+			event: {
+				type: "task_done",
+				waveIndex: 0,
+				result: { taskId: "T1", personaId: "code_executor", status: "blocked", report: "missing T0-1.file_list", memoryCandidateBody: undefined, errors: [], durationMs: 1 },
+			},
+		});
+		expect(out[0]).toMatchObject({ kind: "notice", tone: "warn" });
+		expect((out[0] as any).text).toContain("T1");
+		expect((out[0] as any).text).toContain("blocked");
+	});
+
+	it("maps errored task_done to detailed error content", () => {
+		const out = translatePipelineEvent({
+			type: "wave",
+			event: {
+				type: "task_done",
+				waveIndex: 0,
+				result: {
+					taskId: "T1",
+					personaId: "code_executor",
+					status: "contract_invalid",
+					report: "",
+					memoryCandidateBody: undefined,
+					errors: ["blockedCondition must be at least 8 characters"],
+					durationMs: 1,
+				},
+			},
+		});
+		expect(out[0]).toMatchObject({ kind: "error" });
+		expect((out[0] as any).text).toContain("T1");
+		expect((out[0] as any).text).toContain("contract_invalid");
+		expect((out[0] as any).text).toContain("blockedCondition must be at least 8 characters");
 	});
 });
 
@@ -183,7 +254,7 @@ describe("PipelineBridge", () => {
 	it("streams pipeline UiEvents and ends with done:true", async () => {
 		// compile, (perception worker), refine, (impl worker), mission check, finalize
 		const client = scriptedClient([DAG, WORKER, REFINE, WORKER, MISSION, FINALIZE]);
-		const bridge = new PipelineBridge(client, { projectRoot: dir });
+		const bridge = new PipelineBridge(client, { projectRoot: dir, choiceGate: new ScriptedChoiceGate() });
 		const events: UiEvent[] = [];
 		for await (const e of bridge.send("build an upload endpoint")) events.push(e);
 

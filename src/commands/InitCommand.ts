@@ -710,7 +710,10 @@ export class InitCommand implements Command {
 	}
 
 	private async createDirectories(projectRoot: string): Promise<void> {
-		const home = os.homedir() || process.env.HOME || "~";
+		// os.homedir() is cross-platform and always returns a real path;
+		// the "~" tail of the previous fallback chain was dead code that
+		// would have created cwd-relative paths if it ever hit.
+		const home = os.homedir();
 		const projectMemoryRoot = getProjectMemoryRoot(projectRoot);
 		const globalMemoryRoot = getGlobalMemoryRoot(home);
 		const dirs = [

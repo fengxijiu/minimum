@@ -55,6 +55,7 @@
     "node": ">=22"
   },
   "dependencies": {
+    "minimum": "file:",
     "web-tree-sitter": "^0.26.9"
   }
 }

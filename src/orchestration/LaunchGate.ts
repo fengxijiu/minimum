@@ -1,0 +1,80 @@
+import { extractXmlBlock, type TaskResult } from "./TaskRunner.js";
+import type { LaunchArtifact, LaunchRequirement, TaskContract } from "./TaskContract.js";
+
+export type ArtifactMap = Map<string, Map<LaunchArtifact, string>>;
+
+export interface GateIssue {
+	taskId: string;
+	requirement: LaunchRequirement;
+	reason: string;
+}
+
+export interface GateDecision {
+	ok: boolean;
+	issues: GateIssue[];
+}
+
+const ARTIFACT_TAGS: LaunchArtifact[] = [
+	"file_list",
+	"relevant_files",
+	"tech_stack",
+	"test_commands",
+	"visual_summary",
+];
+
+export function buildArtifactMap(results: TaskResult[]): ArtifactMap {
+	const out: ArtifactMap = new Map();
+	for (const result of results) {
+		const artifacts = new Map<LaunchArtifact, string>();
+		for (const artifact of ARTIFACT_TAGS) {
+			const value = extractXmlBlock(result.report, artifact).trim();
+			if (value) artifacts.set(artifact, value);
+		}
+		out.set(result.taskId, artifacts);
+	}
+	return out;
+}
+
+export function evaluateLaunchGate(
+	contract: TaskContract,
+	results: TaskResult[],
+	artifacts: ArtifactMap,
+): GateDecision {
+	const issues: GateIssue[] = [];
+	const byTask = new Map(results.map((r) => [r.taskId, r]));
+	for (const requirement of contract.launchRequirements ?? []) {
+		if (!requirement.required) continue;
+		const upstream = byTask.get(requirement.sourceTaskId);
+		if (!upstream) {
+			issues.push({
+				taskId: contract.taskId,
+				requirement,
+				reason: `${requirement.sourceTaskId}.${requirement.artifact} is unavailable because upstream task result is missing`,
+			});
+			continue;
+		}
+		if (upstream.status !== "ok") {
+			issues.push({
+				taskId: contract.taskId,
+				requirement,
+				reason: `${requirement.sourceTaskId}.${requirement.artifact} is unavailable because upstream task status is ${upstream.status}`,
+			});
+			continue;
+		}
+		const value = artifacts.get(requirement.sourceTaskId)?.get(requirement.artifact)?.trim();
+		if (!value) {
+			issues.push({
+				taskId: contract.taskId,
+				requirement,
+				reason: `${requirement.sourceTaskId}.${requirement.artifact} is unavailable or incomplete`,
+			});
+		}
+	}
+	return { ok: issues.length === 0, issues };
+}
+
+export function isContextGapBlocked(result: TaskResult): boolean {
+	if (result.status !== "blocked") return false;
+	const text = `${result.report}\n${result.errors.join("\n")}`.toLowerCase();
+	return /context|artifact|file[_\s-]?list|relevant[_\s-]?files|tech[_\s-]?stack|test[_\s-]?commands|visual[_\s-]?summary/.test(text);
+}

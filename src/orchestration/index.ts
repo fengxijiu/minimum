@@ -13,6 +13,14 @@ export {
 	type WorkerExecutorOptions,
 } from "./ClientAdapters.js";
 export {
+	buildArtifactMap,
+	evaluateLaunchGate,
+	isContextGapBlocked,
+	type ArtifactMap,
+	type GateDecision,
+	type GateIssue,
+} from "./LaunchGate.js";
+export {
 	PERCEPTION_PERSONAS,
 	runPipeline,
 	type PipelineEvent,
@@ -35,6 +43,7 @@ export {
 	emptyArtifactPaths,
 	writeContracts,
 	writeDag,
+	writeDagConfirmation,
 	writeMissionCheck,
 	writeRefinement,
 	writeRepairDag,
@@ -68,6 +77,8 @@ export type {
 	CoarseDag,
 	CoarsePhase,
 	CoarseTask,
+	LaunchArtifact,
+	LaunchRequirement,
 	TaskContract,
 	TaskInputs,
 	TaskPathPolicy,

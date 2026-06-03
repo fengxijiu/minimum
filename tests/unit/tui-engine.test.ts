@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+	buildErrorLines,
 	describePermissionArgs,
 	summarizeTool,
 	summarizeToolResult,
+	TuiConfirmationGate,
 } from "../../tui/src/engine.js";
 
 describe("summarizeTool", () => {
@@ -38,6 +40,47 @@ describe("summarizeToolResult", () => {
 
 	it("surfaces exit code", () => {
 		expect(summarizeToolResult(true, "ran\nexit 0")).toBe("exit 0");
+	});
+});
+
+describe("buildErrorLines", () => {
+	it("explains empty failures instead of returning no lines", () => {
+		expect(buildErrorLines("T1 failed", "")).toEqual([
+			"status: failed",
+			"detail: no detailed output returned",
+			"next: inspect the task report, logs, or upstream contract context",
+		]);
+	});
+
+	it("expands a single keyword into a readable detail line", () => {
+		const lines = buildErrorLines("T1 failed", "contract_invalid");
+		expect(lines).toContain("status: contract_invalid");
+		expect(lines.some((line) => line.includes("contract or launch requirements"))).toBe(true);
+	});
+
+	it("keeps useful multi-line stderr/report details", () => {
+		const lines = buildErrorLines("exec_shell failed", "exit 1\nstderr: missing file\nhint: run npm test");
+		expect(lines).toContain("status: exit 1");
+		expect(lines).toContain("stderr: missing file");
+		expect(lines).toContain("hint: run npm test");
+	});
+});
+
+describe("TuiConfirmationGate", () => {
+	it("shows choice payloads and resolves selected options", async () => {
+		const gate = new TuiConfirmationGate();
+		let shown = "";
+		gate.onShow = (payload) => {
+			shown = payload.question;
+			gate.resolve({ type: "pick", optionId: "continue_w23" });
+		};
+		const verdict = await gate.ask({
+			question: "W0.5 DAG 确认",
+			options: [{ id: "continue_w23", title: "继续 W2/3" }],
+			allowCustom: false,
+		});
+		expect(shown).toBe("W0.5 DAG 确认");
+		expect(verdict).toEqual({ type: "pick", optionId: "continue_w23" });
 	});
 });
 
