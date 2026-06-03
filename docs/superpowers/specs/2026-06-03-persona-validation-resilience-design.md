@@ -2,7 +2,7 @@
 
 - 日期：2026-06-03
 - 作者：fengxijiu / Claude
-- 状态：已批准，待实施
+- 状态：已实施 + 验证通过（2026-06-03）
 - 触发问题：`[W0] phase[1].tasks[0].persona must be one of master_planner,vision,repo_scout,context_builder,code_executor,test_writer,test_runner,runtime_debug,reviewer,docs` 导致整条 MiMo pipeline 在 W0 直接 fail。
 
 ## 背景与根因
