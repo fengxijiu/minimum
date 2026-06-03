@@ -1292,23 +1292,54 @@ export class MiMoLoop {
 	}
 
 	private isMutatingTool(call: ToolCall): boolean {
+		const name = call.function.name;
 		const mutatingTools = [
 			"write_file",
 			"edit_file",
 			"apply_patch",
 			"exec_shell",
-			"git_commit",
-			"git_push",
+			"run_background",
+			"stop_job",
 		];
-		return mutatingTools.includes(call.function.name);
+		if (mutatingTools.includes(name)) return true;
+		// "git" is a single registered tool — the subcommand decides whether the
+		// call mutates state. Without this branch, plan-mode and the storm
+		// breaker's read-only/mutating split silently treat `git push/commit`
+		// as read-only.
+		if (name === "git") {
+			try {
+				const a = JSON.parse(call.function.arguments ?? "{}") as { subcommand?: string };
+				const sub = String(a.subcommand ?? "").toLowerCase();
+				return [
+					"commit", "push", "reset", "rebase", "merge",
+					"rm", "clean", "stash", "checkout", "branch",
+					"tag", "cherry-pick", "revert", "add",
+				].includes(sub);
+			} catch {
+				return false;
+			}
+		}
+		return false;
 	}
 
 	private isStormExemptTool(call: ToolCall): boolean {
+		// Tools whose identical-args repetition is legitimate flow, not a loop:
+		//   • read_file / list_directory: re-reads after edits are common
+		//   • git_status / git_diff / git_log: state-inspection queries
+		//   • todo_write: progress-tracker updates (args usually differ, but
+		//     guard against false positives if the model emits a no-op update)
+		//   • wait_for_job / list_jobs / job_output: polling on background jobs,
+		//     by design re-issued with the same job id until completion
 		const exemptTools = [
 			"read_file",
 			"list_directory",
 			"git_status",
 			"git_diff",
+			"git_log",
+			"todo_write",
+			"wait_for_job",
+			"list_jobs",
+			"job_output",
 		];
 		return exemptTools.includes(call.function.name);
 	}
