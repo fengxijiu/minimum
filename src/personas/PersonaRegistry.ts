@@ -84,7 +84,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 			forbiddenGlobs: GLOBAL_FORBIDDEN_WRITES,
 		},
 		maxSteps: 60,
-		maxTokens: 200_000,
+		maxTokens: 131_072,
 		outputSchema: "planner_dag",
 		parallelism: { soloPerWave: true, maxConcurrent: 1 },
 	});
@@ -147,7 +147,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 			forbiddenGlobs: WORKER_FORBIDDEN_WRITES,
 		},
 		maxSteps: 10,
-		maxTokens: 32_000,
+		maxTokens: 131_072,
 		outputSchema: "context_pack",
 		parallelism: { soloPerWave: false, maxConcurrent: 1 },
 	});
