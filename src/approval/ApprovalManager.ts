@@ -202,7 +202,14 @@ export class ApprovalManager {
 			return "medium";
 		}
 		if (EDIT_TOOLS.has(tool)) return "medium";
-		if (tool === "git_push" || tool === "git_commit") return "high";
+		// All git operations route through the single "git" tool with a
+		// subcommand in args — the standalone tool names "git_push"/"git_commit"
+		// don't exist in the registry, so we have to inspect the subcommand.
+		if (tool === "git") {
+			const sub = String(args.subcommand ?? "").toLowerCase();
+			if (sub === "push" || sub === "commit") return "high";
+			return "medium";
+		}
 		return "medium";
 	}
 }

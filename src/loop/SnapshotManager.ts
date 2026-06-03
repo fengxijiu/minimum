@@ -2,7 +2,9 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { ToolCall } from "../types/common.js";
 
-const EDIT_TOOLS = new Set(["edit_file", "write_file"]);
+// apply_patch must also snapshot — otherwise a tsc-failing patch leaves the
+// file dirty and can't be rolled back to its pre-edit state.
+const EDIT_TOOLS = new Set(["edit_file", "write_file", "apply_patch"]);
 
 /**
  * SnapshotManager — 参考 CodeWhale 的 side-git 快照思路的轻量版本。

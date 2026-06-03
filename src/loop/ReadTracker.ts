@@ -46,7 +46,10 @@ export class ReadTracker {
 }
 
 const READ_TOOLS = new Set(["read_file"]);
-const EDIT_TOOLS = new Set(["edit_file", "write_file"]);
+// apply_patch is a third edit path (search/replace hunks) — must trip the
+// read-before-edit guard alongside edit_file/write_file or the model can
+// blind-patch files it never read.
+const EDIT_TOOLS = new Set(["edit_file", "write_file", "apply_patch"]);
 
 export function isReadTool(call: ToolCall): boolean {
 	return READ_TOOLS.has(call.function.name);
