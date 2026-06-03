@@ -15,6 +15,7 @@
   "dependencies": {
     "ink": "^5.0.1",
     "ink-text-input": "^6.0.0",
+    "minimum": "file:..",
     "react": "^18.3.1"
   },
   "devDependencies": {
