@@ -6,7 +6,7 @@ import { HelpOverlay } from './HelpOverlay.js';
 import { Prompt } from './Prompt.js';
 import { filterCommands, filterFiles, type CommandContext, type CmdMatch, type FileMatch } from '../commands.js';
 import { loadHistory, appendHistory } from '../inputHistory.js';
-import type { FileEntry, PendingState, Mode, ChoiceRequest } from '../types.js';
+import type { ApprovalMode, FileEntry, PendingState, Mode, ChoiceRequest } from '../types.js';
 import type { Dispatch } from '../state/store.js';
 import { theme } from '../theme.js';
 
@@ -89,6 +89,10 @@ export interface InputAreaProps {
   onChoiceCancel: () => void;
   /** Abort the current turn — invoked by the second Ctrl+C within DOUBLE_CTRLC_MS. */
   onCancelTurn: () => void;
+  /** Current permission mode; used only for the Shift+Tab toast / next-mode lookup. */
+  approvalMode?: ApprovalMode;
+  /** Shift+Tab — advance to the next entry in the read-only → auto-edit → full-auto cycle. */
+  onCycleApprovalMode: () => void;
   dispatch: Dispatch;
   cmdCtx: CommandContext;
 }
@@ -101,6 +105,7 @@ export const InputArea = React.memo(function InputArea({
   turnInProgress,
   onSubmit, onPermAllow, onPermAlwaysAllow, onPermDeny, onApplyFix,
   onChoicePick, onChoiceCancel, onCancelTurn,
+  onCycleApprovalMode,
   dispatch, cmdCtx,
 }: InputAreaProps) {
   const { exit } = useApp();
@@ -336,14 +341,21 @@ export const InputArea = React.memo(function InputArea({
       if (key.downArrow) { stepHistory(1); return; }
     }
     if (key.tab) {
+      // Shift+Tab cycles permission modes (read-only → auto-edit → full-auto).
+      // Checked before completion handlers so it still works while an overlay
+      // is open; completions only react to plain Tab.
+      if (key.shift) {
+        onCycleApprovalMode();
+        return;
+      }
       if (overlay === 'cmd' && cmdItems.length) { completeCommand(); return; }
       if (overlay === 'file' && fileItems.length) { completeFile(); return; }
       const MODES = ['agent', 'chat', 'orchestrate'] as const;
       const next = MODES[(MODES.indexOf(mode as typeof MODES[number]) + 1) % MODES.length] ?? 'agent';
       dispatch({ type: 'mode.change', mode: next });
-      // Mirror the Shift+Tab (edit-mode) toast so a silent mode switch is
-      // always acknowledged — the user can see which of agent/chat/orchestrate
-      // they landed on without hunting for it in the title/status bar.
+      // Toast so a silent mode switch is always acknowledged — user can see
+      // which of agent/chat/orchestrate they landed on without hunting the
+      // status bar.
       dispatch({ type: 'toast.show', text: `Mode: ${next}`, tone: 'info', ttlMs: 2000 });
       return;
     }

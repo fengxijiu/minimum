@@ -4,6 +4,12 @@ import type { ApprovalRequest, ApprovalResponse } from "../approval/types.js";
 import { CapacityController } from "../capacity/CapacityController.js";
 import type { CapacityConfig, CapacitySnapshot } from "../capacity/types.js";
 import type { StreamChunk } from "../clients/MiMoClient.js";
+import {
+	computeTurnCost,
+	currencyFor,
+	type BillingMode,
+	type Currency,
+} from "../clients/MiMoPricing.js";
 import type {
 	ISingleAgentMemoryManager,
 	MemoryInjectionResult,
@@ -31,8 +37,12 @@ import { SnapshotManager } from "./SnapshotManager.js";
 /** Minimal interface for session persistence — avoids importing SessionManager directly. */
 export interface ISessionPersister {
 	persistFromLoop(messages: ChatMessage[], meta: {
-		totalCostUsd?: number;
+		totalCost?: number;
+		totalCostCurrency?: Currency;
 		totalTokens?: number;
+		totalPromptTokens?: number;
+		totalCompletionTokens?: number;
+		totalCachedTokens?: number;
 		toolCalls?: number;
 		steps?: number;
 		model?: string;
@@ -48,11 +58,9 @@ const MAX_TOOL_RESULT_CHARS = 32_000;
 /** Default max parallel tool calls for read-only batch. */
 const DEFAULT_PARALLEL_MAX = 3;
 
-/** Approximate MiMo API pricing (USD per 1 M tokens). */
-const PRICE_INPUT_PER_M_USD = 0.4;
-/** Cache-hit input tokens are billed at a steep discount (~0.1× fresh input). */
-const PRICE_CACHED_PER_M_USD = 0.04;
-const PRICE_OUTPUT_PER_M_USD = 1.6;
+// Pricing now lives in MiMoPricing — per-model tables for both API CNY and
+// Token Plan Credits. This loop just accumulates token splits and asks the
+// pricing module for the cost, so we never silently mis-bill a new model.
 
 const MEMORY_PRELUDE_START = "<!-- mimo-memory-prelude:start -->";
 const MEMORY_PRELUDE_END = "<!-- mimo-memory-prelude:end -->";
@@ -127,7 +135,15 @@ export interface MiMoLoopConfig {
 	}) => void;
 	maxTokens?: number;
 	maxSteps?: number;
+	/** Hard cap on accumulated turn cost. Denominated in the active currency
+	 * (CNY for API keys, Credits for Token Plan keys). Name kept for backward
+	 * compatibility with existing configs — value is no longer USD. */
 	budgetUsd?: number;
+	/** Model id used to pick the right pricing row. Defaults to "mimo-v2.5-pro". */
+	model?: string;
+	/** Billing scheme — drives both pricing table and emitted currency.
+	 * Defaults to "api" (sk- key, CNY pricing). */
+	billingMode?: BillingMode;
 	workingDirectory: string;
 	thinking?: {
 		type: "enabled" | "disabled";
@@ -149,7 +165,17 @@ export interface LoopState {
 	running: boolean;
 	currentStep: number;
 	totalTokens: number;
-	totalCostUsd: number;
+	/** Sum of prompt_tokens across turns (includes cached portion). */
+	totalPromptTokens: number;
+	/** Sum of completion_tokens across turns (includes reasoning portion). */
+	totalCompletionTokens: number;
+	/** Sum of prompt_tokens_details.cached_tokens across turns. */
+	totalCachedTokens: number;
+	/** Sum of completion_tokens_details.reasoning_tokens across turns. */
+	totalReasoningTokens: number;
+	/** Accumulated turn cost in `totalCostCurrency` units. */
+	totalCost: number;
+	totalCostCurrency: Currency;
 	toolCalls: number;
 	errors: number;
 	startTime?: number;
@@ -210,13 +236,22 @@ export class MiMoLoop {
 	private lastDiagByFile = new Map<string, string>();
 	/** Last pre-edit content per file (for recordFix on success). */
 	private lastContentByFile = new Map<string, string>();
+	private readonly model: string;
+	private readonly billingMode: BillingMode;
 	constructor(config: MiMoLoopConfig) {
 		this.config = config;
+		this.model = config.model ?? "mimo-v2.5-pro";
+		this.billingMode = config.billingMode ?? "api";
 		this.state = {
 			running: false,
 			currentStep: 0,
 			totalTokens: 0,
-			totalCostUsd: 0,
+			totalPromptTokens: 0,
+			totalCompletionTokens: 0,
+			totalCachedTokens: 0,
+			totalReasoningTokens: 0,
+			totalCost: 0,
+			totalCostCurrency: currencyFor(this.billingMode),
 			toolCalls: 0,
 			errors: 0,
 		};
@@ -295,7 +330,7 @@ export class MiMoLoop {
 				// 检查预算
 				if (
 					this.config.budgetUsd &&
-					this.state.totalCostUsd >= this.config.budgetUsd
+					this.state.totalCost >= this.config.budgetUsd
 				) {
 					yield { type: "error", error: "Budget exceeded", recoverable: false };
 					break;
@@ -747,8 +782,12 @@ export class MiMoLoop {
 			await this.writebackMemory();
 			const persistedMessages = filterMemoryPreludeMessages(this.messages);
 			this.config.sessionPersister?.persistFromLoop(persistedMessages, {
-				totalCostUsd: this.state.totalCostUsd,
+				totalCost: this.state.totalCost,
+				totalCostCurrency: this.state.totalCostCurrency,
 				totalTokens: this.state.totalTokens,
+				totalPromptTokens: this.state.totalPromptTokens,
+				totalCompletionTokens: this.state.totalCompletionTokens,
+				totalCachedTokens: this.state.totalCachedTokens,
 				toolCalls: this.state.toolCalls,
 				steps: this.state.currentStep,
 			}).catch(() => {});
@@ -832,16 +871,24 @@ export class MiMoLoop {
 				case "usage":
 					usage = chunk.usage;
 					if (usage) {
-						this.state.totalTokens += usage.totalTokens || 0;
-						// 三段计价：fresh input / cache-hit input / output
+						const promptTokens = usage.promptTokens || 0;
+						const completionTokens = usage.completionTokens || 0;
 						const cachedTokens = usage.cachedTokens || 0;
-						const freshInput = (usage.promptTokens || 0) - cachedTokens;
-						const outputTokens = usage.completionTokens || 0;
-						this.state.totalCostUsd +=
-							(freshInput * PRICE_INPUT_PER_M_USD +
-								cachedTokens * PRICE_CACHED_PER_M_USD +
-								outputTokens * PRICE_OUTPUT_PER_M_USD) /
-							1_000_000;
+						const reasoningTokens = usage.reasoningTokens || 0;
+						this.state.totalTokens += usage.totalTokens || 0;
+						this.state.totalPromptTokens += promptTokens;
+						this.state.totalCompletionTokens += completionTokens;
+						this.state.totalCachedTokens += cachedTokens;
+						this.state.totalReasoningTokens += reasoningTokens;
+						// Pricing is delegated to MiMoPricing so the loop stays agnostic
+						// to model + billing scheme — the table is the single source of
+						// truth for cost arithmetic.
+						const { cost } = computeTurnCost(
+							{ promptTokens, completionTokens, cachedTokens },
+							this.model,
+							this.billingMode,
+						);
+						this.state.totalCost += cost;
 					}
 					break;
 				case "error":
@@ -879,7 +926,12 @@ export class MiMoLoop {
 			type: "usage",
 			usage: {
 				totalTokens: this.state.totalTokens,
-				totalCostUsd: this.state.totalCostUsd,
+				totalPromptTokens: this.state.totalPromptTokens,
+				totalCompletionTokens: this.state.totalCompletionTokens,
+				totalCachedTokens: this.state.totalCachedTokens,
+				totalReasoningTokens: this.state.totalReasoningTokens,
+				totalCost: this.state.totalCost,
+				totalCostCurrency: this.state.totalCostCurrency,
 				toolCalls: this.state.toolCalls,
 				steps: this.state.currentStep,
 			},
@@ -1024,7 +1076,8 @@ export class MiMoLoop {
 				workingDirectory: this.config.workingDirectory,
 				userInput: this.currentUserInput,
 				turnIndex: this.state.currentStep,
-				totalCostUsd: this.state.totalCostUsd,
+				totalCost: this.state.totalCost,
+				totalCostCurrency: this.state.totalCostCurrency,
 				totalTokens: this.state.totalTokens,
 				toolCalls: this.state.toolCalls,
 				steps: this.state.currentStep,

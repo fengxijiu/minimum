@@ -207,11 +207,15 @@ Each new task must include:
 * source issue discovered in W3.5
 * expected outcome
 * suggested owner agent
+* allowed globs for the smallest safe repair scope
 * priority
 * blocking status
 * acceptance criteria
 
 New tasks must be small, concrete, and independently executable.
+For any write-capable repair task, `Allowed globs` must be concrete and
+minimal. For `code_executor`, `Allowed globs` is mandatory. Do not use
+`TBD`, `unknown`, `*`, `**`, or duplicate globs across loop-back tasks.
 
 Do not create vague tasks such as:
 
@@ -261,6 +265,10 @@ You must always output in the following structure:
 
 Decision: APPROVED_TO_W4 | LOOP_BACK_TO_W1 | NEEDS_HUMAN_CONFIRMATION
 
+Emit the decision value as a bare token. Do not wrap it in `**`, backticks,
+quotes, or a code fence. The parser only accepts the literal token on the
+`Decision:` line.
+
 Reason:
 
 - ...
@@ -308,6 +316,7 @@ Only include this section when new tasks are needed.
 - Source issue:
 - Expected outcome:
 - Suggested owner agent:
+- Allowed globs: concrete, minimal, and disjoint from other loop-back tasks
 - Acceptance criteria:
 
 ## 8. Human Confirmation Required

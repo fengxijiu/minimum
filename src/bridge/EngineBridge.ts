@@ -31,9 +31,17 @@ export type UiEvent =
 	| {
 			kind: "usage";
 			totalTokens: number;
+			/** Sum of prompt_tokens across the turn (includes cached portion). */
+			promptTokens: number;
+			/** Sum of completion_tokens (includes reasoning portion). */
+			completionTokens: number;
+			/** Subset of promptTokens that hit the prefix cache. */
+			cachedTokens: number;
 			toolCalls: number;
 			steps: number;
-			totalCostUsd: number;
+			/** Accumulated cost in `currency` units (CNY for sk-, Credits for tp-). */
+			totalCost: number;
+			currency: "CNY" | "Credits";
 	  }
 	| { kind: "plan"; steps: UiPlanStep[] }
 	| {
@@ -55,7 +63,26 @@ export type UiEvent =
 	| { kind: "streaming"; text: string }
 	| { kind: "streaming_reasoning"; text: string }
 	| { kind: "streaming_start" }
-	| { kind: "streaming_end" };
+	| { kind: "streaming_end" }
+	| {
+			/** Live progress for a pipeline sub-agent (worker). Sent every time
+			 *  a worker advances — step start, tool call, usage update, finish.
+			 *  TUI keeps a Map<taskId> and renders the most recent state per id;
+			 *  `status` flips to a terminal value when the worker is done. */
+			kind: "subagent_progress";
+			taskId: string;
+			personaId: string;
+			objective: string;
+			step: number;
+			maxSteps: number;
+			toolCalls: number;
+			lastTool?: string;
+			lastToolArgs?: string;
+			tokens: number;
+			cost: number;
+			currency: "CNY" | "Credits";
+			status: "running" | "done" | "error" | "blocked";
+	  };
 
 /** Parse TodoWriteTool's formatted result back into structured plan steps. */
 export function parsePlanFromTodoResult(content: string): UiPlanStep[] | null {
@@ -144,9 +171,13 @@ export function mapLoopEvent(e: LoopEvent): UiEvent | null {
 			return {
 				kind: "usage",
 				totalTokens: e.usage?.totalTokens ?? 0,
+				promptTokens: e.usage?.totalPromptTokens ?? 0,
+				completionTokens: e.usage?.totalCompletionTokens ?? 0,
+				cachedTokens: e.usage?.totalCachedTokens ?? 0,
 				toolCalls: e.usage?.toolCalls ?? 0,
 				steps: e.usage?.steps ?? 0,
-				totalCostUsd: e.usage?.totalCostUsd ?? 0,
+				totalCost: e.usage?.totalCost ?? 0,
+				currency: e.usage?.totalCostCurrency ?? "CNY",
 			};
 		case "error":
 			return { kind: "error", text: e.error };

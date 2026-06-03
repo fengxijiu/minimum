@@ -94,15 +94,33 @@ export async function runTask(
 		}
 	}
 
+	const errors: string[] = [];
+	if (status === "error" && !report) {
+		const trimmed = rawOutput.trim();
+		if (!trimmed) {
+			errors.push("worker returned empty output — no <task_report> block was emitted");
+		} else {
+			errors.push("worker output did not contain a <task_report> block; the model likely responded outside the required schema");
+			const excerpt = summarizeRawOutput(trimmed);
+			if (excerpt) errors.push(`raw excerpt: ${excerpt}`);
+		}
+	}
+
 	return {
 		...base,
 		status,
 		report,
 		memoryCandidateBody: memBlock,
-		errors: [],
+		errors,
 		...(stagingError !== undefined && { stagingError }),
 		durationMs: Date.now() - start,
 	};
+}
+
+function summarizeRawOutput(text: string): string {
+	const collapsed = text.replace(/\s+/g, " ").trim();
+	if (collapsed.length <= 240) return collapsed;
+	return `${collapsed.slice(0, 240)}…`;
 }
 
 /** Extract the trimmed content between <tag> and </tag>; returns "" if absent. */

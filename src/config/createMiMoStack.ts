@@ -167,6 +167,11 @@ export function createMiMoStack(
 		maxTokens: cfg.maxTokens,
 		maxSteps: cfg.maxSteps,
 		budgetUsd: cfg.budgetUsd || undefined,
+		// Wire model + billingMode through to the loop so its pricing module
+		// reads the right table. MiMoClient exposes getters; fall back to
+		// config defaults if the caller passed a custom client without them.
+		model: typeof client?.getModel === "function" ? client.getModel() : cfg.defaultModel,
+		billingMode: typeof client?.getBillingMode === "function" ? client.getBillingMode() : "api",
 		workingDirectory,
 		sessionPersister: sessionManager,
 		memoryManager,

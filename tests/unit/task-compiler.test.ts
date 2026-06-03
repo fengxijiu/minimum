@@ -99,6 +99,26 @@ describe("compileCoarse", () => {
 		}
 	});
 
+	it("preserves repair task metadata fields", () => {
+		const dag = `<task_dag>{"epic":"E","phases":[
+      {"id":"P3.5-repair-1","name":"repair","tasks":[
+        {"id":"T3.5-1-1","persona":"code_executor","objective":"patch edge case","parallelGroup":"repair","dependsOn":[],"needsRefine":true,
+         "allowedGlobs":["src/upload.ts"],"acceptance":["Rejected files produce a clear error."],"priority":"P1","source_issue":"W3.5 missing path","blocking":true}
+      ]}
+    ]}</task_dag>`;
+		const r = compileCoarse(dag);
+		expect(r.ok).toBe(true);
+		if (r.ok) {
+			expect(r.dag.phases[0]!.tasks[0]).toMatchObject({
+				allowedGlobs: ["src/upload.ts"],
+				acceptance: ["Rejected files produce a clear error."],
+				priority: "P1",
+				sourceIssue: "W3.5 missing path",
+				blocking: true,
+			});
+		}
+	});
+
 	it("normalizes case for persona", () => {
 		const dag = `
 <task_dag>

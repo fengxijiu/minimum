@@ -183,14 +183,27 @@ describe("P0-1 EngineBridge", () => {
 		expect(
 			mapLoopEvent({
 				type: "usage",
-				usage: { totalTokens: 12, toolCalls: 1, steps: 1, totalCostUsd: 0 },
+				usage: {
+					totalTokens: 12,
+					totalPromptTokens: 8,
+					totalCompletionTokens: 4,
+					totalCachedTokens: 2,
+					toolCalls: 1,
+					steps: 1,
+					totalCost: 0,
+					totalCostCurrency: "CNY",
+				},
 			} as any),
 		).toEqual({
 			kind: "usage",
 			totalTokens: 12,
+			promptTokens: 8,
+			completionTokens: 4,
+			cachedTokens: 2,
 			toolCalls: 1,
 			steps: 1,
-			totalCostUsd: 0,
+			totalCost: 0,
+			currency: "CNY",
 		});
 		expect(
 			mapLoopEvent({

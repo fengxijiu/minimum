@@ -24,7 +24,16 @@ export function getProjectMemoryRoot(projectRoot: string): string {
 
 /** Resolve the user-global canonical memory root: `~/.minimum/memory`. */
 export function getGlobalMemoryRoot(homeDir: string = os.homedir()): string {
-	return joinForRoot(homeDir || "~", ".minimum", "memory");
+	return joinForRoot(resolveHomeDir(homeDir), ".minimum", "memory");
+}
+
+export function resolveHomePath(input: string): string {
+	const trimmed = input.trim();
+	if (trimmed === "~") return resolveHomeDir();
+	if (trimmed.startsWith("~/") || trimmed.startsWith("~\\")) {
+		return joinForRoot(resolveHomeDir(), trimmed.slice(2));
+	}
+	return trimmed;
 }
 
 /** Resolve a canonical markdown file path for a memory layer/key pair. */
@@ -60,6 +69,14 @@ function getLayerRoot(layer: MemoryLayer): string {
 	return layer.scope === "project"
 		? getProjectMemoryRoot(layer.projectRoot)
 		: getGlobalMemoryRoot(layer.homeDir);
+}
+
+function resolveHomeDir(homeDir = os.homedir()): string {
+	const resolved = homeDir || os.homedir();
+	if (!resolved) {
+		throw new Error("Cannot resolve home directory for global memory path");
+	}
+	return resolved;
 }
 
 function joinForRoot(root: string, ...segments: string[]): string {

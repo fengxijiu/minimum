@@ -162,6 +162,28 @@ describe("createMiMoStack", () => {
 		expect(stack.memoryManager?.config.injection?.maxTokens).toBe(2500);
 	});
 
+	it("expands tilde memory.globalBasePath before memory writes", async () => {
+		const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mimo-stack-memory-"));
+		const cwdTilde = path.join(projectRoot, "~");
+		try {
+			const tools = new ToolRegistry();
+			const stack = createMiMoStack(new MockClient(), tools, projectRoot, {
+				memory: { enabled: true, globalBasePath: "~/.minimum/memory" },
+			});
+			await stack.memoryManager!.writeback({
+				workingDirectory: projectRoot,
+				userInput: "remember globally that upload retries use exponential backoff",
+				messages: [],
+			});
+
+			expect(fs.existsSync(path.join(cwdTilde, ".minimum"))).toBe(false);
+			expect(fs.existsSync(path.join(os.homedir(), ".minimum", "memory"))).toBe(true);
+		} finally {
+			fs.rmSync(projectRoot, { recursive: true, force: true });
+			fs.rmSync(cwdTilde, { recursive: true, force: true });
+		}
+	});
+
 	it("does not create the memory manager when memory is disabled", () => {
 		const tools = new ToolRegistry();
 		const stack = createMiMoStack(new MockClient(), tools, process.cwd(), {

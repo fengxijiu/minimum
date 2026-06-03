@@ -74,7 +74,11 @@ check('PermissionCard', h(PermissionCard, { perm: {
 for (const st of ['agent', 'mimo', 'orchestrate', 'paused', 'error']) {
   check(`StatusBar/${st}`, h(StatusBar, {
     state: st, approvalMode: 'auto-edit', editMode: 'review',
-    ctxUsed: 12.5, ctxMax: 200, hint: '3msg', usage: { lastTurnCost: 0.01, sessionCost: 0.2 },
+    ctxUsed: 12.5, ctxMax: 200, hint: '3msg',
+    usage: {
+      promptTokens: 0, completionTokens: 0, cachedTokens: 0,
+      lastTurnCost: 0.01, sessionCost: 0.2, cacheHit: 0, currency: 'CNY',
+    },
   }), []);
 }
 

@@ -393,6 +393,21 @@ export class MiMoClient {
 			thinking: this.thinking,
 		};
 	}
+
+	/** Configured model id — used by MiMoLoop to look up pricing. */
+	getModel(): string {
+		return this.model;
+	}
+
+	/** Maximum completion tokens this client is configured to request. */
+	getMaxTokens(): number {
+		return this.maxTokens;
+	}
+
+	/** "tp-" → Token Plan (Credits); anything else → API pay-as-you-go (CNY). */
+	getBillingMode(): "api" | "tokenPlan" {
+		return this.apiKey.startsWith("tp-") ? "tokenPlan" : "api";
+	}
 }
 
 /**

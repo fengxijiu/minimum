@@ -710,14 +710,27 @@ describe("mapLoopEvent", () => {
 	it("maps usage event with all fields", () => {
 		const e: LoopEvent = {
 			type: "usage",
-			usage: { totalTokens: 1500, toolCalls: 3, steps: 5, totalCostUsd: 0.02 },
+			usage: {
+				totalTokens: 1500,
+				totalPromptTokens: 1000,
+				totalCompletionTokens: 500,
+				totalCachedTokens: 200,
+				toolCalls: 3,
+				steps: 5,
+				totalCost: 0.02,
+				totalCostCurrency: "CNY",
+			},
 		};
 		expect(mapLoopEvent(e)).toEqual({
 			kind: "usage",
 			totalTokens: 1500,
+			promptTokens: 1000,
+			completionTokens: 500,
+			cachedTokens: 200,
 			toolCalls: 3,
 			steps: 5,
-			totalCostUsd: 0.02,
+			totalCost: 0.02,
+			currency: "CNY",
 		});
 	});
 
@@ -726,9 +739,13 @@ describe("mapLoopEvent", () => {
 		expect(mapLoopEvent(e)).toEqual({
 			kind: "usage",
 			totalTokens: 0,
+			promptTokens: 0,
+			completionTokens: 0,
+			cachedTokens: 0,
 			toolCalls: 0,
 			steps: 0,
-			totalCostUsd: 0,
+			totalCost: 0,
+			currency: "CNY",
 		});
 	});
 

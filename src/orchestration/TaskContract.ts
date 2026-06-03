@@ -92,6 +92,11 @@ export interface CoarseTask {
 	needsRefine: boolean;
 	/** Populated only when needsRefine is false at coarse-compile time. */
 	allowedGlobs?: string[];
+	/** W3.5 loop-back metadata, preserved for repair DAG refinement. */
+	acceptance?: string[];
+	priority?: string;
+	sourceIssue?: string;
+	blocking?: boolean;
 }
 
 export interface CoarsePhase {

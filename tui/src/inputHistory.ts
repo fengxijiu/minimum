@@ -2,9 +2,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 
-// os.homedir() is the cross-platform source of truth; $HOME alone is empty on
-// Windows and a literal "~" fallback would create cwd-relative paths.
-const HIST_DIR = path.join(os.homedir(), '.minimum');
+// $HOME wins so tests can redirect via env; os.homedir() is the cross-platform
+// fallback on Windows where HOME is normally empty. The literal "~" tail that
+// used to live in this chain is gone — it produced cwd-relative paths.
+const HIST_DIR = path.join(process.env.HOME ?? os.homedir(), '.minimum');
 const HIST_FILE = path.join(HIST_DIR, 'history.jsonl');
 const MAX_ENTRIES = 500;
 

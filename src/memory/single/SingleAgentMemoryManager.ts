@@ -4,6 +4,7 @@ import type { ChatMessage } from "../../types/common.js";
 import { MemoryStore, type MemoryEntry } from "../MemoryStore.js";
 import { ProjectMemory, type ProjectMemoryEntry } from "../ProjectMemory.js";
 import { readMemoryIndex } from "../governance/MemoryIndex.js";
+import { resolveHomePath } from "./MemoryPaths.js";
 import type {
 	ISingleAgentMemoryManager,
 	MemoryInjectionRequest,
@@ -261,9 +262,12 @@ export class SingleAgentMemoryManager implements ISingleAgentMemoryManager {
 	readonly compactor: MemoryCompactor;
 
 	constructor(private options: SingleAgentMemoryManagerOptions) {
+		const globalBasePath = options.globalBasePath
+			? resolveHomePath(options.globalBasePath)
+			: undefined;
 		this.globalStore =
 			options.globalStore ??
-			new MemoryStore({ basePath: options.globalBasePath });
+			new MemoryStore({ basePath: globalBasePath });
 		this.maxPreludeEntries = options.maxPreludeEntries ?? 8;
 		this.scorer = new SingleAgentMemoryScorer();
 		this.retriever = new MemoryRetriever();

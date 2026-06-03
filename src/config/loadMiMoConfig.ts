@@ -5,10 +5,9 @@ import * as path from "node:path";
 import type { MiMoConfig } from "./MiMoConfig.js";
 
 function resolveHome(): string {
-	// os.homedir() is the cross-platform source of truth — $HOME is empty on
-	// Windows and falling back to a literal "~" turns the result into a
-	// cwd-relative path under path.join.
-	return os.homedir();
+	// HOME may be set by tests or shells to isolate global config; empty HOME
+	// on Windows falls back to os.homedir(). Never use a literal "~" fallback.
+	return process.env.HOME || os.homedir();
 }
 
 /** `~/.minimum/config.json` — 全局默认配置，每次调用重新解析 HOME。 */

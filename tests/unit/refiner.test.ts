@@ -231,6 +231,73 @@ describe("refineDag", () => {
 		expect(contracts[0]!.acceptance[0]).toContain("implement upload endpoint");
 	});
 
+	it("uses coarse repair DAG acceptance when refinement omits acceptance", () => {
+		const dag = mkDag({
+			phases: [
+				{
+					id: "P3.5-repair-1",
+					name: "mission-check repair",
+					tasks: [
+						{
+							id: "T3.5-1-1",
+							personaId: "code_executor",
+							objective: "patch missing edge case",
+							parallelGroup: "mission-repair-1",
+							dependsOn: [],
+							needsRefine: true,
+							acceptance: ["Rejected files produce a clear error."],
+							priority: "P1",
+							sourceIssue: "W3.5 found a missing path.",
+							blocking: true,
+						},
+					],
+				},
+			],
+		});
+		const { contracts } = refineDag(dag, {
+			inputs: baseInputs,
+			refinement: refinement([
+				{
+					taskId: "T3.5-1-1",
+					allowedGlobs: ["src/upload.ts"],
+					blockedCondition: "blocked if W3.5 repair source issue is still ambiguous",
+				},
+			]),
+		});
+
+		expect(contracts[0]!.acceptance).toEqual(["Rejected files produce a clear error."]);
+	});
+
+	it("uses repair DAG allowedGlobs when a T3.5 task has no refinement entry", () => {
+		const dag = mkDag({
+			phases: [
+				{
+					id: "P3.5-repair-1",
+					name: "mission-check repair",
+					tasks: [
+						{
+							id: "T3.5-1-1",
+							personaId: "code_executor",
+							objective: "patch missing edge case",
+							parallelGroup: "mission-repair-1",
+							dependsOn: [],
+							needsRefine: true,
+							allowedGlobs: ["src/upload.ts"],
+							acceptance: ["Rejected files produce a clear error."],
+						},
+					],
+				},
+			],
+		});
+		const { contracts, errors } = refineDag(dag, {
+			inputs: baseInputs,
+			refinement: refinement([]),
+		});
+
+		expect(contracts[0]!.pathPolicy.allowedGlobs).toEqual(["src/upload.ts"]);
+		expect(errors.some((e) => e.taskId === "T3.5-1-1" && e.errors.some((m) => m.includes("allowedGlobs")))).toBe(false);
+	});
+
 	it("surfaces glob conflicts within a parallelGroup", () => {
 		const dag = mkDag({
 			phases: [

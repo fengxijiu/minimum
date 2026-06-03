@@ -102,9 +102,15 @@ export type Toast = {
 export type UsageInfo = {
   promptTokens: number;
   completionTokens: number;
+  cachedTokens: number;
+  /** Accumulated cost in `currency` units across the session. */
   sessionCost: number;
+  /** Cost delta of the most recent turn. */
   lastTurnCost: number;
+  /** Cache hit ratio (0–1) — cachedTokens / promptTokens. */
   cacheHit: number;
+  /** "CNY" for API pay-as-you-go, "Credits" for Token Plan. */
+  currency: 'CNY' | 'Credits';
 };
 
 export type AppState = {
@@ -152,4 +158,27 @@ export type AppState = {
   planMode: boolean;
   /** Orchestrator pipeline phases — null when not running the pipeline. */
   pipeline: PipelinePhase[] | null;
+  /** In-flight + recently-finished sub-agents. Brief rendered in PipelinePanel
+   *  vicinity. Ordered by startedAt ascending so newest activity sits at the
+   *  bottom of the brief. */
+  subagents: SubagentState[];
+};
+
+export type SubagentStatus = 'running' | 'done' | 'error' | 'blocked';
+
+export type SubagentState = {
+  taskId: string;
+  personaId: string;
+  objective: string;
+  step: number;
+  maxSteps: number;
+  toolCalls: number;
+  lastTool?: string;
+  lastToolArgs?: string;
+  tokens: number;
+  cost: number;
+  currency: 'CNY' | 'Credits';
+  status: SubagentStatus;
+  startedAt: number;
+  updatedAt: number;
 };

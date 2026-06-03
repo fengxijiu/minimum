@@ -14,6 +14,9 @@ export interface EngineInfo {
   tools?: string[];
   configPath?: string;
   memoryPath?: string;
+  /** Context window size in tokens — drives ctx.max so the meter is to scale.
+   * mimo-v2.5 / mimo-v2.5-pro both ship a 1 048 576-token window. */
+  contextWindow?: number;
 }
 
 /**
@@ -32,7 +35,18 @@ export type UiEvent =
   | { kind: 'tool_result'; name: string; ok: boolean; content: string }
   | { kind: 'notice'; text: string; tone: 'info' | 'warn' | 'ok' }
   | { kind: 'error'; text: string }
-  | { kind: 'usage'; totalTokens: number; toolCalls: number; steps: number; totalCostUsd: number }
+  | {
+      kind: 'usage';
+      totalTokens: number;
+      promptTokens: number;
+      completionTokens: number;
+      cachedTokens: number;
+      toolCalls: number;
+      steps: number;
+      /** Accumulated cost in `currency` units (CNY for sk-, Credits for tp-). */
+      totalCost: number;
+      currency: 'CNY' | 'Credits';
+    }
   | { kind: 'plan'; steps: UiPlanStep[] }
   | { kind: 'permission_request'; id: string; tool: string; args: Record<string, unknown>; risk: UiRisk; description: string }
   | { kind: 'pipeline'; phase: string; label: string; detail?: string }
@@ -40,7 +54,22 @@ export type UiEvent =
   | { kind: 'streaming'; text: string }
   | { kind: 'streaming_reasoning'; text: string }
   | { kind: 'streaming_start' }
-  | { kind: 'streaming_end' };
+  | { kind: 'streaming_end' }
+  | {
+      kind: 'subagent_progress';
+      taskId: string;
+      personaId: string;
+      objective: string;
+      step: number;
+      maxSteps: number;
+      toolCalls: number;
+      lastTool?: string;
+      lastToolArgs?: string;
+      tokens: number;
+      cost: number;
+      currency: 'CNY' | 'Credits';
+      status: 'running' | 'done' | 'error' | 'blocked';
+    };
 
 export type ApprovalDecision = { approved: boolean; reason?: string; remembered?: boolean };
 
@@ -238,6 +267,7 @@ export function uiEventToMessages(ev: UiEvent): Message[] {
     case 'streaming_reasoning':
     case 'streaming_start':
     case 'streaming_end':
+    case 'subagent_progress':
       return [];
   }
 }
@@ -335,7 +365,7 @@ export async function createEngineRunner(
       tools.register(new Ctor());
     }
     const approvalManager = new eng.ApprovalManager({ mode: userConfig.approvalMode ?? 'auto-edit' });
-    const { loop, sessionManager } = eng.createMiMoStack(client, tools, workingDirectory, userConfig, { approvalManager, confirmationGate: choiceGate });
+    const { loop, sessionManager, validator } = eng.createMiMoStack(client, tools, workingDirectory, userConfig, { approvalManager, confirmationGate: choiceGate });
 
     // Wire learned skills into the single-agent system context using a two-tier approach:
     //   • Brief catalog  — always shown: name + one-line description + trigger keywords
@@ -413,8 +443,31 @@ export async function createEngineRunner(
     // when the built engine exposes PipelineBridge.
     let pipelineRunner: Runner | undefined;
     if (eng.PipelineBridge) {
-      const pipelineBridge = new eng.PipelineBridge(client, { projectRoot: workingDirectory, choiceGate });
-      pipelineRunner = { send: (input: string) => pipelineBridge.send(input) };
+      // Share the SAME tools + approvalManager instances with the single-agent
+      // loop. This makes the Shift+Tab approvalMode cycle the single source of
+      // truth: flipping read-only / auto-edit / full-auto now actually affects
+      // both the agent and orchestrate runners.
+      //
+      // Billing mode is read from the API-key prefix; pricing module already
+      // knows that "tp-" routes to the Token Plan Credits table.
+      const billingMode = apiKey?.startsWith('tp-') ? 'tokenPlan' : 'api';
+      const pipelineBridge = new eng.PipelineBridge(client, {
+        projectRoot: workingDirectory,
+        choiceGate,
+        tools,
+        approvalManager,
+        // Share the same validator instance as the single-agent loop. The
+        // worker now snapshots before writes and rolls back if validation
+        // fails (same behaviour MiMoLoop has for the interactive agent).
+        validator,
+        model: userConfig.defaultModel ?? 'mimo-v2.5-pro',
+        billingMode,
+      });
+      pipelineRunner = {
+        send: (input: string) => pipelineBridge.send(input),
+        resolvePermission: (id, decision) => pipelineBridge.resolvePermission(id, decision),
+        setApprovalMode: (mode) => approvalManager.setMode(mode),
+      };
     }
     const toolNames: string[] = (tools.getDefinitions?.() ?? []).map((d: { name: string }) => d.name);
     const info: EngineInfo = {
@@ -424,6 +477,8 @@ export async function createEngineRunner(
       tools: toolNames,
       configPath,
       memoryPath: path.join(workingDirectory, '.minimum', 'memory.md'),
+      // Both mimo-v2.5 and mimo-v2.5-pro publish a 1M token context window.
+      contextWindow: 1_048_576,
     };
     return { runner, ...(pipelineRunner && { pipelineRunner }), info, ...(sessionFlusher && { sessionFlusher }), choiceGate };
   } catch (err) {

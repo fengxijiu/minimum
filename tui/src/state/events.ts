@@ -55,7 +55,14 @@ export type AgentEvent =
   | { type: 'toast.show'; text: string; tone: 'info' | 'warn' | 'ok' | 'err'; ttlMs?: number }
   | { type: 'toast.dismiss'; id: string }
   // usage / cost tracking
-  | { type: 'usage.update'; promptTokens?: number; completionTokens?: number; cost?: number }
+  | {
+      type: 'usage.update';
+      promptTokens?: number;
+      completionTokens?: number;
+      cachedTokens?: number;
+      cost?: number;
+      currency?: 'CNY' | 'Credits';
+    }
   // edit mode
   | { type: 'edit.undo' }
   // mcp
@@ -66,5 +73,22 @@ export type AgentEvent =
   | { type: 'pipeline.start' }
   | { type: 'pipeline.phase'; phase: string; label: string; detail?: string }
   | { type: 'pipeline.end' }
+  // subagent (pipeline worker) brief
+  | {
+      type: 'subagent.update';
+      taskId: string;
+      personaId: string;
+      objective: string;
+      step: number;
+      maxSteps: number;
+      toolCalls: number;
+      lastTool?: string;
+      lastToolArgs?: string;
+      tokens: number;
+      cost: number;
+      currency: 'CNY' | 'Credits';
+      status: 'running' | 'done' | 'error' | 'blocked';
+    }
+  | { type: 'subagent.clear'; taskId?: string }
   // init
   | { type: 'init.run'; cwd: string; args?: string[] };

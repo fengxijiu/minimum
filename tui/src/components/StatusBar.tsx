@@ -43,7 +43,7 @@ export const StatusBar = React.memo(function StatusBar({ state, approvalMode, ct
   const keys =
     state === 'paused' ? [['⏎', 'allow'], ['n', 'deny']]
     : state === 'error' ? [['⏎', 'fix'], ['u', 'undo'], ['l', 'log']]
-    : [['tab', 'mode'], ['S+Tab', 'edit'], ['esc', 'quit'], ['/', 'cmd']];
+    : [['tab', 'mode'], ['S+Tab', 'perm'], ['esc', 'quit'], ['/', 'cmd']];
 
   return (
     <Box paddingX={1} justifyContent="space-between">
@@ -65,13 +65,25 @@ export const StatusBar = React.memo(function StatusBar({ state, approvalMode, ct
         )}
         <Text color={theme.muted}>  mimo  </Text>
         <TokenMeter used={ctxUsed} max={ctxMax} />
-        {usage && usage.lastTurnCost > 0 && (
-          <>
-            <Text color={theme.muted}>  ·  </Text>
-            <Text color={theme.plus}>${usage.lastTurnCost.toFixed(4)}</Text>
-            <Text color={theme.muted}>  Σ${usage.sessionCost.toFixed(2)}</Text>
-          </>
-        )}
+        {usage && (usage.lastTurnCost > 0 || usage.sessionCost > 0) && (() => {
+          // Credits-mode is Token Plan billing — values are larger and integer-
+          // ish, so 1 decimal and "C" prefix; CNY-mode is fractional yuan so
+          // 4 decimals for the turn cost and 2 for the running total.
+          const isCredits = usage.currency === 'Credits';
+          const symbol = isCredits ? 'C' : '¥';
+          const turnDigits = isCredits ? 1 : 4;
+          const sessionDigits = isCredits ? 1 : 2;
+          return (
+            <>
+              <Text color={theme.muted}>  ·  </Text>
+              <Text color={theme.plus}>{symbol}{usage.lastTurnCost.toFixed(turnDigits)}</Text>
+              <Text color={theme.muted}>  Σ{symbol}{usage.sessionCost.toFixed(sessionDigits)}</Text>
+              {usage.cacheHit > 0 && (
+                <Text color={theme.muted}>  cache {Math.round(usage.cacheHit * 100)}%</Text>
+              )}
+            </>
+          );
+        })()}
         <Text color={theme.muted}>  ·  </Text>
         {keys.map(([k, l]) => <Key key={k} k={k!} label={l!} />)}
       </Box>

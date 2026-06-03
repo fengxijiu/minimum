@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { getGlobalMemoryRoot, sanitizeMemoryKey } from "./single/MemoryPaths.js";
+import { getGlobalMemoryRoot, resolveHomePath, sanitizeMemoryKey } from "./single/MemoryPaths.js";
 
 export interface MemoryEntry {
 	key: string;
@@ -33,7 +33,7 @@ export class MemoryStore {
 	private cache: Map<string, MemoryEntry> = new Map();
 
 	constructor(options: MemoryStoreOptions = {}) {
-		this.basePath = options.basePath || getGlobalMemoryRoot();
+		this.basePath = options.basePath ? resolveHomePath(options.basePath) : getGlobalMemoryRoot();
 		this.maxSize = options.maxSize || 1000;
 	}
 

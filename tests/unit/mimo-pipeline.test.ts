@@ -358,6 +358,142 @@ describe("runPipeline", () => {
 		expect(events.some((e) => e.type === "pipeline_error")).toBe(false);
 	});
 
+	it("treats unusable W3.5 loop-back task contracts as mission parse failures", async () => {
+		const events: PipelineEvent[] = [];
+		const gate = new ScriptedChoiceGate([
+			{ type: "pick", optionId: "continue_w23" },
+			{ type: "pick", optionId: "needs_human_confirmation" },
+		]);
+		const result = await runPipeline("image upload backend", {
+			projectRoot: dir,
+			planner: stubPlanner({
+				checkMission: async () => `# W3.5 Loop Detection Report
+
+Decision: LOOP_BACK_TO_W1
+
+Reason:
+
+- Missing rejected-file handling.
+
+## 7. Loop-Back Tasks for W1
+
+### Task 1: Implement missing rejected-file handling
+
+- Priority: P1
+- Blocking: Yes
+- Reason: Rejected files are not covered.
+- Source issue: W3.5 found a missing path.
+- Expected outcome: Rejected files produce a clear error.
+- Suggested owner agent: code_executor
+- Acceptance criteria:
+  - Rejected files are handled.
+`,
+			}),
+			executor: okExecutor(),
+			onEvent: (e) => events.push(e),
+			choiceGate: gate,
+		});
+
+		expect(result.ok).toBe(false);
+		expect(result.statusReason).toBe("human_confirmation");
+		expect(events.some((e) => e.type === "mission_parse_failed" && (e as any).error.includes("usable contracts"))).toBe(true);
+		expect(fs.existsSync(path.join(dir, ".minimum", "tasks", "image_upload", "repair-dags", "1.json"))).toBe(false);
+	});
+
+	it("asks for confirmation and stops gracefully when the mission repair cap is reached", async () => {
+		const events: PipelineEvent[] = [];
+		const loopBackReport = `# W3.5 Loop Detection Report
+
+Decision: LOOP_BACK_TO_W1
+
+Reason:
+
+- Still missing rejected-file handling.
+
+## 7. Loop-Back Tasks for W1
+
+### Task 1: Patch upload rejection branch
+
+- Priority: P1
+- Blocking: Yes
+- Reason: Rejected files are silently dropped.
+- Source issue: W3.5 detected missing branch.
+- Expected outcome: Rejected files return a clear error.
+- Suggested owner agent: code_executor
+- Allowed globs:
+  - src/upload-rejected.ts
+- Acceptance criteria:
+  - Rejected files produce a clear error.
+`;
+		const gate = new ScriptedChoiceGate([
+			{ type: "pick", optionId: "continue_w23" }, // initial W0.5 DAG gate
+			{ type: "pick", optionId: "continue_w23" }, // repair-1 W0.5 DAG gate
+			{ type: "pick", optionId: "stop_for_human" }, // mission repair cap gate
+		]);
+		const checkMission = vi.fn(async () => loopBackReport);
+		const result = await runPipeline("image upload backend", {
+			projectRoot: dir,
+			planner: stubPlanner({ checkMission }),
+			executor: okExecutor(),
+			onEvent: (e) => events.push(e),
+			choiceGate: gate,
+		});
+
+		expect(result.ok).toBe(false);
+		expect(result.statusReason).toBe("human_confirmation");
+		expect(checkMission).toHaveBeenCalledTimes(2);
+		expect(events.some((e) => e.type === "pipeline_error")).toBe(false);
+		expect(events.some((e) => e.type === "human_confirmation_required" && (e as any).phase === "W3.5")).toBe(true);
+		const capPayload = gate.payloads[gate.payloads.length - 1]!;
+		expect(capPayload.options.map((o) => o.id).sort()).toEqual(
+			["approve_to_w4", "continue_repair", "stop_for_human"].sort(),
+		);
+	});
+
+	it("advances to W4 when the user approves override at the mission repair cap", async () => {
+		const events: PipelineEvent[] = [];
+		const loopBackReport = `# W3.5 Loop Detection Report
+
+Decision: LOOP_BACK_TO_W1
+
+Reason:
+
+- Still missing rejected-file handling.
+
+## 7. Loop-Back Tasks for W1
+
+### Task 1: Patch upload rejection branch
+
+- Priority: P1
+- Blocking: Yes
+- Reason: Rejected files are silently dropped.
+- Source issue: W3.5 detected missing branch.
+- Expected outcome: Rejected files return a clear error.
+- Suggested owner agent: code_executor
+- Allowed globs:
+  - src/upload-rejected.ts
+- Acceptance criteria:
+  - Rejected files produce a clear error.
+`;
+		const gate = new ScriptedChoiceGate([
+			{ type: "pick", optionId: "continue_w23" },
+			{ type: "pick", optionId: "continue_w23" },
+			{ type: "pick", optionId: "approve_to_w4" },
+		]);
+		const result = await runPipeline("image upload backend", {
+			projectRoot: dir,
+			planner: stubPlanner({ checkMission: async () => loopBackReport }),
+			executor: okExecutor(),
+			onEvent: (e) => events.push(e),
+			choiceGate: gate,
+		});
+
+		expect(result.ok).toBe(true);
+		expect(result.statusReason).toBe("user_override");
+		expect(events.some((e) => e.type === "pipeline_choice" && (e as any).phase === "W3.5" && (e as any).choiceId === "approve_to_w4")).toBe(true);
+		expect(events.some((e) => e.type === "phase_start" && (e as any).phase === "W4")).toBe(true);
+	});
+
 	it("continues to W4 after W3.5 parse failure when the user explicitly approves override", async () => {
 		const events: PipelineEvent[] = [];
 		const gate = new ScriptedChoiceGate([
@@ -554,6 +690,8 @@ Reason:
 - Source issue: W3.5 found a missing path.
 - Expected outcome: Rejected files produce a clear error.
 - Suggested owner agent: code_executor
+- Allowed globs:
+  - src/T3.5-1-1.ts
 - Acceptance criteria:
   - Rejected files are handled.
 `;
@@ -626,23 +764,31 @@ Reason:
 - Source issue: W3.5 found a missing path.
 - Expected outcome: Missing path is fixed.
 - Suggested owner agent: code_executor
+- Allowed globs:
+  - src/T3.5-1-1.ts
 - Acceptance criteria:
   - Missing path works.
 `,
 		});
 		const events: PipelineEvent[] = [];
 
+		const gate = new ScriptedChoiceGate([
+			{ type: "pick", optionId: "continue_w23" }, // initial W0.5 DAG gate
+			{ type: "pick", optionId: "continue_w23" }, // repair-1 W0.5 DAG gate
+			{ type: "pick", optionId: "stop_for_human" }, // mission repair cap gate
+		]);
 		const result = await runPipeline("image upload backend", {
 			projectRoot: dir,
 			planner,
 			executor: okExecutor(),
 			onEvent: (e) => events.push(e),
-			choiceGate: continueGate(),
+			choiceGate: gate,
 		});
 
 		expect(result.ok).toBe(false);
-		expect(result.error).toMatch(/another loop-back/);
-		expect(events.some((e) => e.type === "pipeline_error" && (e as any).phase === "W3.5")).toBe(true);
+		expect(result.statusReason).toBe("human_confirmation");
+		expect(events.some((e) => e.type === "human_confirmation_required" && (e as any).phase === "W3.5")).toBe(true);
+		expect(events.some((e) => e.type === "pipeline_error")).toBe(false);
 	});
 });
 

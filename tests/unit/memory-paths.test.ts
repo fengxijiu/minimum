@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import * as os from "node:os";
 import { describe, expect, it } from "vitest";
 import {
 	getGlobalMemoryRoot,
@@ -7,6 +8,7 @@ import {
 	getProjectMemoryRoot,
 	globalMemoryLayer,
 	projectMemoryLayer,
+	resolveHomePath,
 } from "../../src/memory/single/MemoryPaths.js";
 
 describe("MemoryPaths", () => {
@@ -46,6 +48,22 @@ describe("MemoryPaths", () => {
 		);
 		expect(getMemoryIndexPath(globalMemoryLayer("C:\\Users\\alice\\"))).toBe(
 			path.win32.join("C:\\Users\\alice", ".minimum", "memory", "index.json"),
+		);
+	});
+
+	it("does not fall back to a literal tilde for empty global homes", () => {
+		const root = getGlobalMemoryRoot("");
+		expect(root).not.toContain(`${path.sep}~${path.sep}`);
+		expect(root).not.toMatch(/(^|[\\/])~([\\/]|$)/);
+		expect(root).toBe(path.join(os.homedir(), ".minimum", "memory"));
+	});
+
+	it("expands tilde-prefixed configured paths", () => {
+		expect(resolveHomePath("~/.minimum/memory")).toBe(
+			path.join(os.homedir(), ".minimum", "memory"),
+		);
+		expect(resolveHomePath("~\\.minimum\\memory")).toBe(
+			path.join(os.homedir(), ".minimum", "memory"),
 		);
 	});
 });

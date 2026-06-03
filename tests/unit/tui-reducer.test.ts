@@ -28,14 +28,17 @@ const base: AppState = {
 	usage: {
 		promptTokens: 0,
 		completionTokens: 0,
+		cachedTokens: 0,
 		sessionCost: 0,
 		lastTurnCost: 0,
 		cacheHit: 0,
+		currency: "CNY" as const,
 	},
 	mcpLoading: null,
 	sessionName: null,
 	pipeline: null,
-};
+	subagents: [],
+} as AppState;
 
 describe("TUI reducer", () => {
 	it("user.submit appends a user message", () => {
@@ -530,5 +533,121 @@ describe("TUI reducer", () => {
 			type: "error",
 			error: { context: "exec_shell · pytest -q", hint: "u undo" },
 		});
+	});
+
+	// ── subagent brief ────────────────────────────────────────────
+	it("subagent.update inserts a new entry the first time taskId is seen", () => {
+		const s = reduce(base, {
+			type: "subagent.update",
+			taskId: "T1",
+			personaId: "code_executor",
+			objective: "implement upload",
+			step: 1,
+			maxSteps: 40,
+			toolCalls: 0,
+			tokens: 0,
+			cost: 0,
+			currency: "CNY",
+			status: "running",
+		});
+		expect(s.subagents).toHaveLength(1);
+		expect(s.subagents[0]).toMatchObject({
+			taskId: "T1",
+			personaId: "code_executor",
+			step: 1,
+			status: "running",
+		});
+		expect(s.subagents[0]?.startedAt).toBeGreaterThan(0);
+	});
+
+	it("subagent.update preserves startedAt across updates to same taskId", () => {
+		let s = reduce(base, {
+			type: "subagent.update",
+			taskId: "T1",
+			personaId: "code_executor",
+			objective: "do",
+			step: 1,
+			maxSteps: 40,
+			toolCalls: 0,
+			tokens: 0,
+			cost: 0,
+			currency: "CNY",
+			status: "running",
+		});
+		const startedAt = s.subagents[0]?.startedAt;
+		s = reduce(s, {
+			type: "subagent.update",
+			taskId: "T1",
+			personaId: "code_executor",
+			objective: "do",
+			step: 3,
+			maxSteps: 40,
+			toolCalls: 2,
+			lastTool: "write_file",
+			lastToolArgs: "src/x.ts",
+			tokens: 1500,
+			cost: 0.01,
+			currency: "CNY",
+			status: "running",
+		});
+		expect(s.subagents).toHaveLength(1); // replaced, not appended
+		expect(s.subagents[0]?.startedAt).toBe(startedAt);
+		expect(s.subagents[0]?.step).toBe(3);
+		expect(s.subagents[0]?.lastTool).toBe("write_file");
+		expect(s.subagents[0]?.toolCalls).toBe(2);
+	});
+
+	it("subagent.update keeps multiple tasks ordered by insertion", () => {
+		let s = reduce(base, {
+			type: "subagent.update", taskId: "T1", personaId: "code_executor",
+			objective: "a", step: 0, maxSteps: 20, toolCalls: 0,
+			tokens: 0, cost: 0, currency: "CNY", status: "running",
+		});
+		s = reduce(s, {
+			type: "subagent.update", taskId: "T2", personaId: "code_executor",
+			objective: "b", step: 0, maxSteps: 20, toolCalls: 0,
+			tokens: 0, cost: 0, currency: "CNY", status: "running",
+		});
+		expect(s.subagents.map(x => x.taskId)).toEqual(["T1", "T2"]);
+	});
+
+	it("subagent.clear with no taskId resets the list", () => {
+		let s = reduce(base, {
+			type: "subagent.update", taskId: "T1", personaId: "code_executor",
+			objective: "a", step: 0, maxSteps: 20, toolCalls: 0,
+			tokens: 0, cost: 0, currency: "CNY", status: "done",
+		});
+		s = reduce(s, { type: "subagent.clear" });
+		expect(s.subagents).toEqual([]);
+	});
+
+	it("subagent.clear with taskId removes just that entry", () => {
+		let s = reduce(base, {
+			type: "subagent.update", taskId: "T1", personaId: "code_executor",
+			objective: "a", step: 0, maxSteps: 20, toolCalls: 0,
+			tokens: 0, cost: 0, currency: "CNY", status: "done",
+		});
+		s = reduce(s, {
+			type: "subagent.update", taskId: "T2", personaId: "code_executor",
+			objective: "b", step: 0, maxSteps: 20, toolCalls: 0,
+			tokens: 0, cost: 0, currency: "CNY", status: "running",
+		});
+		s = reduce(s, { type: "subagent.clear", taskId: "T1" });
+		expect(s.subagents.map(x => x.taskId)).toEqual(["T2"]);
+	});
+
+	it("pipeline.end drops still-running subagents but keeps terminal ones", () => {
+		let s = reduce(base, {
+			type: "subagent.update", taskId: "T1", personaId: "code_executor",
+			objective: "a", step: 0, maxSteps: 20, toolCalls: 0,
+			tokens: 0, cost: 0, currency: "CNY", status: "done",
+		});
+		s = reduce(s, {
+			type: "subagent.update", taskId: "T2", personaId: "code_executor",
+			objective: "b", step: 0, maxSteps: 20, toolCalls: 0,
+			tokens: 0, cost: 0, currency: "CNY", status: "running",
+		});
+		s = reduce(s, { type: "pipeline.end" });
+		expect(s.subagents.map(x => x.taskId)).toEqual(["T1"]);
 	});
 });

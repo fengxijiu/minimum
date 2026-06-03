@@ -110,6 +110,10 @@ function validateTask(
 	const dependsOn = raw.dependsOn ?? raw.depends_on ?? [];
 	const needsRefine = raw.needsRefine ?? raw.needs_refine ?? false;
 	const allowedGlobs = raw.allowedGlobs ?? raw.allowed_globs ?? undefined;
+	const acceptance = raw.acceptance;
+	const priority = raw.priority;
+	const sourceIssue = raw.sourceIssue ?? raw.source_issue;
+	const blocking = raw.blocking;
 
 	if (typeof id !== "string" || !id)
 		return { ok: false, error: `${prefix}.id required` };
@@ -126,6 +130,14 @@ function validateTask(
 		return { ok: false, error: `${prefix}.dependsOn must be array of strings` };
 	if (allowedGlobs !== undefined && !Array.isArray(allowedGlobs))
 		return { ok: false, error: `${prefix}.allowedGlobs must be array or omitted` };
+	if (acceptance !== undefined && (!Array.isArray(acceptance) || !acceptance.every((a) => typeof a === "string")))
+		return { ok: false, error: `${prefix}.acceptance must be string[] or omitted` };
+	if (priority !== undefined && typeof priority !== "string")
+		return { ok: false, error: `${prefix}.priority must be string or omitted` };
+	if (sourceIssue !== undefined && typeof sourceIssue !== "string")
+		return { ok: false, error: `${prefix}.sourceIssue must be string or omitted` };
+	if (blocking !== undefined && typeof blocking !== "boolean")
+		return { ok: false, error: `${prefix}.blocking must be boolean or omitted` };
 
 	return {
 		ok: true,
@@ -137,6 +149,10 @@ function validateTask(
 			dependsOn: dependsOn as string[],
 			needsRefine: Boolean(needsRefine),
 			allowedGlobs: allowedGlobs as string[] | undefined,
+			...(acceptance !== undefined && { acceptance: acceptance as string[] }),
+			...(priority !== undefined && { priority }),
+			...(sourceIssue !== undefined && { sourceIssue }),
+			...(blocking !== undefined && { blocking }),
 		},
 	};
 }

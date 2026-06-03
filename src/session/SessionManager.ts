@@ -7,8 +7,13 @@ import { CheckpointManager } from "./CheckpointManager.js";
 import type { SessionState } from "./types.js";
 
 export interface LoopMeta {
-	totalCostUsd?: number;
+	/** Accumulated turn cost in `totalCostCurrency` units (CNY or Credits). */
+	totalCost?: number;
+	totalCostCurrency?: "CNY" | "Credits";
 	totalTokens?: number;
+	totalPromptTokens?: number;
+	totalCompletionTokens?: number;
+	totalCachedTokens?: number;
 	toolCalls?: number;
 	steps?: number;
 	model?: string;

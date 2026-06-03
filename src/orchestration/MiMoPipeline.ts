@@ -129,7 +129,7 @@ export async function runPipeline(
 	const gateRetryKeys = new Set<string>();
 	const artifactPaths = emptyArtifactPaths();
 	artifactPaths.memoryIndex = memoryIndexPath(opts.projectRoot);
-	const maxMissionRepairLoops = opts.maxMissionRepairLoops ?? 1;
+	let maxMissionRepairLoops = opts.maxMissionRepairLoops ?? 1;
 	let statusReason: PipelineResult["statusReason"] = "complete";
 
 	// ── W0: load memory, compile coarse DAG ──────────────────────────────────
@@ -293,12 +293,41 @@ export async function runPipeline(
 			return { ok: false, results: allResults, statusReason: "human_confirmation", error: reason };
 		}
 		if (missionLoopIndex >= maxMissionRepairLoops) {
-			return fail(
-				emit,
-				"W3.5",
-				`mission checker requested another loop-back after ${maxMissionRepairLoops} repair loop(s)`,
-				allResults,
-			);
+			const capChoice = await askPipelineChoice(opts.choiceGate, {
+				question: [
+					`W3.5 已经完成 ${maxMissionRepairLoops} 轮自动修复,但 mission checker 仍要求继续 LOOP_BACK_TO_W1。`,
+					mission.report.reason ? `原因摘要: ${mission.report.reason}` : "",
+					"请选择如何继续。",
+				]
+					.filter(Boolean)
+					.join("\n"),
+				options: [
+					{ id: "continue_repair", title: "再修一轮", summary: "突破修复上限一次,继续执行 mission checker 提出的新任务。" },
+					{ id: "stop_for_human", title: "暂停人工确认", summary: "安全停止,不发 pipeline_error。" },
+					{ id: "approve_to_w4", title: "强制进入 W4", summary: "显式用户 override,记录后继续 finalize。" },
+				],
+				allowCustom: false,
+			});
+			if (!capChoice || capChoice === "stop_for_human") {
+				const reason = capChoice
+					? `W3.5 mission repair cap reached after ${maxMissionRepairLoops} loop(s); user requested human confirmation`
+					: "W3.5 mission repair cap choice cancelled";
+				emit({ type: "human_confirmation_required", phase: "W3.5", reason });
+				return { ok: false, results: allResults, statusReason: "human_confirmation", error: reason };
+			}
+			emit({ type: "pipeline_choice", phase: "W3.5", choiceId: capChoice, reason: "mission repair cap reached" });
+			if (capChoice === "approve_to_w4") {
+				statusReason = "user_override";
+				knownIssues.push(`W3.5 mission repair cap overridden by user after ${maxMissionRepairLoops} loop(s)`);
+				break;
+			}
+			if (capChoice !== "continue_repair") {
+				const reason = `unsupported W3.5 cap choice: ${capChoice}`;
+				emit({ type: "human_confirmation_required", phase: "W3.5", reason });
+				return { ok: false, results: allResults, statusReason: "human_confirmation", error: reason };
+			}
+			maxMissionRepairLoops++;
+			knownIssues.push(`W3.5 mission repair cap extended by user to ${maxMissionRepairLoops} loop(s)`);
 		}
 		if (mission.report.tasks.length === 0) {
 			return fail(emit, "W3.5", "mission checker requested loop-back but provided no tasks", allResults);

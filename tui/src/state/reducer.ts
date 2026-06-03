@@ -212,7 +212,15 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
         pending: null,
         activeTool: null,
         ctx: { used: 0, max: state.ctx.max },
-        usage: { promptTokens: 0, completionTokens: 0, sessionCost: 0, lastTurnCost: 0, cacheHit: 0 },
+        usage: {
+          promptTokens: 0,
+          completionTokens: 0,
+          cachedTokens: 0,
+          sessionCost: 0,
+          lastTurnCost: 0,
+          cacheHit: 0,
+          currency: state.usage.currency,
+        },
       };
 
     case 'messages.clear':
@@ -357,17 +365,28 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
     }
 
     // ── usage / cost ──────────────────────────────────────────────
-    case 'usage.update':
+    case 'usage.update': {
+      const promptTokens = event.promptTokens ?? state.usage.promptTokens;
+      const cachedTokens = event.cachedTokens ?? state.usage.cachedTokens;
+      // Cache-hit ratio is derived rather than transported — promptTokens
+      // already includes the cached portion, so the ratio comes from the
+      // same authoritative numbers the rest of the UI shows.
+      const cacheHit = promptTokens > 0
+        ? Math.min(1, Math.max(0, cachedTokens / promptTokens))
+        : 0;
       return {
         ...state,
         usage: {
-          promptTokens: event.promptTokens ?? state.usage.promptTokens,
+          promptTokens,
           completionTokens: event.completionTokens ?? state.usage.completionTokens,
+          cachedTokens,
           sessionCost: event.cost != null ? state.usage.sessionCost + event.cost : state.usage.sessionCost,
           lastTurnCost: event.cost ?? state.usage.lastTurnCost,
-          cacheHit: state.usage.cacheHit, // updated separately if needed
+          cacheHit,
+          currency: event.currency ?? state.usage.currency,
         },
       };
+    }
 
     case 'edit.undo': {
       if (!state.edits.length) return state;
@@ -430,8 +449,50 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
         status: 'done' as const,
         endedAt: p.status === 'active' ? now : p.endedAt,
       }));
-      return { ...state, pipeline: done.length ? done : null };
+      // Drop running subagents — pipeline ended, anything still "running" is
+      // stale. Keep terminal entries so the user sees the final tally briefly.
+      const remainingSubagents = state.subagents.filter(s => s.status !== 'running');
+      return {
+        ...state,
+        pipeline: done.length ? done : null,
+        subagents: remainingSubagents,
+      };
     }
+
+    // ── subagent brief ────────────────────────────────────────────
+    case 'subagent.update': {
+      const now = Date.now();
+      const existing = state.subagents.find(s => s.taskId === event.taskId);
+      const startedAt = existing?.startedAt ?? now;
+      const updated = {
+        taskId: event.taskId,
+        personaId: event.personaId,
+        objective: event.objective,
+        step: event.step,
+        maxSteps: event.maxSteps,
+        toolCalls: event.toolCalls,
+        ...(event.lastTool !== undefined && { lastTool: event.lastTool }),
+        ...(event.lastToolArgs !== undefined && { lastToolArgs: event.lastToolArgs }),
+        tokens: event.tokens,
+        cost: event.cost,
+        currency: event.currency,
+        status: event.status,
+        startedAt,
+        updatedAt: now,
+      };
+      // Preserve startedAt ordering; replace-in-place if known, append otherwise.
+      const subagents = existing
+        ? state.subagents.map(s => (s.taskId === event.taskId ? updated : s))
+        : [...state.subagents, updated];
+      return { ...state, subagents };
+    }
+
+    case 'subagent.clear':
+      if (event.taskId) {
+        const next = state.subagents.filter(s => s.taskId !== event.taskId);
+        return next.length === state.subagents.length ? state : { ...state, subagents: next };
+      }
+      return state.subagents.length === 0 ? state : { ...state, subagents: [] };
 
     // ── init ─────────────────────────────────────────────────────
     case 'init.run':

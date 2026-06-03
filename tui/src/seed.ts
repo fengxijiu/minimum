@@ -34,10 +34,21 @@ export function createInitialState(cwd: string): AppState {
     activeTool: null,
     petVisible: false,
     toasts: [],
-    usage: { promptTokens: 0, completionTokens: 0, sessionCost: 0, lastTurnCost: 0, cacheHit: 0 },
+    usage: {
+      promptTokens: 0,
+      completionTokens: 0,
+      cachedTokens: 0,
+      sessionCost: 0,
+      lastTurnCost: 0,
+      cacheHit: 0,
+      // Defaults to CNY (API pay-as-you-go); flipped to "Credits" the first
+      // time engine emits usage with a tp- key.
+      currency: 'CNY',
+    },
     mcpLoading: null,
     sessionName: null,
     planMode: false,
     pipeline: null,
+    subagents: [],
   };
 }

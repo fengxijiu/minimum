@@ -103,6 +103,22 @@ describe("runTask", () => {
 		expect(r.status).toBe("error");
 	});
 
+	it("surfaces a descriptive error and raw excerpt when task_report is missing", async () => {
+		const rawOutput = "I cannot complete this task because the upstream context is unclear.";
+		const r = await runTask(mkContract(), { projectRoot: dir, executor: stubExecutor(rawOutput) });
+		expect(r.status).toBe("error");
+		expect(r.errors.length).toBeGreaterThan(0);
+		expect(r.errors.join("\n")).toMatch(/task_report/i);
+		expect(r.errors.join("\n")).toContain("upstream context is unclear");
+	});
+
+	it("uses an explanatory error when worker output is empty", async () => {
+		const r = await runTask(mkContract(), { projectRoot: dir, executor: stubExecutor("") });
+		expect(r.status).toBe("error");
+		expect(r.errors.length).toBeGreaterThan(0);
+		expect(r.errors.join("\n")).toMatch(/empty|no output/i);
+	});
+
 	it("includes durationMs in result", async () => {
 		const output = `<task_report><status>ok</status></task_report>`;
 		const r = await runTask(mkContract(), { projectRoot: dir, executor: stubExecutor(output) });

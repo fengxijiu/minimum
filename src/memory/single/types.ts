@@ -44,7 +44,9 @@ export interface MemoryWritebackRequest {
 	workingDirectory: string;
 	userInput: string;
 	turnIndex: number;
-	totalCostUsd?: number;
+	/** Accumulated turn cost in `totalCostCurrency` units (CNY or Credits). */
+	totalCost?: number;
+	totalCostCurrency?: "CNY" | "Credits";
 	totalTokens?: number;
 	toolCalls?: number;
 	steps?: number;

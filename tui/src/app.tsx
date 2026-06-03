@@ -3,6 +3,7 @@ import { Box, useApp } from 'ink';
 import { TitleBar }       from './components/TitleBar.js';
 import { PlanStrip }      from './components/PlanStrip.js';
 import { PipelinePanel }  from './components/PipelinePanel.js';
+import { SubagentBrief }  from './components/SubagentBrief.js';
 import { ChatStream }     from './components/ChatStream.js';
 import { StatusBar }      from './components/StatusBar.js';
 import { WelcomeScreen }  from './components/WelcomeScreen.js';
@@ -200,7 +201,13 @@ export function App({
 
   // ── Per-turn telemetry (reset on turn.start, drained into turnmeta) ──
   const turnToolCountRef = useRef(0);
-  const turnUsageRef = useRef<{ totalTokens: number; toolCalls: number; steps: number; totalCostUsd: number } | null>(null);
+  const turnUsageRef = useRef<{
+    totalTokens: number;
+    toolCalls: number;
+    steps: number;
+    totalCost: number;
+    currency: 'CNY' | 'Credits';
+  } | null>(null);
   // Tracks cumulative cost at the start of the current turn to compute per-turn delta.
   const prevCostRef = useRef(0);
 
@@ -254,7 +261,13 @@ export function App({
   useEffect(() => {
     const root = process.cwd();
     const scanned = scanFiles(root);
-    dispatch({ type: 'ctx.update', used: 0, max: 200 });
+    // Context window is measured in k-tokens for the TokenMeter; engineInfo
+    // carries the real number (1 048 576 for mimo-v2.5*), so the % bar tracks
+    // the model's actual capacity instead of the prior hardcoded 200k guess.
+    const ctxMaxK = engineInfo.contextWindow
+      ? Math.round(engineInfo.contextWindow / 1000)
+      : 200;
+    dispatch({ type: 'ctx.update', used: 0, max: ctxMaxK });
     if (scanned.length) dispatch({ type: 'files.set', files: scanned });
     if (engineInfo.mode === 'mock') {
       const reason = engineInfo.reason ?? 'not-built';
@@ -480,25 +493,31 @@ export function App({
     }
   }, [exit, dispatch, runner]);
 
+  // Track which runner owns the currently in-flight turn so permission
+  // resolutions route to the right side. EngineBridge and PipelineBridge each
+  // maintain their own pending-approval map; sending the verdict to the wrong
+  // one leaks the worker promise.
+  const activeRunnerRef = useRef<Runner>(runner);
+
   const allowPermission = useCallback(() => {
     const perm = activePermRef.current;
     if (!perm) return;
-    runner.resolvePermission?.(perm.id, { approved: true, reason: 'user approved' });
+    activeRunnerRef.current.resolvePermission?.(perm.id, { approved: true, reason: 'user approved' });
     setActivePerm(null);
     dispatch({ type: 'pending.clear' });
     dispatch({ type: 'system.push', text: `Allowed ${perm.tool}.`, tone: 'ok' });
-  }, [runner, dispatch]);
+  }, [dispatch]);
 
   const allowPermissionAlways = useCallback(() => {
     const perm = activePermRef.current;
     if (!perm) return;
-    runner.resolvePermission?.(perm.id, { approved: true, reason: 'user approved always' });
-    runner.setApprovalMode?.('full-auto');
+    activeRunnerRef.current.resolvePermission?.(perm.id, { approved: true, reason: 'user approved always' });
+    activeRunnerRef.current.setApprovalMode?.('full-auto');
     setActivePerm(null);
     dispatch({ type: 'pending.clear' });
     dispatch({ type: 'approval.change', mode: 'full-auto' });
     dispatch({ type: 'system.push', text: `Always allowing — switched to full-auto.`, tone: 'ok' });
-  }, [runner, dispatch]);
+  }, [dispatch]);
 
   const pickChoice = useCallback((optionId: string) => {
     choiceGate?.resolve({ type: 'pick', optionId });
@@ -522,18 +541,19 @@ export function App({
   const dismissPending = useCallback((note: string) => {
     const perm = activePermRef.current;
     if (perm) {
-      runner.resolvePermission?.(perm.id, { approved: false, reason: 'user denied' });
+      activeRunnerRef.current.resolvePermission?.(perm.id, { approved: false, reason: 'user denied' });
       setActivePerm(null);
     }
     dispatch({ type: 'pending.clear' });
     dispatch({ type: 'system.push', text: note, tone: 'warn' });
-  }, [runner, dispatch]);
+  }, [dispatch]);
 
   // ── Submit handler (stable — uses stateRef, no state deps) ──────────
   // ── Shared streaming turn — used by both the single-agent loop and the
   //    orchestrator pipeline runner. ─────────────────────────────────────
   const W_PHASES = useMemo(() => new Set(['W0', 'W1', 'W0.5', 'W2/3', 'W3.5', 'W4']), []);
   const runTurn = useCallback((activeRunner: Runner, trimmed: string, isPipeline: boolean) => {
+    activeRunnerRef.current = activeRunner;
     void (async () => {
       startChunkFlusher();
       turnToolCountRef.current = 0;
@@ -671,14 +691,42 @@ export function App({
               totalTokens: ev.totalTokens,
               toolCalls: ev.toolCalls,
               steps: ev.steps,
-              totalCostUsd: ev.totalCostUsd,
+              totalCost: ev.totalCost,
+              currency: ev.currency,
             };
+            // ctx.used is shown in k-tokens to match ctx.max (also k-tokens).
             dispatch({ type: 'ctx.update', used: Number((ev.totalTokens / 1000).toFixed(1)) });
-            const costDelta = Math.max(0, ev.totalCostUsd - prevCostRef.current);
-            prevCostRef.current = ev.totalCostUsd;
-            if (costDelta > 0) {
-              dispatch({ type: 'usage.update', cost: costDelta, completionTokens: ev.totalTokens });
-            }
+            // Always thread token splits — they're cumulative session totals
+            // so the meter/cacheHit reflect the latest snapshot even on a
+            // cost-free turn (full cache hit).
+            const costDelta = Math.max(0, ev.totalCost - prevCostRef.current);
+            prevCostRef.current = ev.totalCost;
+            dispatch({
+              type: 'usage.update',
+              promptTokens: ev.promptTokens,
+              completionTokens: ev.completionTokens,
+              cachedTokens: ev.cachedTokens,
+              cost: costDelta,
+              currency: ev.currency,
+            });
+            continue;
+          }
+          if (ev.kind === 'subagent_progress') {
+            dispatch({
+              type: 'subagent.update',
+              taskId: ev.taskId,
+              personaId: ev.personaId,
+              objective: ev.objective,
+              step: ev.step,
+              maxSteps: ev.maxSteps,
+              toolCalls: ev.toolCalls,
+              ...(ev.lastTool !== undefined && { lastTool: ev.lastTool }),
+              ...(ev.lastToolArgs !== undefined && { lastToolArgs: ev.lastToolArgs }),
+              tokens: ev.tokens,
+              cost: ev.cost,
+              currency: ev.currency,
+              status: ev.status,
+            });
             continue;
           }
           if (ev.kind === 'plan') {
@@ -757,7 +805,11 @@ export function App({
           if (steps > 0) parts.push(`${steps} step${steps > 1 ? 's' : ''}`);
           if (tools > 0) parts.push(`${tools} tool${tools > 1 ? 's' : ''}`);
           if (u && u.totalTokens > 0) parts.push(`${(u.totalTokens / 1000).toFixed(1)}k tok`);
-          if (u && u.totalCostUsd > 0) parts.push(`$${u.totalCostUsd.toFixed(2)}`);
+          if (u && u.totalCost > 0) {
+            const symbol = u.currency === 'Credits' ? 'C' : '¥';
+            const digits = u.currency === 'Credits' ? 1 : 2;
+            parts.push(`${symbol}${u.totalCost.toFixed(digits)}`);
+          }
           if (parts.length) dispatch({ type: 'turnmeta.push', summary: parts.join(' · ') });
         }
         // Phase 2: commit all messages from this turn into the Static scrollback layer.
@@ -770,6 +822,22 @@ export function App({
     const ac = turnAbortRef.current;
     if (ac && !ac.signal.aborted) ac.abort();
   }, []);
+
+  // Shift+Tab cycles through the three user-facing permission modes. The full
+  // ApprovalMode union also includes "suggest" and "never" but those are
+  // command-driven (/perm ...) corners, not part of the keyboard cycle.
+  const APPROVAL_CYCLE: ReadonlyArray<ApprovalMode> = useMemo(
+    () => ['read-only', 'auto-edit', 'full-auto'],
+    [],
+  );
+  const cycleApprovalMode = useCallback(() => {
+    const cur = stateRef.current.approvalMode;
+    const idx = APPROVAL_CYCLE.indexOf(cur);
+    const next = APPROVAL_CYCLE[(idx + 1) % APPROVAL_CYCLE.length] ?? 'auto-edit';
+    runner.setApprovalMode?.(next);
+    dispatch({ type: 'approval.change', mode: next });
+    dispatch({ type: 'toast.show', text: `Permission: ${next}`, tone: 'info', ttlMs: 2000 });
+  }, [APPROVAL_CYCLE, runner, dispatch]);
 
   const handleSubmit = useCallback((text: string) => {
     const st = stateRef.current;
@@ -831,6 +899,7 @@ export function App({
   const sPlanTitle = useSlice(state, s => s.plan.title);
   const sPlanSteps = useSlice(state, s => s.plan.steps);
   const sPipeline = useSlice(state, s => s.pipeline);
+  const sSubagents = useSlice(state, s => s.subagents);
   const sFiles = useSlice(state, s => s.files);
   const sEdits = useSlice(state, s => s.edits);
   const sMessages  = useSlice(state, s => s.messages);
@@ -934,9 +1003,15 @@ export function App({
       : sPlanSteps.length > 4 ? 1    // compact single-line strip
       : 2;                            // title row + steps row
     const pipelineRows = sPipeline ? sPipeline.length + 1 : 0;
+    // SubagentBrief: 1 header row + N visible rows (capped at MAX_VISIBLE=4)
+    // + 1 if more than that many hidden behind a "…N more" footer.
+    const subagentVisible = Math.min(sSubagents.length, 4);
+    const subagentRows = sSubagents.length === 0
+      ? 0
+      : 1 + subagentVisible + (sSubagents.length > 4 ? 1 : 0);
     const toastRows = sToasts.length;
-    return CHROME + planRows + pipelineRows + toastRows;
-  }, [sPlanSteps, sPipeline, sToasts]);
+    return CHROME + planRows + pipelineRows + subagentRows + toastRows;
+  }, [sPlanSteps, sPipeline, sSubagents, sToasts]);
 
   const titleMode =
     sPending === 'permission' ? 'agent · paused'
@@ -980,6 +1055,7 @@ export function App({
 
       <PlanZone title={sPlanTitle} steps={sPlanSteps} />
       <PipelineZone phases={sPipeline} />
+      <SubagentBrief subagents={sSubagents} />
 
       <ToastBar toasts={sToasts} onDismiss={handleToastDismiss} />
 
@@ -1001,6 +1077,8 @@ export function App({
         onChoicePick={pickChoice}
         onChoiceCancel={cancelChoice}
         onCancelTurn={cancelCurrentTurn}
+        approvalMode={sApprovalMode}
+        onCycleApprovalMode={cycleApprovalMode}
         dispatch={dispatch}
         cmdCtx={cmdCtx}
       />

@@ -150,6 +150,22 @@ export class ApprovalManager {
 	}
 
 	/**
+	 * Push a prompter, returning a callback that restores the previous one.
+	 * Used by PipelineBridge so orchestrate mode can route approvals through
+	 * the pipeline event stream without permanently overwriting the
+	 * single-agent prompter installed by EngineBridge.
+	 */
+	pushPrompter(fn: ApprovalPrompter): () => void {
+		const prev = this.prompter;
+		this.prompter = fn;
+		return () => {
+			// Only restore if no one else has swapped the prompter since —
+			// last-writer-wins keeps the API simple.
+			if (this.prompter === fn) this.prompter = prev;
+		};
+	}
+
+	/**
 	 * Record a per-call approval decision (keyed by tool+args).
 	 * Call with `remember=true` to also populate the habit cache by tool name.
 	 */

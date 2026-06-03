@@ -228,6 +228,8 @@ function assembleContract(
 	let allowedGlobs: string[];
 	if (entry) {
 		allowedGlobs = entry.allowedGlobs;
+	} else if (task.needsRefine && isRepairTaskWithAllowedGlobs(task)) {
+		allowedGlobs = task.allowedGlobs;
 	} else if (task.needsRefine) {
 		error = `task ${task.id} needs_refine but has no refinement entry`;
 		allowedGlobs = [];
@@ -241,6 +243,7 @@ function assembleContract(
 
 	const acceptance =
 		entry?.acceptance ??
+		task.acceptance ??
 		opts.defaultAcceptance ??
 		[`complete: ${task.objective}`];
 	const nonGoals = entry?.nonGoals ?? [`do not change files outside ${task.id}'s Task Contract`];
@@ -281,6 +284,10 @@ function assembleContract(
 
 function mergeError(current: string | undefined, next: string): string {
 	return current ? `${current}; ${next}` : next;
+}
+
+function isRepairTaskWithAllowedGlobs(task: CoarseTask): task is CoarseTask & { allowedGlobs: string[] } {
+	return task.id.startsWith("T3.5-") && Array.isArray(task.allowedGlobs) && task.allowedGlobs.length > 0;
 }
 
 function safeOutputSchema(

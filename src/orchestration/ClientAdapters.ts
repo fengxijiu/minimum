@@ -1,6 +1,13 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import type {
+	IApprovalManager,
+	IStreamingClient,
+	IToolHost,
+} from "../loop/MiMoLoop.js";
+import type { BillingMode } from "../clients/MiMoPricing.js";
+import type { ICodeValidator } from "../types/validator.js";
 import { getPersona } from "../personas/PersonaRegistry.js";
 import { loadProjectSkillPrompt } from "../personas/PersonaSkillMap.js";
 import type { ChatMessage } from "../types/common.js";
@@ -9,6 +16,11 @@ import type { CoarseDag } from "./TaskContract.js";
 import type { TaskContract } from "./TaskContract.js";
 import type { PlannerBridge } from "./MiMoPipeline.js";
 import type { TaskResult, WorkerExecutor } from "./TaskRunner.js";
+import {
+	WorkerLoop,
+	type WorkerEvent,
+	type WorkerUsage,
+} from "./WorkerLoop.js";
 
 /**
  * ClientAdapters — turn a streaming chat client into the PlannerBridge and
@@ -177,18 +189,57 @@ export function createPlannerBridge(
 export interface WorkerExecutorOptions {
 	maxTokens?: number;
 	projectRoot?: string;
+	/** When set, worker tasks gain real tool execution via WorkerLoop. */
+	tools?: IToolHost;
+	/** When set, every tool call passes through the approvalMode gate. */
+	approvalManager?: IApprovalManager;
+	/** When set, post-write validation auto-rolls back via SnapshotManager. */
+	validator?: ICodeValidator;
+	/** Forwarded to WorkerLoop for cost/currency labelling. */
+	model?: string;
+	billingMode?: BillingMode;
+	/** Optional event sink — fired for each tool call, result, and final usage roll-up. */
+	onWorkerEvent?: (
+		contract: TaskContract,
+		event: WorkerEvent,
+	) => void;
+	/** Optional usage sink — receives one summary per task. */
+	onTaskUsage?: (contract: TaskContract, usage: WorkerUsage) => void;
 }
 
 /**
- * Build a WorkerExecutor backed by a completion client. Each task is a single
- * persona turn: the persona system prompt plus the contract's objective,
- * acceptance, and ContextPack path. The persona prompt's _common-footer
- * instructs the model to emit <task_report> and <memory_candidate>.
+ * Build a WorkerExecutor backed by a completion client. Each task gets a fresh
+ * sub-agent session that:
+ *   • Loads the persona's prompt + skills,
+ *   • Renders objective / acceptance / context-pack into a user message,
+ *   • Runs a multi-turn tool-calling loop (WorkerLoop) when `tools` are wired,
+ *   • Falls back to a single-shot completion when no tool host is provided
+ *     (legacy mode, used by tests with stub clients).
+ *
+ * The worker's final output is plain text — the calling TaskRunner parses
+ * <task_report> and <memory_candidate> blocks out of it.
  */
 export function createWorkerExecutor(
 	client: CompletionClient,
 	opts: WorkerExecutorOptions = {},
 ): WorkerExecutor {
+	const projectRoot = opts.projectRoot ?? process.cwd();
+	const workerLoop = opts.tools
+		? new WorkerLoop({
+			// IStreamingClient is structurally a superset of CompletionClient
+			// (it adds `tools` and `signal` on streamChat). MiMoClient satisfies
+			// both — the cast is the recognition that callers only wire a real
+			// MiMoClient when they also wire a real tool host.
+			client: client as unknown as IStreamingClient,
+			tools: opts.tools,
+			...(opts.approvalManager !== undefined && { approvalManager: opts.approvalManager }),
+			...(opts.validator !== undefined && { validator: opts.validator }),
+			projectRoot,
+			...(opts.model !== undefined && { model: opts.model }),
+			...(opts.billingMode !== undefined && { billingMode: opts.billingMode }),
+		})
+		: undefined;
+
 	return {
 		run: async (contract: TaskContract) => {
 			const persona = getPersona(contract.personaId);
@@ -221,11 +272,30 @@ export function createWorkerExecutor(
 			lines.push(
 				"\nComplete the task. End with a <task_report> block and, if you learned something durable, a <memory_candidate> block.",
 			);
+			const userPrompt = lines.join("\n");
+
+			if (workerLoop) {
+				const result = await workerLoop.runTask({
+					systemPrompt,
+					userPrompt,
+					persona,
+					contract,
+					maxTokens: max,
+					onEvent: opts.onWorkerEvent
+						? (ev) => opts.onWorkerEvent!(contract, ev)
+						: undefined,
+				});
+				opts.onTaskUsage?.(contract, result.usage);
+				return result.text;
+			}
+
+			// Legacy single-shot path — no tool host wired. Worker still
+			// produces a <task_report> string; just no real tool execution.
 			return collectText(
 				client,
 				[
 					{ role: "system", content: systemPrompt },
-					{ role: "user", content: lines.join("\n") },
+					{ role: "user", content: userPrompt },
 				],
 				max,
 			);
