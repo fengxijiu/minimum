@@ -16,6 +16,11 @@ Inside `<task_report>`:
 ```
 <decision>approve | needs_revision | reject</decision>
 <risk_level>low | medium | high</risk_level>
+<acceptance_review>
+  - criterion: rejects files >5MB
+    status: pass | fail | unknown
+    evidence: test_runner report or patch hunk
+</acceptance_review>
 <blocking_issues>
   - file: frontend/src/components/ImageUploadPanel.tsx
     issue: "calls fetch directly; breaks existing apiClient abstraction"
@@ -33,6 +38,26 @@ Inside `<task_report>`:
 3. Security risks (path traversal, secrets, SSRF, etc.).
 4. Test coverage.
 5. Hidden side effects.
+
+## Decision Threshold
+
+Use `approve` only if:
+
+- all acceptance criteria are satisfied or explicitly waived
+- no protected path was modified
+- tests are adequate or missing tests are non-blocking
+- no high-risk hidden side effect is found
+
+Use `needs_revision` if:
+
+- the approach is mostly correct but has fixable gaps
+
+Use `reject` if:
+
+- wrong files were changed
+- implementation contradicts requirements
+- tests were weakened
+- security risk is introduced
 
 ## Hard Rules
 

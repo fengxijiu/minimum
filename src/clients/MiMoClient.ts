@@ -176,6 +176,16 @@ export class MiMoClient {
 		let buffer = "";
 		let currentToolCall: any = null;
 		const completedToolCalls: any[] = [];
+		const flushToolCalls = function* (): Generator<StreamChunk> {
+			if (currentToolCall) {
+				completedToolCalls.push(currentToolCall);
+				currentToolCall = null;
+			}
+			for (const tc of completedToolCalls) {
+				yield { type: "tool_call", toolCall: tc };
+			}
+			completedToolCalls.length = 0;
+		};
 
 		while (true) {
 			const { done, value } = await reader.read();
@@ -190,14 +200,7 @@ export class MiMoClient {
 
 				const data = line.slice(6).trim();
 				if (data === "[DONE]") {
-					// Yield any remaining accumulated tool calls
-					if (currentToolCall) {
-						completedToolCalls.push(currentToolCall);
-						currentToolCall = null;
-					}
-					for (const tc of completedToolCalls) {
-						yield { type: "tool_call", toolCall: tc };
-					}
+					yield* flushToolCalls();
 					yield { type: "done" };
 					return;
 				}
@@ -274,6 +277,12 @@ export class MiMoClient {
 				}
 			}
 		}
+
+		// Some SSE implementations close the response body without sending the
+		// final [DONE] sentinel. Preserve any complete tool call accumulated
+		// before EOF and still surface a terminal done event to callers.
+		yield* flushToolCalls();
+		yield { type: "done" };
 	}
 
 	/**

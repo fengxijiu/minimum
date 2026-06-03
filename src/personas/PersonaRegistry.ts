@@ -18,6 +18,10 @@ function loadPrompt(file: string): string {
 	return fs.readFileSync(path.join(PROMPTS_DIR, file), "utf-8");
 }
 
+export function loadBaseRules(): string {
+	return loadPrompt("_base-rules.md");
+}
+
 /**
  * Build the system prompt for a worker: role-specific text + the shared
  * output protocol footer. Master prompts skip the footer because their
@@ -115,7 +119,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 			alwaysAllowedGlobs: [".minimum/**", "tasks/**"],
 			forbiddenGlobs: GLOBAL_FORBIDDEN_WRITES,
 		},
-		maxSteps: 60,
+		maxSteps: 200,
 		maxTokens: 131_072,
 		outputSchema: "planner_dag",
 		parallelism: { soloPerWave: true, maxConcurrent: 1 },
@@ -133,8 +137,8 @@ function buildPersonas(): Map<PersonaId, Persona> {
 			alwaysAllowedGlobs: [],
 			forbiddenGlobs: WORKER_FORBIDDEN_WRITES,
 		},
-		maxSteps: 8,
-		maxTokens: 32_000,
+		maxSteps: 200,
+		maxTokens: 64_000,
 		outputSchema: "task_report",
 		parallelism: { soloPerWave: false, maxConcurrent: 1 },
 	});
@@ -158,8 +162,8 @@ function buildPersonas(): Map<PersonaId, Persona> {
 			alwaysAllowedGlobs: [],
 			forbiddenGlobs: WORKER_FORBIDDEN_WRITES,
 		},
-		maxSteps: 15,
-		maxTokens: 32_000,
+		maxSteps: 200,
+		maxTokens: 64_000,
 		outputSchema: "task_report",
 		parallelism: { soloPerWave: false, maxConcurrent: 2 },
 	});
@@ -178,7 +182,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 			alwaysAllowedGlobs: ["tasks/**/context-packs/**"],
 			forbiddenGlobs: WORKER_FORBIDDEN_WRITES,
 		},
-		maxSteps: 10,
+		maxSteps: 200,
 		maxTokens: 131_072,
 		outputSchema: "task_report",
 		parallelism: { soloPerWave: false, maxConcurrent: 1 },
@@ -209,7 +213,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 			alwaysAllowedGlobs: [],
 			forbiddenGlobs: WORKER_FORBIDDEN_WRITES,
 		},
-		maxSteps: 40,
+		maxSteps: 200,
 		maxTokens: 64_000,
 		outputSchema: "task_report",
 		parallelism: { soloPerWave: false, maxConcurrent: 2 },
@@ -243,7 +247,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 			],
 			forbiddenGlobs: WORKER_FORBIDDEN_WRITES,
 		},
-		maxSteps: 20,
+		maxSteps: 200,
 		maxTokens: 48_000,
 		outputSchema: "task_report",
 		parallelism: { soloPerWave: false, maxConcurrent: 2 },
@@ -261,8 +265,8 @@ function buildPersonas(): Map<PersonaId, Persona> {
 			alwaysAllowedGlobs: [],
 			forbiddenGlobs: WORKER_FORBIDDEN_WRITES,
 		},
-		maxSteps: 6,
-		maxTokens: 32_000,
+		maxSteps: 200,
+		maxTokens: 64_000,
 		outputSchema: "task_report",
 		parallelism: { soloPerWave: false, maxConcurrent: 2 },
 	});
@@ -279,15 +283,16 @@ function buildPersonas(): Map<PersonaId, Persona> {
 			"glob",
 			"git_status",
 			"git_log",
+			"write_file",
 		],
-		toolDenylist: ["write_file", "edit_file", "apply_patch", "exec_shell"],
+		toolDenylist: ["edit_file", "apply_patch", "exec_shell"],
 		pathPolicy: {
-			canWrite: false,
+			canWrite: true,
 			alwaysAllowedGlobs: ["tasks/**/artifacts/**"],
 			forbiddenGlobs: WORKER_FORBIDDEN_WRITES,
 		},
-		maxSteps: 15,
-		maxTokens: 32_000,
+		maxSteps: 200,
+		maxTokens: 64_000,
 		outputSchema: "task_report",
 		parallelism: { soloPerWave: true, maxConcurrent: 1 },
 	});
@@ -304,7 +309,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 			alwaysAllowedGlobs: [],
 			forbiddenGlobs: WORKER_FORBIDDEN_WRITES,
 		},
-		maxSteps: 10,
+		maxSteps: 200,
 		maxTokens: 48_000,
 		outputSchema: "task_report",
 		parallelism: { soloPerWave: false, maxConcurrent: 1 },
@@ -334,8 +339,8 @@ function buildPersonas(): Map<PersonaId, Persona> {
 			],
 			forbiddenGlobs: WORKER_FORBIDDEN_WRITES,
 		},
-		maxSteps: 12,
-		maxTokens: 32_000,
+		maxSteps: 200,	
+		maxTokens: 64_000,
 		outputSchema: "task_report",
 		parallelism: { soloPerWave: false, maxConcurrent: 1 },
 	});

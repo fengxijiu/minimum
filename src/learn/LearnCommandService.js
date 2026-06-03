@@ -1,0 +1,199 @@
+import * as path from "node:path";
+import { assignSkillToPersona, buildRoutingMetadata, writePersonaSkillRouting } from "../skills/PersonaSkillRouter.js";
+import { loadLearnedSkills } from "../skills/LearnedSkillLoader.js";
+import { LearnDraftStore } from "./LearnDraftStore.js";
+import { LearnSkillPromptLoader } from "./LearnSkillPromptLoader.js";
+import { toSkillSlug, titleFromSlug } from "./LearnedSkillName.js";
+import { renderLearnedSkillMarkdown } from "./LearnedSkillRenderer.js";
+import { validateLearnedSkillDraft } from "./LearnedSkillValidator.js";
+import { LearnedSkillWriter } from "./LearnedSkillWriter.js";
+export class LearnCommandService {
+    options;
+    draftStore;
+    promptLoader = new LearnSkillPromptLoader();
+    writer;
+    constructor(options) {
+        this.options = options;
+        this.draftStore = new LearnDraftStore(options.projectRoot);
+        this.writer = new LearnedSkillWriter(options.projectRoot);
+    }
+    async create(request) {
+        const existingSkillNames = (await loadLearnedSkills(this.options.projectRoot)).map((s) => s.name);
+        const prompt = await this.promptLoader.buildPrompt({
+            conversationSummary: summarizeMessages(request.messages),
+            recentMessages: request.messages.slice(-20),
+            preferredName: request.preferredName,
+            projectRoot: this.options.projectRoot,
+            existingSkillNames,
+        });
+        const generated = this.options.generateWithModel
+            ? await this.options.generateWithModel(prompt)
+            : JSON.stringify(fallbackDraft(request));
+        const input = parseDraft(generated, request);
+        const validation = validateLearnedSkillDraft(input);
+        const now = new Date().toISOString();
+        const slug = toSkillSlug(input.name);
+        const id = `learn_${now.replace(/[-:.TZ]/g, "").slice(0, 14)}_${slug}`;
+        const targetDir = path.join(this.options.projectRoot, ".minimum", "skills", "learned", slug);
+        const draft = {
+            ...input,
+            name: slug,
+            id,
+            status: validation.ok ? "draft" : "invalid",
+            createdAt: now,
+            updatedAt: now,
+            preferredName: request.preferredName,
+            source: "learn",
+            targetDir,
+            targetPath: path.join(targetDir, "SKILL.md"),
+            ...(validation.ok ? {} : { errors: validation.errors }),
+        };
+        if (!request.dryRun)
+            await this.draftStore.save(draft);
+        return { draft, validation, dryRun: request.dryRun ?? false };
+    }
+    async preview(draftId) {
+        const draft = await this.draftStore.read(draftId);
+        return { draft, markdown: renderLearnedSkillMarkdown(draft) };
+    }
+    async apply(draftId, options = {}) {
+        const draft = await this.draftStore.read(draftId);
+        const validation = validateLearnedSkillDraft(draft);
+        if (!validation.ok)
+            throw new Error(`invalid learned skill draft: ${validation.errors.join("; ")}`);
+        const assignments = assignSkillToPersona({
+            skillName: draft.name,
+            description: draft.description,
+            body: draft.body,
+            source: "learn",
+        });
+        const routing = buildRoutingMetadata(draft, assignments);
+        const written = await this.writer.write(draft, routing, {
+            allowExisting: draft.status === "applied",
+        });
+        const routingConfirmationRequired = routing.routing.requires_confirmation;
+        const routingWritten = !routingConfirmationRequired || options.confirmRouting === true;
+        const effectiveAssignments = routingWritten && routingConfirmationRequired && options.confirmRouting === true
+            ? assignments.map((assignment) => ({
+                ...assignment,
+                enabled: true,
+                reason: `${assignment.reason}; confirmed via /learn apply --confirm-routing`,
+            }))
+            : assignments;
+        if (routingWritten) {
+            await writePersonaSkillRouting({
+                projectRoot: this.options.projectRoot,
+                metadata: routing,
+                assignments: effectiveAssignments,
+            });
+        }
+        const appliedDraft = {
+            ...draft,
+            status: "applied",
+            updatedAt: new Date().toISOString(),
+            targetPath: written.skillPath,
+        };
+        await this.draftStore.save(appliedDraft);
+        await this.options.reloadSkills?.();
+        return {
+            draft: appliedDraft,
+            skillPath: written.skillPath,
+            metadataPath: written.metadataPath,
+            assignments: effectiveAssignments,
+            routing,
+            routingWritten,
+            routingConfirmationRequired,
+        };
+    }
+    async reject(draftId) {
+        const draft = await this.draftStore.read(draftId);
+        const rejected = { ...draft, status: "rejected", updatedAt: new Date().toISOString() };
+        await this.draftStore.save(rejected);
+        return rejected;
+    }
+    async status() {
+        const drafts = await this.draftStore.list();
+        const learnedSkills = (await loadLearnedSkills(this.options.projectRoot)).map((skill) => ({
+            name: skill.name,
+            path: skill.path,
+            status: skill.status,
+        }));
+        return { drafts, learnedSkills };
+    }
+}
+function parseDraft(raw, request) {
+    const json = extractJson(raw);
+    const parsed = JSON.parse(json);
+    const name = toSkillSlug(parsed.name ?? request.preferredName ?? "learned-skill");
+    return {
+        name,
+        description: parsed.description ?? `Use when applying ${name} project learning.`,
+        body: parsed.body ?? fallbackBody(name),
+        tags: parsed.tags ?? [],
+        triggers: parsed.triggers ?? [],
+        capability_tags: parsed.capability_tags ?? parsed.tags ?? [],
+    };
+}
+function extractJson(raw) {
+    const trimmed = raw.trim();
+    const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fenced?.[1])
+        return fenced[1].trim();
+    const start = trimmed.indexOf("{");
+    const end = trimmed.lastIndexOf("}");
+    if (start >= 0 && end > start)
+        return trimmed.slice(start, end + 1);
+    return trimmed;
+}
+function fallbackDraft(request) {
+    const slug = toSkillSlug(request.preferredName ?? "session-learning");
+    return {
+        name: slug,
+        description: `Use when applying the ${slug} workflow learned from this project session.`,
+        body: fallbackBody(slug),
+        tags: ["context-learning"],
+        triggers: [slug],
+        capability_tags: ["context_learning"],
+    };
+}
+function fallbackBody(slug) {
+    const title = titleFromSlug(slug);
+    return `# ${title}
+
+## Purpose
+Capture reusable project-local learning from the current session.
+
+## When to Use
+Use when the same project-local workflow or decision pattern appears again.
+
+## Inputs
+- Current task request.
+- Relevant project context.
+
+## Core Workflow
+1. Identify the stable reusable rule.
+2. Ignore one-off session details.
+3. Apply the rule only when the trigger matches.
+
+## Output Contract
+Return concise guidance or a concrete next action for the current task.
+
+## Rules and Constraints
+- Do not modify personas.
+- Do not write project memory directly.
+
+## Verification Checklist
+- The trigger matches the current task.
+- The guidance is reusable and project-local.
+
+## Failure Modes
+- If the context is too noisy, ask for clarification or skip this skill.
+`;
+}
+function summarizeMessages(messages) {
+    return messages
+        .filter((m) => m.content.trim())
+        .slice(-12)
+        .map((m) => `${m.role}: ${m.content.slice(0, 600)}`)
+        .join("\n");
+}

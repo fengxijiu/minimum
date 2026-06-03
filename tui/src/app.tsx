@@ -287,7 +287,7 @@ export function App({
   useEffect(() => {
     if (!choiceGate) return;
     choiceGate.onShow = (payload) => {
-      setActiveChoice({ question: payload.question, options: payload.options, allowCustom: payload.allowCustom });
+      setActiveChoice({ question: payload.question, options: payload.options, allowCustom: payload.allowCustom, context: payload.context });
       dispatch({ type: 'pending.set', value: 'choice' });
     };
     return () => { choiceGate.onShow = null; };
@@ -300,6 +300,8 @@ export function App({
     memoryPath: engineInfo.memoryPath,
     baseUrl: engineInfo.baseUrl,
     engineMode: engineInfo.mode,
+    mcpServers: engineInfo.mcpServers,
+    mcpToolCount: engineInfo.mcpToolCount,
   }), [engineInfo]);
   const restoreSession = useCallback(async (session: TuiSession) => {
     sessionIdRef.current = session.id;

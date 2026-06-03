@@ -70,6 +70,8 @@ export type ChoiceRequest = {
   question: string;
   options: ChoiceOption[];
   allowCustom: boolean;
+  /** Structured background info rendered separately (e.g. DAG flow for W0.5/W3.5). */
+  context?: string;
 };
 
 /** One W0–W4 phase in the orchestrator pipeline panel, including W3.5. */

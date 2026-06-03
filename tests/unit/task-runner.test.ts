@@ -58,6 +58,18 @@ describe("extractXmlBlock", () => {
 	it("trims whitespace from extracted content", () => {
 		expect(extractXmlBlock("<foo>  bar  </foo>", "foo")).toBe("bar");
 	});
+
+	it("accepts case-insensitive tags", () => {
+		expect(extractXmlBlock("<Task_Report>done</TASK_REPORT>", "task_report")).toBe("done");
+	});
+
+	it("accepts opening tag attributes", () => {
+		expect(extractXmlBlock('<task_report status="ok">done</task_report>', "task_report")).toBe("done");
+	});
+
+	it("accepts whitespace inside tag delimiters", () => {
+		expect(extractXmlBlock("< task_report >done</ task_report >", "task_report")).toBe("done");
+	});
 });
 
 describe("runTask", () => {
@@ -81,6 +93,20 @@ describe("runTask", () => {
 		expect(r.status).toBe("ok");
 		expect(r.report).toContain("Done.");
 		expect(r.errors).toEqual([]);
+	});
+
+	it("does not repair when executor emits a task_report with attributes", async () => {
+		let calls = 0;
+		const executor: WorkerExecutor = {
+			run: async () => {
+				calls++;
+				return `<task_report status="ok"><status>ok</status>\nDone.</task_report>`;
+			},
+		};
+		const r = await runTask(mkContract(), { projectRoot: dir, executor });
+		expect(r.status).toBe("ok");
+		expect(r.schemaRepairAttempted).toBeUndefined();
+		expect(calls).toBe(1);
 	});
 
 	it("returns blocked when report contains blocked status", async () => {
@@ -152,6 +178,48 @@ describe("runTask", () => {
 		expect(r.hitStepLimit).toBe(true);
 		expect(r.errors.join("\n")).toMatch(/maxSteps|step limit/i);
 		expect(r.errors.join("\n")).toMatch(/schema repair retry/i);
+	});
+
+	it("reports missing closing tag from the initial attempt when repair fails", async () => {
+		const executor: WorkerExecutor = {
+			run: async (_contract, _tools, repair) => {
+				if (!repair) return "<task_report><status>ok</status>\nAlmost done.";
+				return "";
+			},
+		};
+		const r = await runTask(mkContract(), { projectRoot: dir, executor });
+		const errors = r.errors.join("\n");
+		expect(r.status).toBe("error");
+		expect(errors).toContain("initial parse: task_report: opening tag found but closing tag is missing");
+		expect(errors).toContain("initial raw excerpt: <task_report><status>ok</status> Almost done.");
+		expect(errors).toContain("repair parse: task_report: output is empty");
+	});
+
+	it("preserves first-attempt raw excerpt when repair returns empty output", async () => {
+		const executor: WorkerExecutor = {
+			run: async (_contract, _tools, repair) => {
+				if (!repair) return "I gathered context but forgot the XML envelope.";
+				return "";
+			},
+		};
+		const r = await runTask(mkContract(), { projectRoot: dir, executor });
+		const errors = r.errors.join("\n");
+		expect(errors).toContain("initial raw excerpt: I gathered context but forgot the XML envelope.");
+		expect(errors).toContain("repair parse: task_report: output is empty");
+	});
+
+	it("asks schema repair for only the minimal task_report block", async () => {
+		let feedback = "";
+		const executor: WorkerExecutor = {
+			run: async (_contract, _tools, repair) => {
+				if (!repair) return "plain text";
+				feedback = repair.feedback;
+				return "";
+			},
+		};
+		await runTask(mkContract(), { projectRoot: dir, executor });
+		expect(feedback).toContain("one <task_report> block only");
+		expect(feedback).toContain("Do not include <memory_candidate> during schema repair");
 	});
 
 	it("includes durationMs in result", async () => {

@@ -146,6 +146,19 @@ describe("validateContract", () => {
 			);
 			expect(r.ok).toBe(true);
 		});
+
+		it("accepts runtime_debug without contract-level allowedGlobs for diagnostic artifacts", () => {
+			const r = validateContract(
+				makeContract({
+					personaId: "runtime_debug",
+					outputSchema: "task_report",
+					pathPolicy: { allowedGlobs: [], forbiddenGlobs: [] },
+					nonGoals: ["do not modify business code"],
+					blockedCondition: "blocked if failure logs or repro steps are missing",
+				}),
+			);
+			expect(r.ok).toBe(true);
+		});
 	});
 
 	describe("persona/output schema compatibility", () => {

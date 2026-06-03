@@ -63,8 +63,10 @@ describe("SingleAgentMemoryManager integration", () => {
 		await drain(secondStack.loop.run("How should billing requests call the API?"));
 
 		const secondMessages = secondClient.getCallHistory()[0].messages;
-		expect(secondMessages[0]).toMatchObject({ role: "system" });
-		expect(secondMessages[0].content).toContain("Aurora API base URL");
+		// Base-rules system prompt sits at index 0; memory is injected as a
+		// system message too. Assert it appears among the system messages.
+		const secondSystem = secondMessages.filter((m: { role: string }) => m.role === "system");
+		expect(secondSystem.some((m: { content: string }) => m.content.includes("Aurora API base URL"))).toBe(true);
 
 		const thirdClient = new MockClient();
 		thirdClient.setDefaultResponse("ok");
@@ -77,7 +79,7 @@ describe("SingleAgentMemoryManager integration", () => {
 		await drain(thirdStack.loop.run("Which test runner do I prefer?"));
 
 		const thirdMessages = thirdClient.getCallHistory()[0].messages;
-		expect(thirdMessages[0]).toMatchObject({ role: "system" });
-		expect(thirdMessages[0].content).toContain("vitest");
+		const thirdSystem = thirdMessages.filter((m: { role: string }) => m.role === "system");
+		expect(thirdSystem.some((m: { content: string }) => m.content.includes("vitest"))).toBe(true);
 	});
 });

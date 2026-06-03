@@ -51,6 +51,13 @@ function ChoiceBar({ request, selected }: { request: ChoiceRequest; selected: nu
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={theme.accent} paddingX={2} paddingY={0}>
       <Text color={theme.accent} bold>{request.question}</Text>
+      {request.context ? (
+        <Box flexDirection="column" marginTop={0} marginBottom={0}>
+          <Text color={theme.muted}>{'─'.repeat(40)}</Text>
+          <Text color={theme.inkSoft} dimColor>{request.context}</Text>
+          <Text color={theme.muted}>{'─'.repeat(40)}</Text>
+        </Box>
+      ) : null}
       <Box flexDirection="column">
         {request.options.map((opt, i) => {
           const active = i === selected;

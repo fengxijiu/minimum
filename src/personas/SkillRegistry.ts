@@ -91,6 +91,10 @@ function walkMarkdown(dir: string): string[] {
 }
 
 function personasFor(file: string): string[] {
+	if (file.includes("/base/")) return [
+		"master_planner", "vision", "repo_scout", "context_builder",
+		"code_executor", "test_writer", "test_runner", "runtime_debug", "reviewer", "docs",
+	];
 	if (file.includes("/review/")) return ["reviewer"];
 	if (file.includes("/testing/")) return ["test_runner", "test_writer"];
 	if (file.includes("/mission/")) return ["master_planner"];
@@ -99,6 +103,7 @@ function personasFor(file: string): string[] {
 }
 
 function stagesFor(file: string): string[] {
+	if (file.includes("/base/")) return ["*"];
 	if (file.includes("/review/")) return ["W3"];
 	if (file.includes("/testing/")) return ["W2", "W3"];
 	if (file.includes("/mission/")) return ["W3.5", "W4"];
@@ -107,6 +112,7 @@ function stagesFor(file: string): string[] {
 }
 
 function priorityFor(file: string): number {
+	if (file.includes("/base/")) return 110;
 	if (file.endsWith("_prompt-constraints.md")) return 100;
 	if (file.includes("/planning/") || file.includes("/dispatch/")) return 90;
 	if (file.includes("/mission/")) return 85;

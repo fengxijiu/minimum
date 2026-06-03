@@ -23,6 +23,7 @@ import { CodeQueryTool } from "../tools/code-query/CodeQueryTool.js";
 import { SymbolsTool } from "../tools/code-query/SymbolsTool.js";
 import { CodeValidator } from "../validators/CodeValidator.js";
 import { type MiMoConfig, mergeConfig } from "./MiMoConfig.js";
+import { loadBaseRules } from "../personas/index.js";
 
 export interface MiMoStack {
 	loop: MiMoLoop;
@@ -145,9 +146,12 @@ export function createMiMoStack(
 		? new IterationManager({ maxRetries: 3, learnFromErrors: true })
 		: undefined;
 
+	const baseRules = (() => { try { return loadBaseRules(); } catch { return undefined; } })();
+
 	const loop = new MiMoLoop({
 		client,
 		tools,
+		systemPrompt: baseRules,
 		validator: cfg.validation.enabled ? validator : undefined,
 		contextManager,
 		completenessChecker: cfg.completeness.enabled

@@ -8,6 +8,8 @@ export interface ChoicePayload {
 	question: string;
 	options: ChoiceOption[];
 	allowCustom: boolean;
+	/** Structured background info rendered separately from the question (e.g. DAG flow). */
+	context?: string;
 }
 
 export type ChoiceVerdict =

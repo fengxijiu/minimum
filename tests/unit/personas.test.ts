@@ -70,6 +70,14 @@ describe("PersonaRegistry", () => {
 			expect(globs.every((g) => g.includes("context-packs"))).toBe(true);
 		});
 
+		it("runtime_debug writes only diagnostic artifacts", () => {
+			const p = getPersona("runtime_debug");
+			expect(p.pathPolicy.canWrite).toBe(true);
+			expect(p.toolAllowlist).toContain("write_file");
+			expect(p.toolDenylist).not.toContain("write_file");
+			expect(p.pathPolicy.alwaysAllowedGlobs).toEqual(["tasks/**/artifacts/**"]);
+		});
+
 		it("code_executor has no alwaysAllowedGlobs — must come from contract", () => {
 			expect(getPersona("code_executor").pathPolicy.alwaysAllowedGlobs).toEqual([]);
 		});
@@ -110,6 +118,9 @@ describe("PersonaRegistry", () => {
 				expect(p.systemPrompt).toContain("<memory_candidate>");
 				expect(p.systemPrompt).toContain("Blocked Protocol");
 				expect(p.systemPrompt).toContain("Do not include analysis");
+				expect(p.systemPrompt).toContain("Evidence Rules");
+				expect(p.systemPrompt).toContain("Must Not Do");
+				expect(p.systemPrompt).toContain("<status>");
 			}
 		});
 
@@ -236,6 +247,15 @@ describe("PersonaRegistry", () => {
 			expect(sys).toContain("repo_scout");
 			expect(sys).toContain("file_list");
 			expect(sys.toLowerCase()).toContain("vision only");
+		});
+
+		it("defines dispatch matrix and default behavior-change chain", () => {
+			const sys = getPersona("master_planner").systemPrompt;
+			expect(sys).toContain("Planning Checklist");
+			expect(sys).toContain("Persona Dispatch Matrix");
+			expect(sys).toContain("Task Granularity Rules");
+			expect(sys).toContain("test_writer -> test_runner -> code_executor -> test_runner -> reviewer");
+			expect(sys).toContain("Do not assign discovery or file-list tasks to `code_executor`");
 		});
 	});
 });

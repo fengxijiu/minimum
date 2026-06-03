@@ -13,6 +13,7 @@ export {
 	isToolAllowedForAny,
 	listPersonaIds,
 	listPersonas,
+	loadBaseRules,
 } from "./PersonaRegistry.js";
 export {
 	loadMinimumAdaptedSkills,

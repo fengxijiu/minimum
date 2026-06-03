@@ -320,6 +320,67 @@ describe("WorkerLoop", () => {
 		expect(tools.calls).toHaveLength(3);
 	});
 
+	it("marks a done-only final turn as an empty stream", async () => {
+		const client = scriptedClient([{}]);
+		const tools = recordingToolHost(["read_file"], () => ({ content: "x" }));
+		const loop = new WorkerLoop({ client, tools, projectRoot: "/repo" });
+
+		const result = await loop.runTask({
+			systemPrompt: "sys",
+			userPrompt: "go",
+			persona: persona(),
+			contract: contract(),
+		});
+
+		expect(result.hitStepLimit).toBe(false);
+		expect(result.emptyFinalTurn).toBe(true);
+		expect(result.finishReason).toBe("empty_stream");
+	});
+
+	it("marks a usage-only final turn as an empty stream", async () => {
+		const client = scriptedClient([
+			{
+				usage: { promptTokens: 10, completionTokens: 0, totalTokens: 10 },
+			},
+		]);
+		const tools = recordingToolHost(["read_file"], () => ({ content: "x" }));
+		const loop = new WorkerLoop({ client, tools, projectRoot: "/repo" });
+
+		const result = await loop.runTask({
+			systemPrompt: "sys",
+			userPrompt: "go",
+			persona: persona(),
+			contract: contract(),
+		});
+
+		expect(result.hitStepLimit).toBe(false);
+		expect(result.emptyFinalTurn).toBe(true);
+		expect(result.finishReason).toBe("empty_stream");
+		expect(result.usage.totalTokens).toBe(10);
+	});
+
+	it("marks a reasoning-only final turn as an empty stream", async () => {
+		const client: IStreamingClient = {
+			async *streamChat() {
+				yield { type: "reasoning" as const, content: "thinking without final content" };
+				yield { type: "done" as const };
+			},
+		};
+		const tools = recordingToolHost(["read_file"], () => ({ content: "x" }));
+		const loop = new WorkerLoop({ client, tools, projectRoot: "/repo" });
+
+		const result = await loop.runTask({
+			systemPrompt: "sys",
+			userPrompt: "go",
+			persona: persona(),
+			contract: contract(),
+		});
+
+		expect(result.hitStepLimit).toBe(false);
+		expect(result.emptyFinalTurn).toBe(true);
+		expect(result.finishReason).toBe("empty_stream");
+	});
+
 	// ── snapshot + validator rollback ──────────────────────────────────────
 
 	it("rolls back a write when the validator reports issues", async () => {

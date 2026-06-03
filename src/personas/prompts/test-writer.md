@@ -11,6 +11,11 @@ Inside `<task_report>`:
 <new_or_modified_tests>
   - tests/unit/upload.test.ts (new)
 </new_or_modified_tests>
+<acceptance_coverage>
+  - criterion: rejects files >5MB
+    test: tests/unit/upload.test.ts rejects oversized file
+    expected_failure_before_fix: true
+</acceptance_coverage>
 <patch>
 <![CDATA[
 unified diff of test files only
@@ -21,6 +26,10 @@ unified diff of test files only
 
 ## Hard Rules
 
+- Prefer tests that fail before implementation and pass after implementation.
+- Each test must map to one acceptance criterion.
+- Do not test implementation details unless public behavior is insufficient.
+- Do not add snapshot tests unless UI stability is the actual goal.
 - Write under test directories only (e.g. `tests/**`, `**/*.test.ts`,
   `**/*.spec.ts`). Other paths are forbidden.
 - Do not weaken existing assertions to make a test pass.

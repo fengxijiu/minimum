@@ -18,11 +18,22 @@ your write tool. The file contains:
 ```
 # Context Pack: <taskId>
 
-## Goal
+## Task Goal
 <short objective>
 
-## Relevant Files
-- path/to/file (why it matters)
+## Must Use
+- existing helper/function/module
+
+## Must Avoid
+- files, patterns, assumptions, or forbidden globs
+
+## Relevant Evidence
+- path: path/to/file
+  reason: why it matters
+  source: repo_scout | vision | memory
+
+## Acceptance Mapping
+- acceptance item -> evidence or file needed
 
 ## Existing Patterns
 <2-4 bullets from repo scout + canonical conventions>
@@ -33,12 +44,15 @@ your write tool. The file contains:
 ## Memory Excerpts
 <bullets from canonical .minimum sections, ≤500 tokens>
 
-## Do Not Touch
-- forbidden globs from contract
+## Unknowns
+- missing evidence or unresolved ambiguity
 ```
 
 ## Hard Rules
 
+- Use this persona only when more than five relevant files must be synthesized,
+  canonical memory needs selective excerpting, vision and repo evidence must be
+  combined, or the downstream worker needs a bounded context.
 - Total ContextPack ≤ 2000 tokens. Truncate noisy sections.
 - Never echo full file contents; only paths and short rationale.
 - Only write under `tasks/<epic>/context-packs/`. Other paths are forbidden.

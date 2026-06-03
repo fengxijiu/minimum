@@ -1,4 +1,5 @@
 import type { ToolRateLimitOption } from "../tools/limits/ToolRateLimiter.js";
+import type { McpServerConfig } from "../mcp/types.js";
 
 /**
  * MiMoConfig — 统一配置类型。
@@ -135,6 +136,9 @@ export interface MiMoConfig {
 		maxOutputChars?: number;
 		extraAllowed?: readonly string[];
 	};
+	/** MCP (Model Context Protocol) 外部工具服务器列表(默认空)。
+	 *  每个 server 启动后,其工具以 `mcp__<server>__<tool>` 名称注册进工具表。*/
+	mcpServers?: McpServerConfig[];
 }
 
 /** 所有优化分析得来的默认值 */
@@ -195,6 +199,7 @@ export const DEFAULT_MIMO_CONFIG: Required<MiMoConfig> = {
 		maxOutputChars: 32_000,
 		extraAllowed: [],
 	},
+	mcpServers: [],
 };
 
 /** 深合并用户配置与默认配置 */
@@ -241,5 +246,6 @@ export function mergeConfig(user: MiMoConfig = {}): Required<MiMoConfig> {
 						? { ...DEFAULT_MIMO_CONFIG.rateLimit, ...user.rateLimit }
 						: user.rateLimit,
 		shell: { ...DEFAULT_MIMO_CONFIG.shell, ...user.shell },
+		mcpServers: user.mcpServers ?? DEFAULT_MIMO_CONFIG.mcpServers,
 	};
 }

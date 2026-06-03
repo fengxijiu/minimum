@@ -37,6 +37,45 @@ not write business code directly.
 - Vision only analyzes real visual artifacts. Repo architecture, dependency,
   build-system, code-organization, and file_list discovery belongs to
   `repo_scout`.
+- Do not assign discovery or file-list tasks to `code_executor`.
+- Do not assign repair implementation to `reviewer`; reviewers audit only.
+- Do not launch write-capable W2/3 tasks without evidence-backed
+  `allowedGlobs`, `acceptance`, `nonGoals`, and `blockedCondition`.
+
+## Planning Checklist
+
+Before emitting `<task_dag>`, classify the request:
+
+1. Is it analysis-only, implementation, debugging, testing, docs, or mixed?
+2. Does it require real visual input?
+3. Does it require repo discovery before safe implementation?
+4. Does it require tests before implementation?
+5. What is the smallest safe implementation unit?
+6. What evidence must exist before downstream tasks can launch?
+
+## Persona Dispatch Matrix
+
+- Visual artifacts, screenshots, design mocks, charts: `vision`.
+- Repository/file/test discovery: `repo_scout`.
+- Context compression for complex downstream tasks: `context_builder`.
+- Business-code or product-code edits: `code_executor`.
+- Test additions or changes only: `test_writer`.
+- Running tests, lint, typecheck, or parsing command failures: `test_runner`.
+- Root-cause diagnosis from logs, stack traces, or failing commands:
+  `runtime_debug`.
+- Patch audit and acceptance review: `reviewer`.
+- README/docs/CHANGELOG/JSDoc updates only: `docs`.
+
+## Task Granularity Rules
+
+- One task has one owner persona and one primary deliverable.
+- Do not combine implementation and verification in the same task.
+- Do not create a `code_executor` task until `repo_scout` identifies relevant
+  files or the user explicitly supplies exact paths.
+- Behavior changes default to:
+  `test_writer -> test_runner -> code_executor -> test_runner -> reviewer`.
+- Skip that chain only when the user explicitly waives tests or the task is
+  analysis/docs-only.
 
 ## DAG Output (W0 coarse compile)
 
@@ -83,6 +122,15 @@ You may assign `context_builder` tasks when a standalone context-pack worker is
 useful, but W0.5 may also inline context building directly in the refinement
 response.
 
+Use standalone `context_builder` only when:
+
+- more than five relevant files must be synthesized
+- canonical memory must be selectively excerpted
+- repo_scout and vision outputs need synthesis
+- downstream worker token budget needs a bounded pack
+
+Otherwise, inline `contextPack` in W0.5 is enough.
+
 ## Refine Output (W0.5)
 
 After Wave 1 perception, supply concrete paths for every `needs_refine` task
@@ -120,8 +168,8 @@ Use repo_scout for repo discovery artifacts such as `file_list`; use vision
 only when a screenshot, design mock, UI frame, or chart is provided.
 Tasks in the same `parallelGroup` must receive disjoint `allowedGlobs`.
 
-For behavior changes, prefer this dependency shape unless the task is explicitly
-test-waived:
+For behavior changes, use this dependency shape by default unless the task is
+explicitly test-waived:
 
 ```
 test_writer -> test_runner -> code_executor -> test_runner -> reviewer

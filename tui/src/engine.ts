@@ -17,6 +17,10 @@ export interface EngineInfo {
   /** Context window size in tokens — drives ctx.max so the meter is to scale.
    * mimo-v2.5 / mimo-v2.5-pro both ship a 1 048 576-token window. */
   contextWindow?: number;
+  /** Names of MCP servers that connected successfully. */
+  mcpServers?: string[];
+  /** Number of MCP tools registered across all connected servers. */
+  mcpToolCount?: number;
 }
 
 /**
@@ -316,9 +320,9 @@ export interface SessionFlusher {
  */
 export class TuiConfirmationGate {
   private resolver: ((v: { type: 'pick'; optionId: string } | { type: 'text'; text: string } | { type: 'cancel' }) => void) | null = null;
-  onShow: ((payload: { question: string; options: Array<{ id: string; title: string; summary?: string }>; allowCustom: boolean }) => void) | null = null;
+  onShow: ((payload: { question: string; options: Array<{ id: string; title: string; summary?: string }>; allowCustom: boolean; context?: string }) => void) | null = null;
 
-  ask(payload: { question: string; options: Array<{ id: string; title: string; summary?: string }>; allowCustom: boolean }): Promise<{ type: 'pick'; optionId: string } | { type: 'text'; text: string } | { type: 'cancel' }> {
+  ask(payload: { question: string; options: Array<{ id: string; title: string; summary?: string }>; allowCustom: boolean; context?: string }): Promise<{ type: 'pick'; optionId: string } | { type: 'text'; text: string } | { type: 'cancel' }> {
     return new Promise((resolve) => {
       this.resolver = resolve;
       this.onShow?.(payload);
@@ -375,6 +379,28 @@ export async function createEngineRunner(
     }
     const approvalManager = new eng.ApprovalManager({ mode: userConfig.approvalMode ?? 'auto-edit' });
     const { loop, sessionManager, validator } = eng.createMiMoStack(client, tools, workingDirectory, userConfig, { approvalManager, confirmationGate: choiceGate });
+
+    // ── MCP servers ──────────────────────────────────────────────────────
+    // Connect any configured Model Context Protocol servers and register their
+    // tools into the SHARED registry — so both the single-agent loop and the
+    // pipeline can call them. Resilient: a bad server is skipped, not fatal.
+    let mcpServerNames: string[] = [];
+    let mcpToolCount = 0;
+    const mcpServers = Array.isArray(userConfig.mcpServers) ? userConfig.mcpServers : [];
+    if (mcpServers.length && eng.connectMcpServers && eng.McpManager) {
+      const mcpManager = new eng.McpManager();
+      try {
+        const res = await eng.connectMcpServers({
+          manager: mcpManager,
+          register: (t: unknown) => tools.register(t),
+          servers: mcpServers,
+        });
+        mcpServerNames = res.connected;
+        mcpToolCount = res.toolCount;
+        // Best-effort cleanup: kill MCP child processes on exit.
+        process.once('exit', () => { try { void mcpManager.disconnectAll(); } catch { /* ignore */ } });
+      } catch { /* MCP is optional — never block startup */ }
+    }
 
     // Wire learned skills into the single-agent system context using a two-tier approach:
     //   • Brief catalog  — always shown: name + one-line description + trigger keywords
@@ -508,6 +534,8 @@ export async function createEngineRunner(
       memoryPath: path.join(workingDirectory, '.minimum', 'memory.md'),
       // Both mimo-v2.5 and mimo-v2.5-pro publish a 1M token context window.
       contextWindow: 1_048_576,
+      ...(mcpServerNames.length && { mcpServers: mcpServerNames }),
+      ...(mcpToolCount > 0 && { mcpToolCount }),
     };
     return { runner, ...(pipelineRunner && { pipelineRunner }), info, ...(sessionFlusher && { sessionFlusher }), choiceGate };
   } catch (err) {

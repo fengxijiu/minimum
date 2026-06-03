@@ -231,17 +231,12 @@ export async function runPipeline(
 				attempt: missionParseRetryUsed ? 2 : 1,
 			});
 			const choice = await askPipelineChoice(opts.choiceGate, {
-				question: [
-					"W3.5 mission check 报告解析失败。",
-					`错误: ${mission.error}`,
-					`Loop: ${missionLoopIndex}`,
-					`原始摘要: ${rawExcerpt || "无内容"}`,
-					"请选择恢复方式。",
-				].join("\n"),
+				question: "W3.5 解析失败，如何恢复？",
+				context: [`错误: ${mission.error}`, `Loop: ${missionLoopIndex}`, rawExcerpt ? `原始摘要: ${rawExcerpt}` : ""].filter(Boolean).join("\n"),
 				options: [
-					{ id: "retry_w35", title: "重试 W3.5", summary: missionParseRetryUsed ? "已重试过一次；仍会再次询问，不会无限自动重试。" : "带解析反馈重新运行一次 mission checker。" },
-					{ id: "needs_human_confirmation", title: "人工确认", summary: "安全停止，不发 pipeline_error。" },
-					{ id: "approve_to_w4", title: "推进到 W4", summary: "显式用户 override，记录后继续 finalize。" },
+					{ id: "retry_w35", title: "重试 W3.5", summary: missionParseRetryUsed ? "已重试一次，再试仍可能失败。" : "带解析反馈重跑 mission checker。" },
+					{ id: "needs_human_confirmation", title: "暂停", summary: "安全停止，不发错误。" },
+					{ id: "approve_to_w4", title: "推进到 W4", summary: "用户 override，跳过本轮检查。" },
 				],
 				allowCustom: false,
 			});
@@ -294,17 +289,12 @@ export async function runPipeline(
 		}
 		if (missionLoopIndex >= maxMissionRepairLoops) {
 			const capChoice = await askPipelineChoice(opts.choiceGate, {
-				question: [
-					`W3.5 已经完成 ${maxMissionRepairLoops} 轮自动修复,但 mission checker 仍要求继续 LOOP_BACK_TO_W1。`,
-					mission.report.reason ? `原因摘要: ${mission.report.reason}` : "",
-					"请选择如何继续。",
-				]
-					.filter(Boolean)
-					.join("\n"),
+				question: `W3.5 修复上限 (${maxMissionRepairLoops} 轮) 已达，如何继续？`,
+				context: mission.report.reason ? `原因: ${mission.report.reason}` : undefined,
 				options: [
-					{ id: "continue_repair", title: "再修一轮", summary: "突破修复上限一次,继续执行 mission checker 提出的新任务。" },
-					{ id: "stop_for_human", title: "暂停人工确认", summary: "安全停止,不发 pipeline_error。" },
-					{ id: "approve_to_w4", title: "强制进入 W4", summary: "显式用户 override,记录后继续 finalize。" },
+					{ id: "continue_repair", title: "再修一轮", summary: "突破上限一次，继续新修复任务。" },
+					{ id: "stop_for_human", title: "暂停", summary: "安全停止，不发错误。" },
+					{ id: "approve_to_w4", title: "强制进入 W4", summary: "用户 override，跳过剩余修复。" },
 				],
 				allowCustom: false,
 			});
@@ -523,11 +513,12 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 				artifactPath: confirmationPath,
 			});
 			const choice = await askPipelineChoice(opts.choiceGate, {
-				question: `${confirmation.brief}\n\n${confirmation.flow}\n\n请确认是否进入 W2/3。`,
+				question: "确认 DAG，进入 W2/3？",
+				context: `${confirmation.brief}\n\n## DAG Flow\n${confirmation.flow}`,
 				options: [
-					{ id: "continue_w23", title: "继续 W2/3", summary: "确认当前 DAG 和 launch gate，进入实现/验证。" },
-					{ id: "rerun_refine", title: "重跑 W0.5", summary: refineRetryUsed ? "已重跑过一次；再次选择会安全停止。" : "带用户确认反馈重新 refine 一次。" },
-					{ id: "stop_for_human", title: "暂停人工确认", summary: "安全停止，不发 pipeline_error。" },
+					{ id: "continue_w23", title: "继续 W2/3", summary: "确认 DAG，进入实现/验证。" },
+					{ id: "rerun_refine", title: "重跑 W0.5", summary: refineRetryUsed ? "已重跑过一次；再次选择会安全停止。" : "带反馈重新 refine。" },
+					{ id: "stop_for_human", title: "暂停", summary: "安全停止，不发错误。" },
 				],
 				allowCustom: false,
 			});

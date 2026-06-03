@@ -265,7 +265,9 @@ describe("runPipeline", () => {
 
 		expect(result.ok).toBe(true);
 		expect(gate.payloads).toHaveLength(1);
-		expect(gate.payloads[0]!.question).toContain("W0.5 DAG 确认");
+		// Question is a short decision point; the DAG detail moves to `context`.
+		expect(gate.payloads[0]!.question).toContain("进入 W2/3");
+		expect(gate.payloads[0]!.context).toContain("W0.5 DAG 确认");
 		const confirmIndex = events.findIndex((e) => e.type === "dag_confirmation_requested");
 		const w23Index = events.findIndex((e) => e.type === "phase_start" && (e as any).phase === "W2/3");
 		expect(confirmIndex).toBeGreaterThan(-1);

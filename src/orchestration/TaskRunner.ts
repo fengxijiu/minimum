@@ -36,6 +36,10 @@ export interface SchemaRepairRequest {
 export interface WorkerExecutionResult {
 	text: string;
 	hitStepLimit?: boolean;
+	/** True when the model stream ended with no content and no tool calls. */
+	emptyFinalTurn?: boolean;
+	/** Structured terminal reason surfaced by worker/client adapters. */
+	finishReason?: "final" | "empty_stream" | "step_limit";
 	attempt?: number;
 }
 
@@ -103,29 +107,43 @@ export async function runTask(
 	}
 
 	let rawOutput = execution.text;
-	let report = extractXmlBlock(rawOutput, "task_report");
+	let reportInspection = inspectXmlBlock(rawOutput, "task_report");
+	let report = reportInspection.content;
 	let memBlock = extractXmlBlock(rawOutput, "memory_candidate") || undefined;
 	let status = detectStatus(report);
 	let schemaRepairAttempted = false;
+	const attempts: MissingReportAttempt[] = [
+		buildMissingReportAttempt("initial", rawOutput, execution, reportInspection),
+	];
 
 	if (!report) {
 		schemaRepairAttempted = true;
-		const repair = buildSchemaRepairRequest(rawOutput, execution.hitStepLimit);
+		const repair = buildSchemaRepairRequest(
+			rawOutput,
+			execution,
+			reportInspection.diagnostics,
+		);
 		try {
 			execution = normalizeWorkerExecution(
 				await opts.executor.run(contract, filteredTools, repair),
 			);
 			rawOutput = execution.text;
-			report = extractXmlBlock(rawOutput, "task_report");
+			reportInspection = inspectXmlBlock(rawOutput, "task_report");
+			report = reportInspection.content;
 			memBlock = extractXmlBlock(rawOutput, "memory_candidate") || undefined;
 			status = detectStatus(report);
+			attempts.push(buildMissingReportAttempt("repair", rawOutput, execution, reportInspection));
 		} catch (err: unknown) {
+			const repairError = err instanceof Error ? err.message : String(err);
 			return {
 				...base,
 				status: "error",
 				report: "",
 				memoryCandidateBody: undefined,
-				errors: [err instanceof Error ? err.message : String(err)],
+				errors: [
+					`schema repair retry failed: ${repairError}`,
+					...buildMissingReportErrors(attempts, { schemaRepairAttempted }),
+				],
 				hitStepLimit: execution.hitStepLimit,
 				schemaRepairAttempted,
 				durationMs: Date.now() - start,
@@ -146,10 +164,7 @@ export async function runTask(
 
 	const errors = report
 		? []
-		: buildMissingReportErrors(rawOutput, {
-			hitStepLimit: execution.hitStepLimit,
-			schemaRepairAttempted,
-		});
+		: buildMissingReportErrors(attempts, { schemaRepairAttempted });
 
 	return {
 		...base,
@@ -173,37 +188,65 @@ function normalizeWorkerExecution(
 
 function buildSchemaRepairRequest(
 	rawOutput: string,
-	hitStepLimit: boolean | undefined,
+	execution: WorkerExecutionResult,
+	diagnostics: string[],
 ): SchemaRepairRequest {
 	const excerpt = summarizeRawOutput(rawOutput.trim()) || "(empty)";
-	const prefix = hitStepLimit
+	const prefix = execution.hitStepLimit || execution.finishReason === "step_limit"
 		? "Previous attempt hit the worker step limit before producing a valid <task_report>."
+		: execution.emptyFinalTurn || execution.finishReason === "empty_stream"
+			? "Previous attempt ended with an empty final worker turn."
 		: "Previous attempt did not produce a valid <task_report>.";
+	const diagnosticText = diagnostics.length
+		? `\nParser diagnostics: ${diagnostics.join("; ")}`
+		: "";
 	return {
 		attempt: 2,
 		rawOutput,
-		feedback: `${prefix} Re-emit only the required XML blocks with no surrounding prose. Reuse facts already gathered; do not continue analysis or expand scope.\nRaw excerpt: ${excerpt}`,
+		feedback: [
+			`${prefix}${diagnosticText}`,
+			"Do not continue analysis or expand scope.",
+			"Re-emit the smallest valid final response as one <task_report> block only.",
+			"Do not include <memory_candidate> during schema repair.",
+			"No prose before or after the XML block.",
+			"Required shape:",
+			"<task_report>",
+			"  <status>completed | blocked | failed</status>",
+			"  <summary>Reuse only facts already gathered.</summary>",
+			"</task_report>",
+			`Raw excerpt: ${excerpt}`,
+		].join("\n"),
 	};
 }
 
 function buildMissingReportErrors(
-	rawOutput: string,
-	opts: { hitStepLimit?: boolean; schemaRepairAttempted?: boolean },
+	attempts: MissingReportAttempt[],
+	opts: { schemaRepairAttempted?: boolean },
 ): string[] {
 	const errors: string[] = [];
-	const trimmed = rawOutput.trim();
-	if (!trimmed) {
+	const finalAttempt = attempts[attempts.length - 1];
+	const allEmpty = attempts.every((a) => !a.rawOutput.trim());
+	if (allEmpty) {
 		errors.push("worker returned empty output - no <task_report> block was emitted");
-	} else if (opts.hitStepLimit) {
+	} else if (attempts.some((a) => a.hitStepLimit || a.finishReason === "step_limit")) {
 		errors.push("worker hit maxSteps before emitting a <task_report> block");
+	} else if (finalAttempt?.emptyFinalTurn || finalAttempt?.finishReason === "empty_stream") {
+		errors.push("worker stream ended with an empty final turn - no <task_report> block was emitted");
 	} else {
 		errors.push("worker output did not contain a <task_report> block; the model likely responded outside the required schema");
 	}
 	if (opts.schemaRepairAttempted) {
 		errors.push("schema repair retry was attempted once and still did not produce a valid <task_report>");
 	}
-	const excerpt = summarizeRawOutput(trimmed);
-	if (excerpt) errors.push(`raw excerpt: ${excerpt}`);
+	for (const attempt of attempts) {
+		for (const diagnostic of attempt.diagnostics) {
+			errors.push(`${attempt.label} parse: ${diagnostic}`);
+		}
+		if (attempt.emptyFinalTurn) errors.push(`${attempt.label} finish: empty final turn`);
+		if (attempt.finishReason) errors.push(`${attempt.label} finish_reason: ${attempt.finishReason}`);
+		const excerpt = summarizeRawOutput(attempt.rawOutput.trim());
+		if (excerpt) errors.push(`${attempt.label} raw excerpt: ${excerpt}`);
+	}
 	return errors;
 }
 
@@ -215,13 +258,64 @@ function summarizeRawOutput(text: string): string {
 
 /** Extract the trimmed content between <tag> and </tag>; returns "" if absent. */
 export function extractXmlBlock(text: string, tag: string): string {
-	const open = `<${tag}>`;
-	const close = `</${tag}>`;
-	const s = text.indexOf(open);
-	if (s === -1) return "";
-	const e = text.indexOf(close, s + open.length);
-	if (e === -1) return "";
-	return text.slice(s + open.length, e).trim();
+	return inspectXmlBlock(text, tag).content;
+}
+
+interface XmlBlockInspection {
+	content: string;
+	diagnostics: string[];
+}
+
+interface MissingReportAttempt extends WorkerExecutionResult {
+	label: "initial" | "repair";
+	rawOutput: string;
+	diagnostics: string[];
+}
+
+function buildMissingReportAttempt(
+	label: "initial" | "repair",
+	rawOutput: string,
+	execution: WorkerExecutionResult,
+	inspection: XmlBlockInspection,
+): MissingReportAttempt {
+	return {
+		...execution,
+		label,
+		rawOutput,
+		diagnostics: inspection.diagnostics,
+	};
+}
+
+function inspectXmlBlock(text: string, tag: string): XmlBlockInspection {
+	const trimmed = text.trim();
+	if (!trimmed) {
+		return { content: "", diagnostics: [`${tag}: output is empty`] };
+	}
+
+	const tagName = escapeRegExp(tag);
+	const openRe = new RegExp(`<\\s*${tagName}(?:\\s[^>]*)?>`, "i");
+	const open = openRe.exec(text);
+	if (!open || open.index === undefined) {
+		return { content: "", diagnostics: [`${tag}: opening tag not found`] };
+	}
+
+	const closeRe = new RegExp(`<\\/\\s*${tagName}\\s*>`, "i");
+	const bodyStart = open.index + open[0].length;
+	const rest = text.slice(bodyStart);
+	const close = closeRe.exec(rest);
+	if (!close || close.index === undefined) {
+		return { content: "", diagnostics: [`${tag}: opening tag found but closing tag is missing`] };
+	}
+
+	const content = rest.slice(0, close.index).trim();
+	if (!content) {
+		return { content: "", diagnostics: [`${tag}: block content is empty`] };
+	}
+	return { content, diagnostics: [] };
+}
+
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function detectStatus(report: string): TaskStatus {

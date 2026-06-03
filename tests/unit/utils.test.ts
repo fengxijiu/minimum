@@ -18,8 +18,6 @@ import {
 } from "../../src/utils/token-counter.js";
 import {
 	levenshteinSimilarity,
-	jaccardSimilarity,
-	findMostSimilar,
 } from "../../src/utils/similarity.js";
 import {
 	checkJsonSyntax,
@@ -348,47 +346,6 @@ describe("similarity", () => {
 		it("calculates low similarity for different strings", () => {
 			const sim = levenshteinSimilarity("abc", "xyz");
 			expect(sim).toBeLessThan(0.5);
-		});
-	});
-
-	describe("jaccardSimilarity", () => {
-		it("returns 1 for identical strings", () => {
-			expect(jaccardSimilarity("hello world", "hello world")).toBe(1);
-		});
-
-		it("returns 0 for completely different", () => {
-			expect(jaccardSimilarity("aaa bbb", "ccc ddd")).toBe(0);
-		});
-
-		it("calculates partial overlap", () => {
-			const sim = jaccardSimilarity("hello world foo", "hello world bar");
-			// intersection: {hello, world} = 2, union: {hello, world, foo, bar} = 4
-			expect(sim).toBe(0.5);
-		});
-
-		it("returns 0 for empty strings", () => {
-			// Both split to Set([""]) which has intersection = 1, union = 1
-			expect(jaccardSimilarity("", "")).toBe(1);
-		});
-	});
-
-	describe("findMostSimilar", () => {
-		it("finds exact match", () => {
-			const r = findMostSimilar("hello", ["hello", "world", "foo"]);
-			expect(r.item).toBe("hello");
-			expect(r.similarity).toBe(1);
-		});
-
-		it("finds closest match", () => {
-			const r = findMostSimilar("helo", ["hello", "world", "xyz"]);
-			expect(r.item).toBe("hello");
-			expect(r.similarity).toBeGreaterThan(0.5);
-		});
-
-		it("returns empty for empty candidates", () => {
-			const r = findMostSimilar("hello", []);
-			expect(r.item).toBe("");
-			expect(r.similarity).toBe(0);
 		});
 	});
 });

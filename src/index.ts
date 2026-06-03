@@ -137,15 +137,6 @@ export type {
 	SkillResult,
 } from "./skills/Skill.js";
 export { SkillRegistry } from "./skills/SkillRegistry.js";
-export { SkillLoader } from "./skills/SkillLoader.js";
-export type { SkillFile } from "./skills/SkillLoader.js";
-export {
-	CodeReviewSkill,
-	RefactorSkill,
-	TestGeneratorSkill,
-	DocumentationSkill,
-	registerBuiltinSkills,
-} from "./skills/BuiltinSkills.js";
 
 export { loadLearnedSkills, loadLearnedSkillsSync } from "./skills/LearnedSkillLoader.js";
 export type { LoadedLearnedSkill } from "./skills/LearnedSkillLoader.js";
@@ -173,7 +164,15 @@ export {
 // Mocks — test-only, not exported in production build
 
 // MCP (Model Context Protocol) support
-export { McpClient, McpManager } from "./mcp/index.js";
+export {
+	McpClient,
+	McpManager,
+	McpToolAdapter,
+	mcpToolName,
+	connectMcpServers,
+	type ConnectMcpOptions,
+	type ConnectMcpResult,
+} from "./mcp/index.js";
 export type {
 	McpServerConfig,
 	McpTool,
@@ -195,17 +194,6 @@ export type {
 	RiskBand,
 	GuardrailAction,
 } from "./capacity/index.js";
-
-// Task Manager
-export { TaskQueue, TaskManager } from "./tasks/index.js";
-export type {
-	TaskDefinition,
-	TaskQueueConfig,
-	TaskStatus,
-	TaskPriority,
-	TaskUpdate,
-	TaskHandler,
-} from "./tasks/index.js";
 
 export {
 	MEMORY_PRELUDE_MARKER,

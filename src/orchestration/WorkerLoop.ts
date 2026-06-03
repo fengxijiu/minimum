@@ -112,6 +112,10 @@ export interface WorkerRunResult {
 	usage: WorkerUsage;
 	/** True if the loop exited because maxSteps was reached without a final answer. */
 	hitStepLimit: boolean;
+	/** True when the final worker turn ended with no content and no tool calls. */
+	emptyFinalTurn?: boolean;
+	/** Structured reason for the terminal state. */
+	finishReason: "final" | "empty_stream" | "step_limit";
 }
 
 const WRITE_TOOL_NAMES = new Set(["write_file", "edit_file", "apply_patch"]);
@@ -174,6 +178,8 @@ export class WorkerLoop {
 
 		let finalContent = "";
 		let hitStepLimit = true;
+		let emptyFinalTurn = false;
+		let finishReason: WorkerRunResult["finishReason"] = "step_limit";
 
 		for (let step = 0; step < maxSteps; step++) {
 			if (input.signal?.aborted) break;
@@ -200,6 +206,8 @@ export class WorkerLoop {
 				// No more tool calls → model has produced its final answer.
 				finalContent = turn.content;
 				hitStepLimit = false;
+				emptyFinalTurn = !turn.content.trim();
+				finishReason = emptyFinalTurn ? "empty_stream" : "final";
 				break;
 			}
 
@@ -260,8 +268,17 @@ export class WorkerLoop {
 				typeof lastAssistant?.content === "string" ? lastAssistant.content : "";
 		}
 
+		if (hitStepLimit) {
+			finishReason = "step_limit";
+		}
 		emit({ type: "usage", usage });
-		return { text: finalContent, usage, hitStepLimit };
+		return {
+			text: finalContent,
+			usage,
+			hitStepLimit,
+			...(emptyFinalTurn && { emptyFinalTurn }),
+			finishReason,
+		};
 	}
 
 	// ── internals ───────────────────────────────────────────────────────────

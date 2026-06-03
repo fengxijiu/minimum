@@ -43,6 +43,10 @@ export interface CommandContext {
   memoryPath?: string;
   baseUrl?: string;
   engineMode?: 'engine' | 'mock';
+  /** MCP servers that connected at startup. */
+  mcpServers?: string[];
+  /** Number of MCP tools registered across all connected servers. */
+  mcpToolCount?: number;
 }
 
 export type CommandCategory = 'session' | 'context' | 'view' | 'system';
@@ -469,13 +473,19 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
     case 'verbose':
       return { kind: 'event', event: { type: 'verbose.toggle' } };
 
-    case 'mcp':
-      return {
-        kind: 'note',
-        note: state.mcpLoading
-          ? `MCP: loading ${state.mcpLoading.ready}/${state.mcpLoading.total} servers`
-          : 'MCP: no servers configured. Add MCP servers in .minimum/config.json',
-      };
+    case 'mcp': {
+      if (state.mcpLoading) {
+        return { kind: 'note', note: `MCP: loading ${state.mcpLoading.ready}/${state.mcpLoading.total} servers` };
+      }
+      const servers = ctx.mcpServers ?? [];
+      if (servers.length) {
+        return {
+          kind: 'note',
+          note: `MCP: ${servers.length} server(s) connected — ${servers.join(', ')} (${ctx.mcpToolCount ?? 0} tools)`,
+        };
+      }
+      return { kind: 'note', note: 'MCP: no servers configured. Add `mcpServers` to .minimum/config.json' };
+    }
 
     case 'init':
       return { kind: 'event', event: { type: 'init.run', cwd: state.path, args } };

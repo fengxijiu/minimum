@@ -301,6 +301,8 @@ export function createWorkerExecutor(
 				return {
 					text: result.text,
 					hitStepLimit: result.hitStepLimit,
+					...(result.emptyFinalTurn !== undefined && { emptyFinalTurn: result.emptyFinalTurn }),
+					finishReason: result.finishReason,
 					...(repair && { attempt: repair.attempt }),
 				};
 			}
@@ -318,6 +320,8 @@ export function createWorkerExecutor(
 			return {
 				text,
 				hitStepLimit: false,
+				finishReason: text.trim() ? "final" : "empty_stream",
+				...(text.trim() ? {} : { emptyFinalTurn: true }),
 				...(repair && { attempt: repair.attempt }),
 			};
 		},

@@ -18,6 +18,7 @@ function ctx(
 		| "reviewer"
 		| "test_writer"
 		| "docs"
+		| "runtime_debug"
 		| "master_planner",
 	contract?: Partial<TaskContract>,
 ): PolicyContext {
@@ -138,6 +139,21 @@ describe("checkWrite — allowed globs", () => {
 
 	it("docs cannot write business code", () => {
 		const r = checkWrite("src/index.ts", ctx("docs", {
+			pathPolicy: { allowedGlobs: [], forbiddenGlobs: [] },
+		}));
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.code).toBe("NOT_IN_ALLOWED_GLOBS");
+	});
+
+	it("runtime_debug writes diagnostic artifacts", () => {
+		const r = checkWrite("tasks/E/artifacts/runtime-debug.md", ctx("runtime_debug", {
+			pathPolicy: { allowedGlobs: [], forbiddenGlobs: [] },
+		}));
+		expect(r.ok).toBe(true);
+	});
+
+	it("runtime_debug cannot write business code", () => {
+		const r = checkWrite("src/index.ts", ctx("runtime_debug", {
 			pathPolicy: { allowedGlobs: [], forbiddenGlobs: [] },
 		}));
 		expect(r.ok).toBe(false);

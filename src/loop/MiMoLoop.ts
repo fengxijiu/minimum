@@ -159,6 +159,8 @@ export interface MiMoLoopConfig {
 	};
 	/** Called at the start of each turn with the current user input. Return the skills block or "" to clear. */
 	skillsSystemContent?: (userInput: string) => Promise<string>;
+	/** Static system prompt prepended to every conversation. Re-injected after loadHistory. */
+	systemPrompt?: string;
 }
 
 export interface LoopState {
@@ -303,6 +305,14 @@ export class MiMoLoop {
 		}).catch(() => {});
 
 		try {
+			// Ensure the static system prompt is always at position 0.
+			// Re-injected here so session resume (loadHistory) never loses it.
+			if (this.config.systemPrompt && !this.messages.some(
+				(m) => m.role === "system" && m.content.includes("<!-- minimum-core-rules -->"),
+			)) {
+				this.messages.unshift({ role: "system", content: this.config.systemPrompt });
+			}
+
 			// 1. 添加用户消息
 			this.messages.push({ role: "user", content: userInput });
 
