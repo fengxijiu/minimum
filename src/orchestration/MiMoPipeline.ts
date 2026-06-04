@@ -686,6 +686,12 @@ function buildDagFlow(
 					: contract?.launchRequirements?.length ? "deferred-risk" : "ready";
 			const deps = task.dependsOn.length ? ` <- ${task.dependsOn.join(", ")}` : "";
 			lines.push(`  [${status}] ${task.id} ${task.personaId}${deps}`);
+			const objective = clipLine(contract?.objective ?? task.objective);
+			if (objective) lines.push(`      objective: ${objective}`);
+			const writes = contract?.pathPolicy?.allowedGlobs ?? [];
+			if (writes.length) lines.push(`      writes: ${writes.join(", ")}`);
+			const acceptance = contract?.acceptance ?? [];
+			if (acceptance.length) lines.push(`      acceptance: ${clipLine(acceptance.join("; "))}`);
 			if (contract?.launchRequirements?.length) {
 				for (const req of contract.launchRequirements) {
 					lines.push(`      requires ${req.sourceTaskId}.${req.artifact}`);
@@ -699,6 +705,13 @@ function buildDagFlow(
 function summarizeRawReport(raw: string): string {
 	const trimmed = raw.replace(/\s+/g, " ").trim();
 	return trimmed.length > 360 ? `${trimmed.slice(0, 360)}...` : trimmed;
+}
+
+/** Collapse to a single line and clip, so gate context stays readable. */
+function clipLine(text: string | undefined, max = 140): string {
+	if (!text) return "";
+	const oneLine = text.replace(/\s+/g, " ").trim();
+	return oneLine.length > max ? `${oneLine.slice(0, max - 1)}…` : oneLine;
 }
 
 function applyLaunchGate(args: {

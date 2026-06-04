@@ -106,6 +106,26 @@ export class PipelineBridge {
 		// snapshot so the TUI can render a live brief without having to
 		// re-derive state from a stream of partial updates.
 		const progress = new Map<string, SubagentProgress>();
+		// Files each task actually wrote, accumulated from worker tool calls.
+		// pendingWriteByTask remembers the path of the most recent write call so a
+		// later denial/rollback can retract it (the deny/rollback signals don't
+		// always carry the path themselves).
+		const writtenByTask = new Map<string, Set<string>>();
+		const pendingWriteByTask = new Map<string, string>();
+		const recordWrite = (taskId: string, p: string) => {
+			let set = writtenByTask.get(taskId);
+			if (!set) {
+				set = new Set<string>();
+				writtenByTask.set(taskId, set);
+			}
+			set.add(p);
+			pendingWriteByTask.set(taskId, p);
+		};
+		const retractPendingWrite = (taskId: string, p?: string) => {
+			const target = p ?? pendingWriteByTask.get(taskId);
+			if (target) writtenByTask.get(taskId)?.delete(target);
+			pendingWriteByTask.delete(taskId);
+		};
 		const emitProgress = (
 			contract: import("../orchestration/TaskContract.js").TaskContract,
 			snapshot: SubagentProgress,
@@ -127,7 +147,14 @@ export class PipelineBridge {
 			});
 		};
 		const push = (e: PipelineEvent) => {
-			for (const ui of translatePipelineEvent(e)) queue.push(ui);
+			if (e.type === "pipeline_complete") {
+				// Enrich the W4 summary with the per-task written-file list, which
+				// only the bridge has (accumulated from worker tool calls).
+				const { text, tone } = summarizePipelineComplete(e.results, writtenByTask);
+				queue.push({ kind: "notice", text, tone });
+			} else {
+				for (const ui of translatePipelineEvent(e)) queue.push(ui);
+			}
 			// Wave task_done is the authoritative terminal signal — flip the
 			// per-task status so the TUI can stop drawing it as "running".
 			if (e.type === "wave") {
@@ -205,18 +232,26 @@ export class PipelineBridge {
 					progress.set(contract.taskId, snap);
 				}
 				switch (ev.type) {
-					case "tool_call":
+					case "tool_call": {
 						snap.toolCalls += 1;
 						snap.lastTool = ev.toolName;
 						snap.lastToolArgs = clip(summariseArgs(ev.args), 60);
+						const writePath = extractWritePath(ev.toolName, ev.args);
+						if (writePath) recordWrite(contract.taskId, writePath);
+						else pendingWriteByTask.delete(contract.taskId);
 						break;
+					}
 					case "tool_result":
 						// Tool result keeps lastTool but updates timestamp; status hint
 						// from a non-ok result is left to the wave task_done signal.
+						// A clean result commits the pending write.
+						pendingWriteByTask.delete(contract.taskId);
 						break;
 					case "tool_denied":
 						snap.lastTool = `${ev.toolName} (denied)`;
 						snap.lastToolArgs = clip(ev.reason, 60);
+						// The write never landed - drop it from the task's file list.
+						retractPendingWrite(contract.taskId);
 						break;
 					case "tool_rolled_back":
 						// Validation failed -> file was restored. Surface as the
@@ -227,6 +262,8 @@ export class PipelineBridge {
 							`${ev.path} · ${ev.issues} issue${ev.issues === 1 ? "" : "s"}`,
 							60,
 						);
+						// A restored file is not a real write; retract it by path.
+						if (ev.restored) retractPendingWrite(contract.taskId, ev.path);
 						break;
 					case "usage":
 						snap.tokens = ev.usage.totalTokens;
@@ -350,6 +387,26 @@ function clip(s: string, n: number): string {
 	return t.length <= n ? t : t.slice(0, n - 1) + "…";
 }
 
+/** Tools whose successful call means a file was written under the task scope. */
+const WRITE_TOOLS = new Set(["write_file", "edit_file", "apply_patch"]);
+
+/**
+ * Pull the target path out of a write tool's JSON args, or undefined for
+ * non-write tools / unparseable args. apply_patch may not carry a single path
+ * (it embeds a patch blob); we only surface the obvious single-file cases.
+ */
+function extractWritePath(toolName: string, rawArgs: string): string | undefined {
+	if (!WRITE_TOOLS.has(toolName)) return undefined;
+	try {
+		const obj = JSON.parse(rawArgs);
+		const p = obj?.path ?? obj?.file_path ?? obj?.filepath;
+		if (typeof p === "string" && p.trim()) return p.trim();
+	} catch {
+		// ignore malformed args
+	}
+	return undefined;
+}
+
 /** Reduce a raw JSON tool-args blob to a one-line glance string. */
 function summariseArgs(raw: string): string {
 	try {
@@ -453,10 +510,10 @@ export function translatePipelineEvent(e: PipelineEvent): UiEvent[] {
 				},
 			];
 		}
-		case "pipeline_complete":
-			return [
-				{ kind: "notice", text: `pipeline complete · ${e.results.length} task(s)`, tone: "ok" },
-			];
+		case "pipeline_complete": {
+			const { text, tone } = summarizePipelineComplete(e.results);
+			return [{ kind: "notice", text, tone }];
+		}
 		case "pipeline_error":
 			return [{ kind: "error", text: `[${e.phase}] ${e.error}` }];
 		default:
@@ -499,6 +556,72 @@ function translateWaveEvent(w: WaveEvent): UiEvent[] {
 		default:
 			return [];
 	}
+}
+
+/**
+ * Build the W4 completion summary shown in the TUI once the pipeline finishes.
+ * Pure over the task results so it stays unit-testable: a header with status
+ * totals, a per-persona tally of where the work went, and a per-task list of
+ * what each task produced (its task_report) plus execution details.
+ */
+export function summarizePipelineComplete(
+	results: TaskResult[],
+	writtenByTask?: Map<string, Set<string>>,
+): { text: string; tone: "ok" | "warn" } {
+	const ok = results.filter((r) => r.status === "ok");
+	const blocked = results.filter((r) => r.status === "blocked");
+	const errored = results.filter((r) => r.status !== "ok" && r.status !== "blocked");
+
+	const lines: string[] = [
+		`Pipeline complete (W4) · ${results.length} task(s): ${ok.length} ok, ${blocked.length} blocked, ${errored.length} error`,
+	];
+
+	const byPersona = new Map<string, { ok: number; blocked: number; error: number }>();
+	for (const r of results) {
+		const tally = byPersona.get(r.personaId) ?? { ok: 0, blocked: 0, error: 0 };
+		if (r.status === "ok") tally.ok += 1;
+		else if (r.status === "blocked") tally.blocked += 1;
+		else tally.error += 1;
+		byPersona.set(r.personaId, tally);
+	}
+	const personaLine = [...byPersona.entries()]
+		.map(([persona, t]) => {
+			const parts = [`${t.ok} ok`];
+			if (t.blocked) parts.push(`${t.blocked} blocked`);
+			if (t.error) parts.push(`${t.error} error`);
+			return `${persona}: ${parts.join("/")}`;
+		})
+		.join(" · ");
+	if (personaLine) lines.push(`by persona — ${personaLine}`);
+
+	if (results.length) {
+		lines.push("outputs:");
+		for (const r of results) lines.push(...describeTaskOutput(r, writtenByTask?.get(r.taskId)));
+	}
+
+	return { text: lines.join("\n"), tone: blocked.length || errored.length ? "warn" : "ok" };
+}
+
+/** One task's lines for the W4 summary: a header, its deliverable, written files, and details. */
+function describeTaskOutput(r: TaskResult, written?: Set<string>): string[] {
+	const status = r.status === "ok" ? "ok" : r.status === "blocked" ? "blocked" : r.status;
+	const duration = Number.isFinite(r.durationMs) ? ` · ${(r.durationMs / 1000).toFixed(1)}s` : "";
+	const lines = [`  - ${r.taskId} (${r.personaId}) ${status}${duration}`];
+
+	const deliverable = clip(summarizeTaskResult(r), 160);
+	if (deliverable) lines.push(`      ${deliverable}`);
+
+	const writes = written ? [...written] : [];
+	if (writes.length) lines.push(`      writes (${writes.length}): ${clip(writes.join(", "), 200)}`);
+
+	const details: string[] = [];
+	if (r.memoryCandidateBody && r.memoryCandidateBody.trim()) details.push("memory candidate");
+	if (r.hitStepLimit) details.push("hit step limit");
+	if (r.schemaRepairAttempted) details.push("schema repair retried");
+	if (r.stagingError) details.push(`staging error: ${clip(r.stagingError, 60)}`);
+	if (details.length) lines.push(`      details: ${details.join(", ")}`);
+
+	return lines;
 }
 
 function formatTaskError(result: TaskResult): string {
