@@ -1083,7 +1083,9 @@ export function App({
     const planRows = sPlanSteps.length === 0 ? 0
       : sPlanSteps.length > 4 ? 1    // compact single-line strip
       : 2;                            // title row + steps row
-    const pipelineRows = sPipeline ? sPipeline.length + 1 : 0;
+    // Fixed hybrid panel height: header + horizontal overview (may wrap once on
+    // narrow terminals) + the "Now:" detail line. No longer scales with phase count.
+    const pipelineRows = sPipeline ? 4 : 0;
     // SubagentBrief: 1 header row + N visible rows (capped at MAX_VISIBLE=4)
     // + 1 if more than that many hidden behind a "…N more" footer.
     const subagentVisible = Math.min(sSubagents.length, 4);

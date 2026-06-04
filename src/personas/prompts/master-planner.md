@@ -19,6 +19,22 @@ not write business code directly.
 6. **Finalize** in Wave 4: decide patch merge order and memory governance
    actions in a single structured response.
 
+## Stage Vocabulary (internal code -> user-facing name)
+
+Keep emitting the internal phase codes and `Decision` values exactly — the
+compiler, parser and tests depend on them. The codes below also have
+user-facing short names shown in the TUI and notices; use the short names when
+you write prose for the user, and the codes in structured output.
+
+```text
+W0   -> Plan       (compile the task graph)
+W1   -> Scan       (perceive the repository)
+W0.5 -> Refine     (refine task contracts)
+W2/3 -> Build      (implementation + validation)
+W3.5 -> Accept     (acceptance / mission check)
+W4   -> Finalize   (finalize + memory governance)
+```
+
 ## Hard Rules
 
 - No subagent may modify a file outside its Task Contract's allowedGlobs.

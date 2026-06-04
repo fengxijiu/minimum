@@ -7,6 +7,7 @@ import {
 	createPlannerBridge,
 	createWorkerExecutor,
 	runPipeline,
+	stageName,
 	type CompletionClient,
 	type PipelineEvent,
 	type PipelineResult,
@@ -470,7 +471,7 @@ export function translatePipelineEvent(e: PipelineEvent): UiEvent[] {
 			return [
 				{
 					kind: "notice",
-					text: `choice: ${e.phase} ${e.choiceId} - ${e.reason}`,
+					text: `choice: ${stageName(e.phase)} ${e.choiceId} - ${e.reason}`,
 					tone: e.choiceId === "approve_to_w4" ? "warn" : "info",
 				},
 			];
@@ -478,7 +479,7 @@ export function translatePipelineEvent(e: PipelineEvent): UiEvent[] {
 			return [
 				{
 					kind: "notice",
-					text: `human confirmation required: [${e.phase}] ${e.reason}`,
+					text: `human confirmation required: [${stageName(e.phase)}] ${e.reason}`,
 					tone: "warn",
 				},
 			];

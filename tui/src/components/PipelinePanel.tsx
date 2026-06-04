@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Box, Text, useStdout } from 'ink';
 import { theme } from '../theme.js';
 import type { PipelinePhase } from '../types.js';
+import { STAGE_ORDER, stageDisplay } from '../../../dist/orchestration/StageDisplay.js';
 
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const SPINNER_FRAME_MS = 250;
@@ -12,63 +13,64 @@ function formatMs(ms: number): string {
   return `${Math.floor(ms / 60_000)}m${String(Math.floor((ms % 60_000) / 1000)).padStart(2, '0')}s`;
 }
 
-const PhaseBox = React.memo(function PhaseBox({
-  phase, tick, compact, now,
-}: {
-  phase: PipelinePhase;
-  tick: number;
-  compact: boolean;
-  now: number;
-}) {
-  const isActive  = phase.status === 'active';
-  const isDone    = phase.status === 'done';
-  const isErr     = phase.status === 'err';
-  const isPending = phase.status === 'pending';
+type StageStatus = PipelinePhase['status'];
 
-  // Sigil
-  const sigil = isDone
-    ? '✓'
-    : isErr
-    ? '✗'
-    : isActive
-    ? SPINNER[tick % SPINNER.length]!
-    : '○';
+interface StageView {
+  code: string;
+  name: string;
+  description: string;
+  status: StageStatus;
+  startedAt?: number;
+  endedAt?: number;
+  detail?: string;
+}
 
-  // Timing
-  let durationStr = '';
-  if (isDone && phase.startedAt && phase.endedAt) {
-    durationStr = formatMs(phase.endedAt - phase.startedAt);
-  } else if (isActive && phase.startedAt) {
-    durationStr = formatMs(now - phase.startedAt);
+function glyph(status: StageStatus, tick: number): string {
+  if (status === 'done') return '✓';
+  if (status === 'err') return '✗';
+  if (status === 'active') return SPINNER[tick % SPINNER.length]!;
+  return '○';
+}
+
+function stageColor(status: StageStatus): string {
+  if (status === 'active') return theme.accent;
+  if (status === 'err') return theme.danger;
+  if (status === 'done') return theme.plus;
+  return theme.muted;
+}
+
+function labelColor(status: StageStatus): string {
+  if (status === 'active') return theme.ink;
+  if (status === 'done') return theme.inkSoft;
+  if (status === 'err') return theme.danger;
+  return theme.muted;
+}
+
+function durationOf(stage: StageView, now: number): string {
+  if (stage.status === 'done' && stage.startedAt && stage.endedAt) {
+    return formatMs(stage.endedAt - stage.startedAt);
   }
+  if (stage.status === 'active' && stage.startedAt) {
+    return formatMs(now - stage.startedAt);
+  }
+  return '';
+}
 
-  const borderColor = isActive ? theme.accent : isErr ? theme.danger : isDone ? theme.line : theme.line;
-  const phaseColor  = isActive ? theme.accent : isErr ? theme.danger : isDone ? theme.plus : theme.muted;
-  const labelColor  = isActive ? theme.ink    : isDone ? theme.inkSoft : theme.muted;
-
+/** One short-name cell in the horizontal stage overview — no internal phase code. */
+const StageCell = React.memo(function StageCell({
+  stage, tick, now, showDuration,
+}: {
+  stage: StageView;
+  tick: number;
+  now: number;
+  showDuration: boolean;
+}) {
+  const dur = showDuration ? durationOf(stage, now) : '';
   return (
-    <Box
-      key={phase.phase}
-      flexDirection="column"
-      marginRight={1}
-      borderStyle="round"
-      borderColor={borderColor}
-      paddingX={compact ? 0 : 1}
-    >
-      {/* header row: phase id + sigil */}
-      <Box flexDirection="row">
-        <Text color={phaseColor} bold={isActive}>{phase.phase} </Text>
-        <Text color={phaseColor}>{sigil}</Text>
-        {durationStr ? <Text color={theme.muted}>  {durationStr}</Text> : null}
-      </Box>
-
-      {/* label + optional detail */}
-      {!compact && (
-        <Text color={labelColor} bold={isActive}>{phase.label}</Text>
-      )}
-      {!compact && phase.detail && (
-        <Text color={theme.muted}>{phase.detail}</Text>
-      )}
+    <Box flexDirection="row" marginRight={2}>
+      <Text color={stageColor(stage.status)}>{glyph(stage.status, tick)} </Text>
+      <Text color={labelColor(stage.status)} bold={stage.status === 'active'}>{stage.name}</Text>
+      {dur ? <Text color={theme.muted}> {dur}</Text> : null}
     </Box>
   );
 });
@@ -92,38 +94,59 @@ export const PipelinePanel = React.memo(function PipelinePanel({ phases }: {
   if (!phases || phases.length === 0) return <Box />;
 
   const now = Date.now();
-  const doneCount   = phases.filter(p => p.status === 'done').length;
-  const activePhase = phases.find(p => p.status === 'active');
-  const allDone     = doneCount === phases.length;
+  const seen = new Map(phases.map(p => [p.phase, p]));
+
+  // Overlay the seen phases onto the canonical ordered stage list so pending
+  // stages still appear. Internal phase codes never reach the screen.
+  const stages: StageView[] = STAGE_ORDER.map((code) => {
+    const p = seen.get(code);
+    const display = stageDisplay(code);
+    return {
+      code,
+      name: display.name,
+      description: display.description,
+      status: p?.status ?? 'pending',
+      ...(p?.startedAt !== undefined && { startedAt: p.startedAt }),
+      ...(p?.endedAt !== undefined && { endedAt: p.endedAt }),
+      ...(p?.detail !== undefined && { detail: p.detail }),
+    };
+  });
+
+  const doneCount = stages.filter(s => s.status === 'done').length;
+  const active = stages.find(s => s.status === 'active');
+  const allDone = doneCount === stages.length;
 
   return (
     <Box flexDirection="column" paddingX={1}>
-      {/* ── header ── */}
+      {/* line 1 — header */}
       <Box justifyContent="space-between">
         <Box>
           <Text color={theme.muted}>PIPELINE · </Text>
           <Text color={theme.accent2} bold>orchestrator</Text>
-          {activePhase && !compact && (
-            <Text color={theme.muted}> · {activePhase.label}</Text>
-          )}
         </Box>
         <Text color={allDone ? theme.plus : theme.muted}>
-          {allDone ? '✓ done' : `${doneCount}/${phases.length}`}
+          {allDone ? '✓ done' : `${doneCount}/${stages.length}`}
         </Text>
       </Box>
 
-      {/* ── phase boxes ── */}
-      <Box flexDirection="row" marginTop={0}>
-        {phases.map((p, i) => (
-          <PhaseBox
-            key={`${p.phase}-${i}`}
-            phase={p}
-            tick={tick}
-            compact={compact}
-            now={now}
-          />
+      {/* line 2 — horizontal short-name overview */}
+      <Box flexDirection="row" flexWrap="wrap">
+        {stages.map((s) => (
+          <StageCell key={s.code} stage={s} tick={tick} now={now} showDuration={!compact} />
         ))}
       </Box>
+
+      {/* line 3 — current stage detail */}
+      {active ? (
+        <Box flexDirection="row">
+          <Text color={theme.muted}>Now: </Text>
+          <Text color={theme.accent} bold>{active.name}</Text>
+          {durationOf(active, now) ? <Text color={theme.muted}> · {durationOf(active, now)}</Text> : null}
+          {active.description ? <Text color={theme.muted}> · {active.description}</Text> : null}
+        </Box>
+      ) : (
+        <Text color={theme.muted}>{allDone ? 'Pipeline complete' : 'Pipeline idle'}</Text>
+      )}
     </Box>
   );
 });

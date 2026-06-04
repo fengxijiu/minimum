@@ -374,7 +374,7 @@ export const InputArea = React.memo(function InputArea({
     : pending === 'error'    ? 'redirect, or ⏎ to accept the fix'
     : overlay === 'cmd'      ? 'filter commands…'
     : overlay === 'file'     ? 'filter files…'
-    : mode === 'orchestrate' ? 'describe task for W0–W4 + W3.5 pipeline…'
+    : mode === 'orchestrate' ? 'describe a task for the Plan→Build→Finalize pipeline…'
     : liveInput === '' && !hasMessages ? 'how can I help?'
     : 'ask, steer, /cmd, @file…  (? for help)';
 

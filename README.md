@@ -59,7 +59,7 @@
 | 能力 | 当前实现 |
 | --- | --- |
 | 单 Agent 运行 | `MiMoLoop` 处理流式回复、工具调用、验证、修复和上下文折叠 |
-| 多角色编排 | `MiMoPipeline` + `TaskCompiler` + `Refiner` + `WaveScheduler` |
+| 多角色编排 | `MiMoPipeline` + `TaskCompiler` + `Refiner` + `WorkerLoop`，按 Plan → Scan → Refine → Build → Accept → Finalize 六阶段推进 |
 | TUI 交互 | 欢迎屏、命令面板、计划条、聊天流、状态栏、流水线进度面板 |
 | 审批治理 | `read-only`、`auto-edit`、`full-auto`，引擎层还保留 `suggest`、`never` |
 | 工具系统 | 文件、搜索、Git、Web、Todo，Shell 可选启用 |
@@ -319,7 +319,7 @@ TUI 当前支持三种主模式：
 | --- | --- |
 | `chat` | 更偏轻量问答与自然对话 |
 | `agent` | 默认工作模式，适合常规编码与工具调用 |
-| `orchestrate` | 走 W0-W4 多角色流水线 |
+| `orchestrate` | 启动多角色流水线，按 Plan → Scan → Refine → Build → Accept → Finalize 六阶段推进 |
 
 `Tab` / `/mode` 可在模式间切换；状态栏会同步显示当前状态。
 
@@ -333,30 +333,20 @@ TUI 当前支持三种主模式：
 - 触发验证、修复、完整性检查与上下文折叠
 - 通过 `EngineBridge` 转换成 TUI 可消费的 `UiEvent`
 
-### W0-W4 流水线
+### 多角色流水线
 
-`/orchestrate <request>` 会切换到 `PipelineBridge` + `MiMoPipeline` 路径，核心阶段包括：
+`/orchestrate <request>` 会切换到 `PipelineBridge` + `MiMoPipeline` 路径，按六个阶段依次推进：
 
-| 阶段 | 作用 |
-| --- | --- |
-| W0 | `TaskCompiler` 生成任务骨架 |
-| W0.5 | `Refiner` 细化合约、限制路径与并发 |
-| W1 | 需求理解、仓库扫描、上下文构建 |
-| W2/W3 | 实现、测试、调试、评审、文档补充 |
-| W4 | 最终汇总、决策、记忆治理 |
+| 阶段 | 核心工作 | 关键组件 |
+| --- | --- | --- |
+| **Plan** | 任务分解、合约生成与细化 | `TaskCompiler` → `Refiner` |
+| **Scan** | 仓库扫描、上下文构建、Persona 分配 | `RepoScout` / `ContextBuilder` |
+| **Refine** | 合约细化、门控检查、依赖排序 | `LaunchGate` → `Refiner` |
+| **Build** | Worker 多轮工具调用实现与测试 | `WorkerLoop` + `WaveScheduler` |
+| **Accept** | 评审、验证、Mission Check | `MissionChecker` + `Reviewer` |
+| **Finalize** | 结果汇总、记忆治理、最终交付 | `MemoryGovernor` + pipeline artifacts |
 
-当前 Persona 固定为 10 个：
-
-- `master_planner`
-- `vision`
-- `repo_scout`
-- `context_builder`
-- `code_executor`
-- `test_writer`
-- `test_runner`
-- `runtime_debug`
-- `reviewer`
-- `docs`
+每个阶段由 `PipelineBridge` 把事件转为 TUI 可见状态，`PipelinePanel` 展示六阶段进度条，`SubagentBrief` 展示各 worker 的实时状态。
 
 ### 记忆体系
 
@@ -376,7 +366,7 @@ TUI 当前支持三种主模式：
 | --- | --- |
 | 顶栏 | `TitleBar` |
 | 计划条 | `PlanStrip` |
-| 编排进度 | `PipelinePanel` |
+| 编排进度 | `PipelinePanel` + `SubagentBrief`（混合面板，展示阶段进度与 worker 实时状态） |
 | 聊天流 | `ChatStream` |
 | 输入区 | `InputArea` |
 | 状态栏 | `StatusBar` |
@@ -447,7 +437,7 @@ TUI 当前支持三种主模式：
 | `/diff` | - | 切换 / 查看当前 diff 显示状态 |
 | `/plan` | - | 显示当前计划摘要 |
 | `/mode <agent|chat|orchestrate>` | - | 切换运行模式 |
-| `/orchestrate <request>` | `pipeline` `orch` | 启动流水线请求 |
+| `/orchestrate <request>` | `pipeline` `orch` | 启动多角色流水线，Plan → Scan → Refine → Build → Accept → Finalize |
 | `/clear` | `cls` | 清空聊天流 |
 | `/verbose` | `v` | 切换详细输出 |
 
@@ -483,7 +473,7 @@ minimum/
 │   ├── config/              # 配置类型、加载与 stack 工厂
 │   ├── loop/                # MiMoLoop
 │   ├── memory/              # 记忆存储与治理
-│   ├── orchestration/       # MiMoPipeline / TaskCompiler / WaveScheduler
+│   ├── orchestration/       # MiMoPipeline / TaskCompiler / WaveScheduler / WorkerLoop / LaunchGate
 │   ├── personas/            # Persona 定义与 prompts
 │   ├── tools/               # 文件、Git、搜索、Web、Todo、Shell
 │   ├── validators/          # 语法 / 类型 / pattern 检查
@@ -506,7 +496,8 @@ minimum/
 | `MiMoClient` | 管理 MiMo API 调用与 base URL 解析 |
 | `MiMoLoop` | 单 Agent 主循环 |
 | `MiMoPipeline` | 多角色流水线执行器 |
-| `TaskCompiler` / `Refiner` / `TaskRunner` / `WaveScheduler` | 任务合约、细化、执行与并发调度 |
+| `TaskCompiler` / `Refiner` / `TaskRunner` / `WaveScheduler` / `WorkerLoop` | 任务合约、细化、执行、并发调度与 worker 多轮工具循环 |
+| `LaunchGate` / `MissionChecker` | 门控检查：上下文缺口、合约就绪、验收通过 |
 | `ApprovalManager` | 工具风险判断、审批模式、确认缓存 |
 | `ToolRegistry` | 工具注册与统一执行入口 |
 | `ContextManager` | 上下文折叠与 token 管理 |
@@ -645,9 +636,9 @@ npm run verify
 - 工具注册与执行
 - 审批模式与权限判断
 - 配置加载与初始化
-- 多角色流水线与任务调度
+- 多角色流水线、任务合约、worker loop
 - 记忆治理与索引
-- TUI reducer、命令和 markdown 渲染
+- TUI reducer、命令、markdown 渲染和 engine bridge
 
 ---
 
