@@ -75,6 +75,80 @@ describe("MemoryCompactor", () => {
 		expect(project).toContain("last_verified=2025-03-01T00:00:00.000Z");
 	});
 
+	it("merges within sections and preserves headings, not across sections (⑧)", async () => {
+		await writeManifest(dir, defaultManifest());
+		seed(
+			".minimum/project.md",
+			`# Frontend
+
+<!-- mimo-memory source_session_id=s-a related_files=src/a.ts confidence=medium last_verified=2025-01-01T00:00:00.000Z -->
+- Convention: keep validation in the route
+<!-- mimo-memory source_session_id=s-b related_files=src/a.ts confidence=high last_verified=2025-02-01T00:00:00.000Z -->
+- Convention: keep validation in the route
+
+# Backend
+
+<!-- mimo-memory source_session_id=s-c related_files=src/b.ts confidence=medium last_verified=2025-03-01T00:00:00.000Z -->
+- Convention: keep validation in the route
+`,
+		);
+
+		const report = await new MemoryCompactor(dir, { maxRecords: 99 }).compact();
+
+		// Only the two Frontend duplicates merge; the Backend one is a separate section.
+		expect(report.lightMerged).toBe(1);
+		const project = fs.readFileSync(path.join(dir, ".minimum", "project.md"), "utf-8");
+		expect(project).toContain("# Frontend");
+		expect(project).toContain("# Backend");
+		expect(project.match(/keep validation in the route/g)).toHaveLength(2);
+	});
+
+	it("clusters near-duplicate facts into representatives in compressed.md (⑦)", async () => {
+		const manifest = defaultManifest();
+		manifest.canonicalFiles.runtime = ".minimum/runtime.md";
+		await writeManifest(dir, manifest);
+		seed(
+			".minimum/runtime.md",
+			`<!-- mimo-memory source_session_id=s-1 related_files=src/api.ts confidence=high last_verified=2025-01-01T00:00:00.000Z -->
+- API endpoint /upload returns 201
+<!-- mimo-memory source_session_id=s-2 related_files=src/api.ts confidence=high last_verified=2025-01-02T00:00:00.000Z -->
+- API endpoint /upload returns 201
+<!-- mimo-memory source_session_id=s-3 related_files=src/api.ts confidence=high last_verified=2025-01-03T00:00:00.000Z -->
+- API endpoint /upload returns 201
+<!-- mimo-memory source_session_id=s-9 related_files=src/db.ts confidence=high last_verified=2025-01-04T00:00:00.000Z -->
+- Database uses transactional migrations
+`,
+		);
+
+		await new MemoryCompactor(dir, { maxRecords: 1, now: new Date("2026-06-01T00:00:00.000Z") }).compact();
+
+		const compressed = fs.readFileSync(path.join(dir, ".minimum", "compressed.md"), "utf-8");
+		// 4 source records collapse to 2 clusters (API ×3 → 1, Database → 1).
+		expect(compressed.match(/<!-- mimo-memory/g)).toHaveLength(2);
+		expect(compressed).toContain("API endpoint /upload returns 201");
+		expect(compressed).toContain("Database uses transactional migrations");
+	});
+
+	it("skips files unchanged since the last compaction (⑩)", async () => {
+		await writeManifest(dir, defaultManifest());
+		seed(
+			".minimum/project.md",
+			`# Project
+
+<!-- mimo-memory source_session_id=s-a related_files=src/a.ts confidence=medium last_verified=2025-01-01T00:00:00.000Z -->
+- API: use the existing router
+<!-- mimo-memory source_session_id=s-b related_files=src/a.ts confidence=high last_verified=2025-02-01T00:00:00.000Z -->
+- API: use the existing router
+`,
+		);
+
+		const first = await new MemoryCompactor(dir).compact();
+		expect(first.lightMerged).toBe(1);
+		// Second run: the file is unchanged since the watermark, so it is skipped.
+		const second = await new MemoryCompactor(dir).compact();
+		expect(second.lightMerged).toBe(0);
+	});
+
 	it("removes archived records from the refreshed index recall set", async () => {
 		const manifest = defaultManifest();
 		manifest.canonicalFiles.risks = ".minimum/risks.md";
