@@ -315,24 +315,111 @@ export interface SessionFlusher {
 }
 
 /**
+ * PermissionQueue — FIFO so only one approval prompt is shown at a time.
+ * Parallel pipeline workers can request approval concurrently; without queueing
+ * the UI would overwrite the visible prompt and strand the earlier request. The
+ * runner keeps every pending approval by id, so queued prompts still resolve
+ * correctly once they are surfaced in turn.
+ */
+export class PermissionQueue<T> {
+  private active: T | null = null;
+  private queued: T[] = [];
+
+  /** Submit a request; returns it if it should be shown now, or null if queued behind another. */
+  submit(item: T): T | null {
+    if (this.active) {
+      this.queued.push(item);
+      return null;
+    }
+    this.active = item;
+    return item;
+  }
+
+  /** The request currently on screen, or null. */
+  get current(): T | null {
+    return this.active;
+  }
+
+  /** Total unanswered requests: the one shown plus those waiting. */
+  get pending(): number {
+    return this.queued.length + (this.active ? 1 : 0);
+  }
+
+  /** Mark the active request answered; returns the next to show, or null. */
+  next(): T | null {
+    this.active = this.queued.shift() ?? null;
+    return this.active;
+  }
+
+  /** Remove and return every unanswered request (active + queued); empties the queue. */
+  drain(): T[] {
+    const all = this.active ? [this.active, ...this.queued] : [...this.queued];
+    this.active = null;
+    this.queued = [];
+    return all;
+  }
+
+  /** Drop everything without returning it (e.g. at the start of a new turn). */
+  clear(): void {
+    this.active = null;
+    this.queued = [];
+  }
+}
+
+type GateVerdict =
+  | { type: 'pick'; optionId: string }
+  | { type: 'text'; text: string }
+  | { type: 'cancel' };
+type GatePayload = {
+  question: string;
+  options: Array<{ id: string; title: string; summary?: string }>;
+  allowCustom: boolean;
+  context?: string;
+};
+
+/**
  * TuiConfirmationGate — TUI-backed ConfirmationGate.
  * Call gate.onShow to receive payloads; call gate.resolve(verdict) to unblock ask().
+ *
+ * Queue control: only one prompt is shown at a time. Concurrent ask() calls are
+ * queued FIFO — each waits its turn instead of clobbering the in-flight request
+ * (which previously orphaned the earlier promise and silently replaced the
+ * on-screen prompt). resolve() answers the prompt currently shown, then surfaces
+ * the next queued one (if any).
  */
 export class TuiConfirmationGate {
-  private resolver: ((v: { type: 'pick'; optionId: string } | { type: 'text'; text: string } | { type: 'cancel' }) => void) | null = null;
-  onShow: ((payload: { question: string; options: Array<{ id: string; title: string; summary?: string }>; allowCustom: boolean; context?: string }) => void) | null = null;
+  private active: ((v: GateVerdict) => void) | null = null;
+  private queue: Array<{ payload: GatePayload; resolve: (v: GateVerdict) => void }> = [];
+  onShow: ((payload: GatePayload) => void) | null = null;
 
-  ask(payload: { question: string; options: Array<{ id: string; title: string; summary?: string }>; allowCustom: boolean; context?: string }): Promise<{ type: 'pick'; optionId: string } | { type: 'text'; text: string } | { type: 'cancel' }> {
-    return new Promise((resolve) => {
-      this.resolver = resolve;
-      this.onShow?.(payload);
+  ask(payload: GatePayload): Promise<GateVerdict> {
+    return new Promise<GateVerdict>((resolve) => {
+      this.queue.push({ payload, resolve });
+      this.showNext();
     });
   }
 
-  resolve(verdict: { type: 'pick'; optionId: string } | { type: 'text'; text: string } | { type: 'cancel' }): void {
-    const r = this.resolver;
-    this.resolver = null;
-    r?.(verdict);
+  resolve(verdict: GateVerdict): void {
+    const r = this.active;
+    if (!r) return;
+    this.active = null;
+    r(verdict);
+    // Surface the next queued prompt now that this one is answered.
+    this.showNext();
+  }
+
+  /** Total asks not yet answered: the one on screen plus any waiting behind it. */
+  get pending(): number {
+    return this.queue.length + (this.active ? 1 : 0);
+  }
+
+  /** Show the next queued payload if nothing is currently on screen. */
+  private showNext(): void {
+    if (this.active) return; // one prompt at a time
+    const next = this.queue.shift();
+    if (!next) return;
+    this.active = next.resolve;
+    this.onShow?.(next.payload);
   }
 }
 

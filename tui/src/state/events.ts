@@ -73,6 +73,7 @@ export type AgentEvent =
   | { type: 'pipeline.start' }
   | { type: 'pipeline.phase'; phase: string; label: string; detail?: string }
   | { type: 'pipeline.end' }
+  | { type: 'pipeline.clear' }
   // subagent (pipeline worker) brief
   | {
       type: 'subagent.update';

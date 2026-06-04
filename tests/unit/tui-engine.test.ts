@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	buildErrorLines,
 	describePermissionArgs,
+	PermissionQueue,
 	summarizeTool,
 	summarizeToolResult,
 	TuiConfirmationGate,
@@ -81,6 +82,96 @@ describe("TuiConfirmationGate", () => {
 		});
 		expect(shown).toBe("W0.5 DAG 确认");
 		expect(verdict).toEqual({ type: "pick", optionId: "continue_w23" });
+	});
+
+	it("queues concurrent asks and shows them one at a time in FIFO order", async () => {
+		const gate = new TuiConfirmationGate();
+		const shown: string[] = [];
+		gate.onShow = (payload) => {
+			shown.push(payload.question);
+		};
+
+		const p1 = gate.ask({ question: "Q1", options: [{ id: "a", title: "A" }], allowCustom: false });
+		const p2 = gate.ask({ question: "Q2", options: [{ id: "b", title: "B" }], allowCustom: false });
+
+		// Only the first prompt is on screen; the second waits in the queue.
+		expect(shown).toEqual(["Q1"]);
+		expect(gate.pending).toBe(2);
+
+		gate.resolve({ type: "pick", optionId: "a" });
+		// Answering the first surfaces the second.
+		expect(shown).toEqual(["Q1", "Q2"]);
+		expect(gate.pending).toBe(1);
+
+		gate.resolve({ type: "pick", optionId: "b" });
+		expect(gate.pending).toBe(0);
+
+		await expect(p1).resolves.toEqual({ type: "pick", optionId: "a" });
+		await expect(p2).resolves.toEqual({ type: "pick", optionId: "b" });
+	});
+
+	it("does not orphan an earlier ask when a second arrives mid-flight", async () => {
+		const gate = new TuiConfirmationGate();
+		gate.onShow = () => {};
+		let p1Settled = false;
+		const p1 = gate.ask({ question: "first", options: [{ id: "a", title: "A" }], allowCustom: false });
+		void p1.then(() => {
+			p1Settled = true;
+		});
+		gate.ask({ question: "second", options: [{ id: "b", title: "B" }], allowCustom: false });
+
+		gate.resolve({ type: "pick", optionId: "a" });
+		expect(await p1).toEqual({ type: "pick", optionId: "a" });
+		expect(p1Settled).toBe(true);
+	});
+
+	it("ignores resolve() when no prompt is active", () => {
+		const gate = new TuiConfirmationGate();
+		expect(() => gate.resolve({ type: "cancel" })).not.toThrow();
+		expect(gate.pending).toBe(0);
+	});
+});
+
+describe("PermissionQueue", () => {
+	type Perm = { id: string };
+
+	it("shows the first request and queues the rest FIFO", () => {
+		const q = new PermissionQueue<Perm>();
+		expect(q.submit({ id: "a" })).toEqual({ id: "a" }); // shown now
+		expect(q.submit({ id: "b" })).toBeNull(); // queued
+		expect(q.submit({ id: "c" })).toBeNull(); // queued
+		expect(q.current).toEqual({ id: "a" });
+		expect(q.pending).toBe(3);
+
+		expect(q.next()).toEqual({ id: "b" });
+		expect(q.current).toEqual({ id: "b" });
+		expect(q.pending).toBe(2);
+
+		expect(q.next()).toEqual({ id: "c" });
+		expect(q.next()).toBeNull();
+		expect(q.current).toBeNull();
+		expect(q.pending).toBe(0);
+	});
+
+	it("drain returns the active request plus everything queued, in order", () => {
+		const q = new PermissionQueue<Perm>();
+		q.submit({ id: "a" });
+		q.submit({ id: "b" });
+		q.submit({ id: "c" });
+		expect(q.drain()).toEqual([{ id: "a" }, { id: "b" }, { id: "c" }]);
+		expect(q.pending).toBe(0);
+		expect(q.current).toBeNull();
+		// After draining, a new submit shows immediately again.
+		expect(q.submit({ id: "d" })).toEqual({ id: "d" });
+	});
+
+	it("clear empties without returning anything", () => {
+		const q = new PermissionQueue<Perm>();
+		q.submit({ id: "a" });
+		q.submit({ id: "b" });
+		q.clear();
+		expect(q.pending).toBe(0);
+		expect(q.current).toBeNull();
 	});
 });
 

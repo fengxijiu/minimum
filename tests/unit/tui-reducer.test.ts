@@ -650,4 +650,23 @@ describe("TUI reducer", () => {
 		s = reduce(s, { type: "pipeline.end" });
 		expect(s.subagents.map(x => x.taskId)).toEqual(["T1"]);
 	});
+
+	it("pipeline.clear removes leftover pipeline phases and subagents", () => {
+		let s = reduce(base, { type: "pipeline.start" });
+		s = reduce(s, { type: "pipeline.phase", phase: "W4", label: "finalize" });
+		s = reduce(s, {
+			type: "subagent.update", taskId: "T1", personaId: "code_executor",
+			objective: "a", step: 0, maxSteps: 20, toolCalls: 0,
+			tokens: 0, cost: 0, currency: "CNY", status: "done",
+		});
+		// After an orchestrate run the chrome lingers; a single-agent turn clears it.
+		s = reduce(s, { type: "pipeline.clear" });
+		expect(s.pipeline).toBeNull();
+		expect(s.subagents).toEqual([]);
+	});
+
+	it("pipeline.clear is a no-op when nothing is showing (same reference)", () => {
+		const s = reduce(base, { type: "pipeline.clear" });
+		expect(s).toBe(base);
+	});
 });
