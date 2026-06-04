@@ -122,6 +122,120 @@ describe("MemoryRetriever", () => {
 		expect(result.prelude).toContain("Prefer small focused patches");
 	});
 
+	it("excerpts only the matched section, not the whole file (④)", async () => {
+		writeFile(
+			projectRoot,
+			".minimum/notes.md",
+			"# Notes\n\n## Alpha topic\nAlpha details about the alpha thing.\n\n## Beta topic\nBeta details about beta.",
+		);
+		writeIndex(
+			projectRoot,
+			".minimum",
+			makeIndex(projectRoot, ".minimum", [
+				{
+					kind: "canonical",
+					key: "notes",
+					path: ".minimum/notes.md",
+					exists: true,
+					bytes: 0,
+					mtimeMs: 0,
+					headings: ["Notes", "Alpha topic", "Beta topic"],
+					tags: ["canonical", "notes"],
+					relatedFiles: [],
+				},
+			]),
+		);
+
+		const result = await new MemoryRetriever({ projectRoot, globalMemoryRoot: globalRoot }).retrieveMemory(
+			"alpha",
+		);
+
+		expect(result.entries).toHaveLength(1);
+		expect(result.prelude).toContain("Alpha details");
+		expect(result.prelude).not.toContain("Beta details");
+	});
+
+	it("guarantees each layer at least one slot under the quota (⑤)", async () => {
+		// Three project entries outrank the single global entry, but perLayerMin
+		// reserves a global slot so the hierarchy is represented.
+		for (const key of ["one", "two", "three"]) {
+			writeFile(projectRoot, `.minimum/${key}.md`, `# ${key}\n\n## Topic\nalpha note for ${key}.`);
+		}
+		writeFile(globalRoot, "prefs.md", "# Prefs\n\n## Topic\nalpha global preference.");
+		writeIndex(
+			projectRoot,
+			".minimum",
+			makeIndex(projectRoot, ".minimum", ["one", "two", "three"].map((key) => ({
+				kind: "canonical" as const,
+				key,
+				path: `.minimum/${key}.md`,
+				exists: true,
+				bytes: 0,
+				mtimeMs: 0,
+				headings: [key, "Topic"],
+				tags: ["canonical", key, "alpha"],
+				relatedFiles: [],
+			}))),
+		);
+		writeIndex(
+			path.dirname(globalRoot),
+			".minimum",
+			makeIndex(path.dirname(globalRoot), ".minimum", [
+				{
+					kind: "canonical",
+					key: "prefs",
+					path: ".minimum/prefs.md",
+					exists: true,
+					bytes: 0,
+					mtimeMs: 0,
+					headings: ["Prefs", "Topic"],
+					tags: ["canonical", "prefs", "alpha"],
+					relatedFiles: [],
+				},
+			]),
+		);
+
+		const result = await new MemoryRetriever({
+			projectRoot,
+			globalMemoryRoot: globalRoot,
+			maxResults: 2,
+			perLayerMin: 1,
+		}).retrieveMemory("alpha");
+
+		expect(result.entries).toHaveLength(2);
+		expect(result.entries.some((e) => e.layer === "global")).toBe(true);
+		expect(result.entries.some((e) => e.layer === "project")).toBe(true);
+	});
+
+	it("caps the prelude by the token budget (④)", async () => {
+		writeFile(projectRoot, ".minimum/a.md", "# A\n\n## Topic\nalpha note A.");
+		writeFile(projectRoot, ".minimum/b.md", "# B\n\n## Topic\nalpha note B.");
+		writeIndex(
+			projectRoot,
+			".minimum",
+			makeIndex(projectRoot, ".minimum", ["a", "b"].map((key) => ({
+				kind: "canonical" as const,
+				key,
+				path: `.minimum/${key}.md`,
+				exists: true,
+				bytes: 0,
+				mtimeMs: 0,
+				headings: [key, "Topic"],
+				tags: ["canonical", key, "alpha"],
+				relatedFiles: [],
+			}))),
+		);
+
+		const result = await new MemoryRetriever({
+			projectRoot,
+			globalMemoryRoot: globalRoot,
+			maxTokens: 1,
+		}).retrieveMemory("alpha");
+
+		// Both match, but the 1-token budget keeps only the first (always kept).
+		expect(result.entries).toHaveLength(1);
+	});
+
 	it("does not include unrelated memories in the prelude", async () => {
 		writeFile(projectRoot, ".minimum/backend.md", "# Backend\n\n## Database\nUse transactional migrations.");
 		writeIndex(

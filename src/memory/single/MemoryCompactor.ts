@@ -87,8 +87,9 @@ export class MemoryCompactor {
 
 	async compact(): Promise<CompressionReport> {
 		const manifest = await this.manifest();
+		const watermark = await this.readWatermark(manifest);
 		const files = await this.loadFiles(manifest);
-		const lightMerged = await this.lightCompact(files);
+		const lightMerged = await this.lightCompact(files, watermark);
 		const refreshedFiles = await this.loadFiles(manifest);
 		const decision = await this.decideDeepCompact(refreshedFiles);
 
@@ -102,6 +103,7 @@ export class MemoryCompactor {
 
 		const index = await buildMemoryIndex(this.projectRoot, manifest);
 		const indexPath = await writeMemoryIndex(this.projectRoot, index);
+		await this.writeWatermark(manifest);
 		return {
 			lightMerged,
 			deepCompressed: decision.shouldCompress,
@@ -110,6 +112,33 @@ export class MemoryCompactor {
 			indexPath,
 			decision,
 		};
+	}
+
+	private watermarkPath(manifest: Manifest): string {
+		return path.join(this.projectRoot, manifest.memoryRoot, "_compaction-state.json");
+	}
+
+	private async readWatermark(manifest: Manifest): Promise<Map<string, number>> {
+		try {
+			const obj = JSON.parse(await fs.readFile(this.watermarkPath(manifest), "utf-8")) as Record<string, number>;
+			return new Map(Object.entries(obj));
+		} catch {
+			return new Map();
+		}
+	}
+
+	private async writeWatermark(manifest: Manifest): Promise<void> {
+		const files = await this.memoryMarkdownFiles(manifest);
+		const obj: Record<string, number> = {};
+		for (const filePath of files) {
+			const mtimeMs = await statMtime(filePath);
+			if (mtimeMs > 0) obj[toRel(this.projectRoot, filePath)] = mtimeMs;
+		}
+		try {
+			await fs.writeFile(this.watermarkPath(manifest), `${JSON.stringify(obj, null, 2)}\n`, "utf-8");
+		} catch {
+			// best-effort: a missing watermark just means the next run recompacts.
+		}
 	}
 
 	async shouldDeepCompact(): Promise<DeepCompressionDecision> {
@@ -182,33 +211,24 @@ export class MemoryCompactor {
 		return [...new Set(found)].sort();
 	}
 
-	private async lightCompact(files: FileRecords[]): Promise<number> {
+	private async lightCompact(files: FileRecords[], watermark: Map<string, number>): Promise<number> {
 		let merged = 0;
+		const threshold = this.opts.similarityThreshold ?? DEFAULT_OPTIONS.similarityThreshold;
 		for (const file of files) {
+			// Incremental: skip files unchanged since the last compaction — their
+			// duplicates were already merged, so re-scanning is wasted work.
+			const rel = toRel(this.projectRoot, file.filePath);
+			const mtimeMs = await statMtime(file.filePath);
+			if (mtimeMs > 0 && watermark.get(rel) === mtimeMs) continue;
+
+			// Section-aware: merge within each heading-scoped section and re-emit
+			// the structure, instead of flattening the whole file into one list.
+			const sections = parseSections(file.filePath, file.text);
 			let fileMerged = 0;
-			if (file.records.length < 2) continue;
-			const keep = new Set(file.records.map((record) => record.id));
-			const mergedById = new Map(file.records.map((record) => [record.id, record]));
-			for (let i = 0; i < file.records.length; i++) {
-				let a = mergedById.get(file.records[i]!.id)!;
-				if (!keep.has(a.id)) continue;
-				for (let j = i + 1; j < file.records.length; j++) {
-					const b = mergedById.get(file.records[j]!.id)!;
-					if (!keep.has(b.id)) continue;
-					if (!shouldMerge(a, b, this.opts.similarityThreshold ?? DEFAULT_OPTIONS.similarityThreshold)) continue;
-					a = mergeRecords(a, b);
-					mergedById.set(a.id, a);
-					keep.delete(b.id);
-					merged++;
-					fileMerged++;
-				}
-			}
+			for (const section of sections) fileMerged += mergeSectionRecords(section, threshold);
 			if (fileMerged > 0) {
-				const compacted = file.records
-					.filter((record) => keep.has(record.id))
-					.map((record) => renderRecord(mergedById.get(record.id)!))
-					.join("\n");
-				await fs.writeFile(file.filePath, `${compacted.trim()}\n`, "utf-8");
+				await fs.writeFile(file.filePath, renderSections(sections), "utf-8");
+				merged += fileMerged;
 			}
 		}
 		return merged;
@@ -216,10 +236,14 @@ export class MemoryCompactor {
 
 	private async deepCompact(files: FileRecords[], manifest: Manifest): Promise<{ compressedPath: string; archivedPaths: string[] }> {
 		const allRecords = files.flatMap((file) => file.records);
+		// Cluster near-duplicate facts and keep one merged representative each, so
+		// compressed.md is genuinely smaller than the sum of its sources rather
+		// than a verbatim concatenation.
+		const clustered = clusterRecords(allRecords, this.opts.similarityThreshold ?? DEFAULT_OPTIONS.similarityThreshold);
 		const lowValueFiles = files.filter((file) => file.records.length > 0 && file.records.every((record) => record.archivable));
 		const compressedPath = path.join(this.projectRoot, manifest.memoryRoot, "compressed.md");
 		await fs.mkdir(path.dirname(compressedPath), { recursive: true });
-		await fs.writeFile(compressedPath, renderCompressed(allRecords), "utf-8");
+		await fs.writeFile(compressedPath, renderCompressed(clustered), "utf-8");
 
 		const ym = archiveMonth(this.opts.now ?? new Date());
 		const archiveDir = path.join(this.projectRoot, manifest.memoryRoot, "_archive", ym);
@@ -263,24 +287,104 @@ function parseRecords(filePath: string, text: string): MemoryRecord[] {
 		}
 		if (!/^\s*[-*]\s+/.test(line)) continue;
 		const content = line.replace(/^\s*[-*]\s+/, "").trim();
-		const key = recordKey(content);
-		const confidence = provenance?.confidence ?? confidenceFromText(content);
-		records.push({
-			id: `${filePath}:${i}`,
-			filePath,
-			line,
-			key,
-			content,
-			relatedFiles: provenance?.relatedFiles ?? extractInlineList(content, "relatedFiles"),
-			sourceSessionIds: provenance?.sourceSessionIds ?? extractInlineList(content, "sourceSession"),
-			confidence,
-			lastVerified: provenance?.lastVerified ?? new Date(0).toISOString(),
-			provenanceRaw: provenance?.provenanceRaw ?? [],
-			archivable: confidence === "low" || /\b(low value|deprecated|obsolete|stale)\b/i.test(content),
-		});
+		records.push(makeRecord(filePath, `${filePath}:${i}`, line, content, provenance));
 		provenance = null;
 	}
 	return records;
+}
+
+function makeRecord(
+	filePath: string,
+	id: string,
+	line: string,
+	content: string,
+	provenance: Partial<MemoryRecord> | null,
+): MemoryRecord {
+	const key = recordKey(content);
+	const confidence = provenance?.confidence ?? confidenceFromText(content);
+	return {
+		id,
+		filePath,
+		line,
+		key,
+		content,
+		relatedFiles: provenance?.relatedFiles ?? extractInlineList(content, "relatedFiles"),
+		sourceSessionIds: provenance?.sourceSessionIds ?? extractInlineList(content, "sourceSession"),
+		confidence,
+		lastVerified: provenance?.lastVerified ?? new Date(0).toISOString(),
+		provenanceRaw: provenance?.provenanceRaw ?? [],
+		archivable: confidence === "low" || /\b(low value|deprecated|obsolete|stale)\b/i.test(content),
+	};
+}
+
+interface MemorySection {
+	headingLine: string | null;
+	records: MemoryRecord[];
+}
+
+/** Parse a memory file into heading-scoped sections so compaction preserves structure. */
+function parseSections(filePath: string, text: string): MemorySection[] {
+	const lines = text.split(/\r?\n/);
+	const sections: MemorySection[] = [{ headingLine: null, records: [] }];
+	let provenance: Partial<MemoryRecord> | null = null;
+	let index = 0;
+	for (const line of lines) {
+		if (/^#{1,6}\s+/.test(line)) {
+			sections.push({ headingLine: line, records: [] });
+			provenance = null;
+			continue;
+		}
+		const parsed = parseProvenance(line);
+		if (parsed) {
+			provenance = parsed;
+			continue;
+		}
+		if (!/^\s*[-*]\s+/.test(line)) continue;
+		const content = line.replace(/^\s*[-*]\s+/, "").trim();
+		sections[sections.length - 1]!.records.push(
+			makeRecord(filePath, `${filePath}:s${index++}`, line, content, provenance),
+		);
+		provenance = null;
+	}
+	return sections;
+}
+
+/** Merge near-duplicate records within a single section (mutates it). Returns merge count. */
+function mergeSectionRecords(section: MemorySection, threshold: number): number {
+	const records = section.records;
+	if (records.length < 2) return 0;
+	const keep = new Set(records.map((record) => record.id));
+	const byId = new Map(records.map((record) => [record.id, record]));
+	let merged = 0;
+	for (let i = 0; i < records.length; i++) {
+		let a = byId.get(records[i]!.id)!;
+		if (!keep.has(a.id)) continue;
+		for (let j = i + 1; j < records.length; j++) {
+			const b = byId.get(records[j]!.id)!;
+			if (!keep.has(b.id)) continue;
+			if (!shouldMerge(a, b, threshold)) continue;
+			a = mergeRecords(a, b);
+			byId.set(a.id, a);
+			keep.delete(b.id);
+			merged++;
+		}
+	}
+	section.records = records.filter((record) => keep.has(record.id)).map((record) => byId.get(record.id)!);
+	return merged;
+}
+
+/** Re-render sections back to markdown, preserving headings and section order. */
+function renderSections(sections: MemorySection[]): string {
+	const parts: string[] = [];
+	for (const section of sections) {
+		const body = section.records.map(renderRecord).join("\n").trim();
+		if (section.headingLine) {
+			parts.push(body ? `${section.headingLine}\n\n${body}` : section.headingLine);
+		} else if (body) {
+			parts.push(body);
+		}
+	}
+	return `${parts.join("\n\n").trim()}\n`;
 }
 
 function parseProvenance(line: string): Partial<MemoryRecord> | null {
@@ -306,7 +410,18 @@ function parseProvenance(line: string): Partial<MemoryRecord> | null {
 function shouldMerge(a: MemoryRecord, b: MemoryRecord, threshold: number): boolean {
 	if (a.key && a.key === b.key) return true;
 	if (sameRelatedFiles(a, b) && normalizeFact(a.content) === normalizeFact(b.content)) return true;
-	return jaccardSimilarity(a.content, b.content) >= threshold;
+	return cosineSimilarity(a.content, b.content) >= threshold;
+}
+
+/** Greedily cluster records by similarity, merging each into its representative. */
+function clusterRecords(records: MemoryRecord[], threshold: number): MemoryRecord[] {
+	const reps: MemoryRecord[] = [];
+	for (const record of records) {
+		const idx = reps.findIndex((rep) => shouldMerge(rep, record, threshold));
+		if (idx === -1) reps.push(record);
+		else reps[idx] = mergeRecords(reps[idx]!, record);
+	}
+	return reps;
 }
 
 function mergeRecords(a: MemoryRecord, b: MemoryRecord): MemoryRecord {
@@ -342,13 +457,36 @@ function normalizeFact(content: string): string {
 	return content.toLowerCase().replace(/[`*_#[\](){}.,;:!?]/g, " ").replace(/\s+/g, " ").trim();
 }
 
-function jaccardSimilarity(a: string, b: string): number {
-	const aTokens = new Set(normalizeFact(a).split(" ").filter(Boolean));
-	const bTokens = new Set(normalizeFact(b).split(" ").filter(Boolean));
-	if (aTokens.size === 0 || bTokens.size === 0) return 0;
-	let overlap = 0;
-	for (const token of aTokens) if (bTokens.has(token)) overlap++;
-	return overlap / (aTokens.size + bTokens.size - overlap);
+/**
+ * Term-frequency cosine similarity. Unlike Jaccard over token *sets*, this
+ * weighs repeated terms and is less sensitive to length differences, so facts
+ * that say the same thing with reordered or repeated words still cluster.
+ */
+function cosineSimilarity(a: string, b: string): number {
+	const av = termFrequencies(a);
+	const bv = termFrequencies(b);
+	if (av.size === 0 || bv.size === 0) return 0;
+	let dot = 0;
+	for (const [term, count] of av) {
+		const other = bv.get(term);
+		if (other) dot += count * other;
+	}
+	const mag = vectorMagnitude(av) * vectorMagnitude(bv);
+	return mag === 0 ? 0 : dot / mag;
+}
+
+function termFrequencies(text: string): Map<string, number> {
+	const freq = new Map<string, number>();
+	for (const token of normalizeFact(text).split(" ").filter(Boolean)) {
+		freq.set(token, (freq.get(token) ?? 0) + 1);
+	}
+	return freq;
+}
+
+function vectorMagnitude(vec: Map<string, number>): number {
+	let sum = 0;
+	for (const count of vec.values()) sum += count * count;
+	return Math.sqrt(sum);
 }
 
 function sameRelatedFiles(a: MemoryRecord, b: MemoryRecord): boolean {
@@ -387,4 +525,16 @@ function uniq(values: string[]): string[] {
 
 function archiveMonth(now: Date): string {
 	return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+async function statMtime(filePath: string): Promise<number> {
+	try {
+		return (await fs.stat(filePath)).mtimeMs;
+	} catch {
+		return 0;
+	}
+}
+
+function toRel(projectRoot: string, filePath: string): string {
+	return path.relative(projectRoot, filePath).replace(/\\/g, "/");
 }
