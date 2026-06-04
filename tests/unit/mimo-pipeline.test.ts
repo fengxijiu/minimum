@@ -610,6 +610,34 @@ Reason:
 		expect(result.ok).toBe(true);
 	});
 
+	it("auto-retries W0.5 once when a needs_refine task is missing from refine output", async () => {
+		const refineFeedbacks: Array<string | undefined> = [];
+		let refineCalls = 0;
+		const planner = stubPlanner({
+			refine: async (_dag, _perception, _memory, feedback) => {
+				refineFeedbacks.push(feedback);
+				refineCalls++;
+				if (refineCalls === 1) return `<refine>{"tasks":[]}</refine>`;
+				return `<refine>{"tasks":[{"taskId":"T2-1","allowedGlobs":["src/upload.ts"],"acceptance":["returns 201"],"blockedCondition":"blocked if T0-1.file_list is unavailable or incomplete"}]}</refine>`;
+			},
+		});
+		const events: PipelineEvent[] = [];
+
+		const result = await runPipeline("image upload backend", {
+			projectRoot: dir,
+			planner,
+			executor: okExecutor(),
+			onEvent: (e) => events.push(e),
+			choiceGate: continueGate(),
+		});
+
+		expect(result.ok).toBe(true);
+		expect(refineCalls).toBe(2);
+		expect(refineFeedbacks[1]).toContain("Missing refinement entries: T2-1");
+		expect(refineFeedbacks[1]).toContain("Re-emit the ENTIRE <refine> block");
+		expect(events.some((e) => e.type === "pipeline_choice" && (e as any).choiceId === "auto_rerun_refine")).toBe(true);
+	});
+
 	it("writes inline refine contextPack and passes its path to the worker", async () => {
 		const contextPack = "# Context Pack: T2-1\n\n## Goal\nImplement upload.";
 		const seenContextPacks = new Map<string, string | undefined>();

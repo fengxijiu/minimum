@@ -111,13 +111,19 @@ export function createPlannerBridge(
 			return collectText(client, messages, max);
 		},
 		refine: async (dag: CoarseDag, perception: TaskResult[], memoryPrefix: string, feedback?: string) => {
+			const requiredRefinementTaskIds = dag.phases.flatMap((phase) =>
+				phase.tasks.filter((task) => task.needsRefine).map((task) => task.id),
+			);
 			const userContent = [
 				`# Coarse DAG\n${JSON.stringify(dag)}`,
+				`# Required Refinement Task IDs\n${JSON.stringify({ requiredRefinementTaskIds })}`,
 				`# Perception Reports\n${renderResults(perception)}`,
 				`# Canonical Project Memory\n${memoryPrefix || "(none)"}`,
 				`# Context Builder Guidance\n${contextBuilder.systemPrompt}`,
 				[
 					"Refine the needs_refine tasks.",
+					"The set of refine.tasks[].taskId values must exactly cover requiredRefinementTaskIds: no missing ids, no renamed ids, no duplicates, and no incremental-only responses.",
+					"For write-capable tasks, include allowedGlobs, acceptance, nonGoals, and blockedCondition.",
 					"Use the context-builder guidance to synthesize concise per-task ContextPack markdown when it helps downstream workers.",
 					"Output a single <refine> block. Each task may include an optional string field named contextPack.",
 				].join(" "),

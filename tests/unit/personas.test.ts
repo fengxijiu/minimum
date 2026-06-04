@@ -213,6 +213,11 @@ describe("PersonaRegistry", () => {
 				expect(p.toolAllowlist).toContain("read_file");
 			}
 		});
+
+		it("master_planner can ask bounded planning choices", () => {
+			expect(getPersona("master_planner").toolAllowlist).toContain("ask_choice");
+			expect(getPersona("master_planner").toolDenylist).toContain("exec_shell");
+		});
 	});
 
 	describe("master_planner prompt", () => {
@@ -256,6 +261,15 @@ describe("PersonaRegistry", () => {
 			expect(sys).toContain("Task Granularity Rules");
 			expect(sys).toContain("test_writer -> test_runner -> code_executor -> test_runner -> reviewer");
 			expect(sys).toContain("Do not assign discovery or file-list tasks to `code_executor`");
+		});
+
+		it("defines workload estimation and fan-out policy", () => {
+			const sys = getPersona("master_planner").systemPrompt;
+			expect(sys).toContain("Workload Estimation and Fan-Out Policy");
+			expect(sys).toContain("workload_dimensions");
+			expect(sys).toContain("Fan-Out Decision Rules");
+			expect(sys).toContain("One code_executor task should not own more than 3-5 files unless the change is mechanical");
+			expect(sys).toContain("ask_choice");
 		});
 	});
 });

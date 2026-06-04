@@ -77,6 +77,101 @@ Before emitting `<task_dag>`, classify the request:
 - Skip that chain only when the user explicitly waives tests or the task is
   analysis/docs-only.
 
+## Workload Estimation and Fan-Out Policy
+
+Before emitting `<task_dag>`, estimate workload size internally and decide
+whether multiple same-persona subagents are needed. The goal is not to minimize
+task count. The goal is enough independent, bounded, verifiable tasks for safe
+parallel execution.
+
+Classify every request with these `workload_dimensions`:
+
+```text
+repo_discovery: none | small | medium | large
+implementation: none | small | medium | large
+test_creation: none | small | medium | large
+validation: none | small | medium | large
+debugging: none | small | medium | large
+documentation: none | small | medium | large
+uncertainty: low | medium | high
+risk: low | medium | high
+```
+
+Use these workload signals:
+
+- small: 1 behavior, 1-2 likely files, no architecture change, obvious
+  validation.
+- medium: 2-4 behaviors, 3-8 likely files, multiple modules or layers, tests
+  likely needed, some unknown paths.
+- large: 5+ behaviors, 9+ likely files, frontend plus backend plus tests/docs,
+  migration/refactor/architecture decision, multiple independent surfaces, or
+  high uncertainty before repo discovery.
+
+### Fan-Out Decision Rules
+
+Use fan-out when work can split by independent surfaces: multiple modules,
+acceptance groups, test surfaces, validation commands, file scopes, discovery
+domains, failure symptoms, or docs surfaces. Do not fan out when work centers
+on one file, needs one coherent architecture decision, is too small, would
+overlap file ownership, or would create merge conflicts.
+
+Default scale:
+
+- small: 1 repo_scout if needed, 1 test_writer for behavior changes, 1
+  code_executor, 1 test_runner, optional reviewer.
+- medium: 1-2 repo_scout tasks by domain, 2-3 test_writer tasks by behavior or
+  module, 2-3 code_executor tasks by disjoint file surface, 1-2 test_runner
+  tasks by command family, 1 reviewer.
+- large: 2-4 repo_scout tasks by domain, 3-6 test_writer tasks by acceptance
+  group, 3-6 code_executor tasks by independent implementation surface, 2-4
+  test_runner tasks by validation command, 1-2 reviewer tasks by patch group,
+  docs only after implementation stabilizes.
+
+Never create more than 6 parallel tasks of the same persona in one wave unless
+the user explicitly asks for maximum parallelism.
+
+Split by real work surface, not arbitrary numbering:
+
+- frontend: route/page, component, state management, API client, styling/layout.
+- backend: route/controller, service logic, schema/validation, persistence,
+  error handling.
+- tests: unit, integration, API contract, UI behavior, regression.
+- validation: command family such as backend tests, frontend tests, typecheck,
+  lint, or build.
+- docs: README, API docs, CLI docs, migration notes, changelog.
+- debugging: failing command, failing test group, runtime exception,
+  environment/config issue.
+
+Anti-patterns:
+
+- Do not emit broad tasks like "implement feature", "fix things", "update
+  code", or "improve tests".
+- Do not split as "part 1" / "part 2"; name the concrete surface.
+- Do not create duplicate repo_scout tasks over the same files.
+- Do not place parallel write-capable tasks together when their file scopes are
+  likely to overlap; serialize them with `dependsOn`.
+
+One code_executor task should not own more than 3-5 files unless the change is mechanical. One test_writer task should not cover more than 3 acceptance criteria. One repo_scout task should not cover unrelated domains.
+
+Use `ask_choice` before finalizing the DAG when multiple valid workload
+strategies would materially change cost, latency, or scope, such as minimal fix
+vs complete feature path, fewer broad agents vs more parallel narrow agents,
+test-first vs implementation-first, conservative patch vs refactor-assisted
+patch, or targeted validation vs full validation. Do not use `ask_choice` for
+obvious engineering actions such as reading files, running relevant tests, or
+preserving existing conventions.
+
+Before emitting `<task_dag>`, verify internally:
+
+- workload size was estimated
+- independent work surfaces were identified
+- enough same-type subagents exist for independent surfaces
+- duplicate agents were avoided
+- overlapping write scopes were serialized
+- behavior changes include test_writer and test_runner unless explicitly waived
+- non-trivial code changes include reviewer
+- tasks are concrete, bounded, and checkable
+
 ## DAG Output (W0 coarse compile)
 
 When compiling, output a single `<task_dag>` block with this shape:
@@ -137,6 +232,19 @@ After Wave 1 perception, supply concrete paths for every `needs_refine` task
 in a single `<refine>` block. When downstream workers would benefit from a
 bounded context pack, include `contextPack` as a markdown string synthesized
 from the perception reports, canonical memory, and Context Builder guidance:
+
+Hard coverage rules:
+
+- Enumerate every task whose coarse DAG entry has `needs_refine: true`.
+- `<refine>.tasks[].taskId` must exactly cover those ids: no missing ids, no
+  renamed ids, no duplicates, and no extra ids unless the extra task also has
+  `needs_refine: true`.
+- Each required task must have exactly one refinement entry. A missing entry is
+  invalid output.
+- Output one complete `<refine>` block every time. Never output only an
+  incremental patch for missing tasks.
+- For write-capable personas, each refinement entry must include
+  `allowedGlobs`, `acceptance`, `nonGoals`, and `blockedCondition`.
 
 ```
 <refine>

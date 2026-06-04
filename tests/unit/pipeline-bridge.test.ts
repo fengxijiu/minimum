@@ -89,11 +89,32 @@ describe("createPlannerBridge", () => {
 			},
 		};
 		const planner = createPlannerBridge(client);
-		await planner.refine({ epicId: "e", phases: [] }, [], "CANONICAL MEMORY");
+		await planner.refine({
+			epicId: "e",
+			phases: [
+				{
+					id: "P2",
+					name: "impl",
+					tasks: [
+						{
+							id: "T2-1",
+							personaId: "code_executor",
+							objective: "implement the endpoint",
+							parallelGroup: "backend",
+							dependsOn: [],
+							needsRefine: true,
+						},
+					],
+				},
+			],
+		}, [], "CANONICAL MEMORY");
 		const userMessage = calls[0]!.messages.find((m: any) => m.role === "user")!.content;
 		expect(userMessage).toContain("CANONICAL MEMORY");
 		expect(userMessage).toContain("Context Builder Persona");
 		expect(userMessage).toContain("contextPack");
+		expect(userMessage).toContain("requiredRefinementTaskIds");
+		expect(userMessage).toContain('"T2-1"');
+		expect(userMessage).toContain("must exactly cover requiredRefinementTaskIds");
 	});
 
 	it("runs mission checker as an inline persona", async () => {

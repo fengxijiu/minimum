@@ -435,9 +435,15 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 	let refineErrors: ReturnType<typeof refineDag>["errors"] = [];
 	let refineFeedback: string | undefined;
 	let refineRetryUsed = false;
+	let autoRefineRetryUsed = false;
 	while (true) {
-		emit({ type: "phase_start", phase: "W0.5", label: `refine${labelSuffix}${refineRetryUsed ? " retry" : ""}` });
-		const currentPassId = refineRetryUsed ? `${passId}-refine-retry` : passId;
+		const retryLabel = refineRetryUsed ? " retry" : autoRefineRetryUsed ? " auto retry" : "";
+		emit({ type: "phase_start", phase: "W0.5", label: `refine${labelSuffix}${retryLabel}` });
+		const currentPassId = refineRetryUsed
+			? `${passId}-refine-retry`
+			: autoRefineRetryUsed
+				? `${passId}-auto-refine-retry`
+				: passId;
 		let refinement: Map<string, RefinementEntry> = new Map();
 		let refinementParsed = false;
 		try {
@@ -483,6 +489,17 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 		});
 		allContracts = refined.contracts;
 		refineErrors = refined.errors;
+		const missingRefinementTaskIds = getMissingRefinementTaskIds(refineErrors);
+		if (missingRefinementTaskIds.length > 0 && !autoRefineRetryUsed) {
+			autoRefineRetryUsed = true;
+			refineFeedback = [
+				`Missing refinement entries: ${missingRefinementTaskIds.join(", ")}`,
+				"The previous <refine> block is invalid. Every needs_refine task must have exactly one refinement entry.",
+				"Re-emit the ENTIRE <refine> block, not an incremental patch.",
+			].join("\n");
+			emit({ type: "pipeline_choice", phase: "W0.5", choiceId: "auto_rerun_refine", reason: refineFeedback });
+			continue;
+		}
 		if (refineErrors.length > 0) {
 			for (const error of refineErrors) {
 				knownIssues.push(`W0.5 ${error.taskId}: ${error.errors.join("; ")}`);
@@ -572,6 +589,16 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 	}
 
 	return { ok: true };
+}
+
+function getMissingRefinementTaskIds(errors: ReturnType<typeof refineDag>["errors"]): string[] {
+	const missing = new Set<string>();
+	for (const error of errors) {
+		if (error.errors.some((message) => message.includes("needs_refine but has no refinement entry"))) {
+			missing.add(error.taskId);
+		}
+	}
+	return [...missing];
 }
 
 async function askPipelineChoice(
