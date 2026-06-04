@@ -99,11 +99,21 @@ export interface PlannerBridge {
 	): Promise<string>;
 }
 
+/**
+ * Default automatic W3.5 mission-repair budget. This is the number of
+ * code_executor -> test_runner -> code_executor repair loops the pipeline will
+ * run on its own before pausing for a human at the cap gate. Set above 1 so a
+ * single failing repair leg does not immediately halt the run; the user can
+ * still extend the cap interactively when it is reached.
+ */
+export const DEFAULT_MAX_MISSION_REPAIR_LOOPS = 2;
+
 export interface PipelineOptions {
 	projectRoot: string;
 	planner: PlannerBridge;
 	executor: WorkerExecutor;
 	onEvent?: (event: PipelineEvent) => void;
+	/** Automatic repair loops before the cap gate. Defaults to {@link DEFAULT_MAX_MISSION_REPAIR_LOOPS}. */
 	maxMissionRepairLoops?: number;
 	choiceGate?: ConfirmationGate;
 }
@@ -129,7 +139,7 @@ export async function runPipeline(
 	const gateRetryKeys = new Set<string>();
 	const artifactPaths = emptyArtifactPaths();
 	artifactPaths.memoryIndex = memoryIndexPath(opts.projectRoot);
-	let maxMissionRepairLoops = opts.maxMissionRepairLoops ?? 1;
+	let maxMissionRepairLoops = opts.maxMissionRepairLoops ?? DEFAULT_MAX_MISSION_REPAIR_LOOPS;
 	let statusReason: PipelineResult["statusReason"] = "complete";
 
 	// ── W0: load memory, compile coarse DAG ──────────────────────────────────

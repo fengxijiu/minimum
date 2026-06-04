@@ -439,6 +439,7 @@ Reason:
 			executor: okExecutor(),
 			onEvent: (e) => events.push(e),
 			choiceGate: gate,
+			maxMissionRepairLoops: 1,
 		});
 
 		expect(result.ok).toBe(false);
@@ -488,6 +489,7 @@ Reason:
 			executor: okExecutor(),
 			onEvent: (e) => events.push(e),
 			choiceGate: gate,
+			maxMissionRepairLoops: 1,
 		});
 
 		expect(result.ok).toBe(true);
@@ -813,12 +815,81 @@ Reason:
 			executor: okExecutor(),
 			onEvent: (e) => events.push(e),
 			choiceGate: gate,
+			maxMissionRepairLoops: 1,
 		});
 
 		expect(result.ok).toBe(false);
 		expect(result.statusReason).toBe("human_confirmation");
 		expect(events.some((e) => e.type === "human_confirmation_required" && (e as any).phase === "W3.5")).toBe(true);
 		expect(events.some((e) => e.type === "pipeline_error")).toBe(false);
+	});
+
+	it("runs two automatic code_executor repair loops before the cap by default", async () => {
+		// No maxMissionRepairLoops override -> DEFAULT_MAX_MISSION_REPAIR_LOOPS (2).
+		// W3.5 always asks to loop back, so the pipeline should run two repair
+		// passes (checkMission calls 1 and 2 -> repair, call 3 hits the cap gate).
+		const planner = stubPlanner({
+			refine: async (dag) => {
+				const taskIds = dag.phases.flatMap((p) => p.tasks.map((t) => t.id));
+				return `<refine>${JSON.stringify({
+					tasks: taskIds
+						.filter((id) => id === "T2-1" || id.startsWith("T3.5-"))
+						.map((taskId) => ({
+							taskId,
+							allowedGlobs: [`src/${taskId}.ts`],
+							acceptance: [`${taskId} done`],
+						})),
+				})}</refine>`;
+			},
+			checkMission: async () => `# W3.5 Loop Detection Report
+
+## 1. Final Decision
+
+Decision: LOOP_BACK_TO_W1
+
+Reason:
+
+- Still incomplete.
+
+## 7. Loop-Back Tasks for W1
+
+### Task 1: Keep fixing missing path
+
+- Priority: P1
+- Blocking: Yes
+- Reason: Still missing.
+- Source issue: W3.5 found a missing path.
+- Expected outcome: Missing path is fixed and \`npm test\` passes.
+- Suggested owner agent: code_executor
+- Allowed globs:
+  - src/T3.5-1-1.ts
+- Acceptance criteria:
+  - Missing path works.
+`,
+		});
+		const events: PipelineEvent[] = [];
+		const gate = new ScriptedChoiceGate([
+			{ type: "pick", optionId: "continue_w23" }, // initial W0.5 DAG gate
+			{ type: "pick", optionId: "continue_w23" }, // repair-1 W0.5 DAG gate
+			{ type: "pick", optionId: "continue_w23" }, // repair-2 W0.5 DAG gate
+			{ type: "pick", optionId: "stop_for_human" }, // mission repair cap gate (after 2 loops)
+		]);
+
+		const result = await runPipeline("image upload backend", {
+			projectRoot: dir,
+			planner,
+			executor: okExecutor(),
+			onEvent: (e) => events.push(e),
+			choiceGate: gate,
+		});
+
+		expect(result.ok).toBe(false);
+		expect(result.statusReason).toBe("human_confirmation");
+		// Two automatic repair DAGs written before the cap gate stopped the run.
+		expect(fs.existsSync(path.join(dir, ".minimum", "tasks", "image_upload", "repair-dags", "1.json"))).toBe(true);
+		expect(fs.existsSync(path.join(dir, ".minimum", "tasks", "image_upload", "repair-dags", "2.json"))).toBe(true);
+		const capGate = gate.payloads[gate.payloads.length - 1]!;
+		expect(capGate.question).toContain("2");
 	});
 });
 

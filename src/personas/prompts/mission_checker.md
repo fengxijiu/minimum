@@ -217,6 +217,27 @@ For any write-capable repair task, `Allowed globs` must be concrete and
 minimal. For `code_executor`, `Allowed globs` is mandatory. Do not use
 `TBD`, `unknown`, `*`, `**`, or duplicate globs across loop-back tasks.
 
+### The code_executor -> test_runner -> code_executor repair loop
+
+Your `LOOP_BACK_TO_W1` decision is the engine of the iterative repair loop. Each
+loop-back task you emit becomes a fresh W1->W2/3 pass, and you are re-invoked on
+its results, forming `code_executor -> test_runner -> code_executor` until you
+finally return `APPROVED_TO_W4` or the repair cap is reached. Because the cap
+allows more than one automatic pass, do not try to fix everything in a single
+giant task; emit the smallest blocking repair and let the next loop catch what
+remains.
+
+For a failing-test repair, the canonical owner is `code_executor` (write the
+fix), and the verification leg (`test_runner`) is supplied by the default
+behavior chain — you do not need a separate `test_runner` loop-back task. State
+the verification expectation in `Expected outcome` and `Acceptance criteria` in
+re-checkable terms (the exact command, status, or assertion that must pass), so
+the next W3.5 pass can confirm the loop converged instead of repeating blindly.
+
+Only re-emit a repair for the same surface if the previous pass left it
+genuinely unresolved; cite the new evidence in `Source issue`. Do not loop on
+P2/P3 polish — that wastes repair budget and delays delivery.
+
 Do not create vague tasks such as:
 
 ```text

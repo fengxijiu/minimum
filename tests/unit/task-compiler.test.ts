@@ -255,6 +255,64 @@ describe("buildWaves", () => {
 		expect(() => buildWaves([a, b])).toThrow(/cycle/);
 	});
 
+	it("schedules an unrolled code_executor -> test_runner -> code_executor chain across three ordered waves", () => {
+		// Method 1: express the repair loop as distinct task ids chained with
+		// dependsOn (never a back-edge, which would throw). The two code_executor
+		// passes re-edit the same file, so they live in different parallelGroups
+		// to stay out of each other's conflict scope.
+		const impl = mkContract({
+			taskId: "T2-1",
+			personaId: "code_executor",
+			parallelGroup: "backend-impl",
+			pathPolicy: { allowedGlobs: ["src/upload.ts"], forbiddenGlobs: [] },
+		});
+		const verify = mkContract({
+			taskId: "T2-2",
+			personaId: "test_runner",
+			dependsOn: ["T2-1"],
+			parallelGroup: "validate",
+			// test_runner is read-only: allowedGlobs must be empty.
+			pathPolicy: { allowedGlobs: [], forbiddenGlobs: [] },
+			nonGoals: [],
+			blockedCondition: "",
+		});
+		const fix = mkContract({
+			taskId: "T2-3",
+			personaId: "code_executor",
+			dependsOn: ["T2-2"],
+			parallelGroup: "backend-fix",
+			pathPolicy: { allowedGlobs: ["src/upload.ts"], forbiddenGlobs: [] },
+		});
+
+		const { waves, errors } = buildWaves([fix, verify, impl]); // unsorted input
+		expect(errors).toEqual([]);
+		expect(waves.map((w) => w.tasks.map((t) => t.taskId))).toEqual([
+			["T2-1"], ["T2-2"], ["T2-3"],
+		]);
+	});
+
+	it("rejects a code_executor <-> test_runner back-edge as a cycle", () => {
+		// The literal "loop" (test_runner depends on the fix, fix depends back on
+		// the verify) is a cycle and must abort rather than schedule.
+		const impl = mkContract({
+			taskId: "T2-1",
+			personaId: "code_executor",
+			dependsOn: ["T2-2"],
+			parallelGroup: "backend-impl",
+			pathPolicy: { allowedGlobs: ["src/upload.ts"], forbiddenGlobs: [] },
+		});
+		const verify = mkContract({
+			taskId: "T2-2",
+			personaId: "test_runner",
+			dependsOn: ["T2-1"],
+			parallelGroup: "validate",
+			pathPolicy: { allowedGlobs: [], forbiddenGlobs: [] },
+			nonGoals: [],
+			blockedCondition: "",
+		});
+		expect(() => buildWaves([impl, verify], { validate: false })).toThrow(/cycle/);
+	});
+
 	it("surfaces validation errors", () => {
 		const bad = mkContract({ objective: "x" }); // too short
 		const { waves, errors } = buildWaves([bad]);
