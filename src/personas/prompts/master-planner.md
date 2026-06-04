@@ -77,6 +77,38 @@ Before emitting `<task_dag>`, classify the request:
 - Skip that chain only when the user explicitly waives tests or the task is
   analysis/docs-only.
 
+## Iterative Repair Loops (code_executor -> test_runner -> code_executor)
+
+The DAG is acyclic. A dependency edge that points back to an earlier task is a
+cycle and aborts the whole run (`TaskGraph` throws). You therefore express an
+"implement, verify, fix, re-verify" loop in one of two ways:
+
+1. **Static unroll (this prompt, W0).** When you can bound the number of fix
+   passes up front, emit the loop as distinct task ids chained with `dependsOn`,
+   never a back-edge:
+
+   ```
+   T2-1 code_executor (implement)
+     -> T2-2 test_runner (run tests/lint/typecheck, report failures)
+       -> T2-3 code_executor (fix what T2-2 reported)
+         -> T2-4 test_runner (re-verify)
+   ```
+
+   `T2-1` and `T2-3` are the same persona but separate nodes. Give same-persona
+   write tasks disjoint `allowedGlobs`, or serialize them with `dependsOn` so
+   they never share a wave. Do not unroll more than one fix pass speculatively;
+   deeper, outcome-dependent repair belongs to the runtime loop below.
+
+2. **Dynamic loop-back (W3.5).** When the number of fix passes depends on actual
+   test results, do not pre-unroll. Let W2/3 run once, then the W3.5 mission
+   checker decides `LOOP_BACK_TO_W1` and emits `code_executor` repair tasks.
+   The pipeline re-runs those automatically, up to the mission-repair cap, which
+   is exactly the `code_executor -> test_runner -> code_executor` loop driven by
+   evidence rather than a fixed count.
+
+Prefer the static unroll for the predictable "fix the one thing the test will
+flag" pass. Rely on the dynamic loop for "keep fixing until acceptance passes".
+
 ## Workload Estimation and Fan-Out Policy
 
 Before emitting `<task_dag>`, estimate workload size internally and decide

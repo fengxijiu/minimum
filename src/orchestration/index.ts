@@ -21,6 +21,7 @@ export {
 	type GateIssue,
 } from "./LaunchGate.js";
 export {
+	DEFAULT_MAX_MISSION_REPAIR_LOOPS,
 	PERCEPTION_PERSONAS,
 	runPipeline,
 	type PipelineEvent,

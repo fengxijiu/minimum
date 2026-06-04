@@ -61,6 +61,51 @@ Reason:
 		expect(result.report.tasks[0]!.allowedGlobs).toEqual(["src/upload.ts", "tests/upload.test.ts"]);
 	});
 
+	it("accepts a code_executor repair leg for the dynamic repair loop", () => {
+		// Method 2: the W3.5 -> code_executor repair task is the implementation leg
+		// of the runtime code_executor -> test_runner -> code_executor loop. With a
+		// concrete owner and globs it must compile cleanly.
+		const result = compileMissionCheck(`# W3.5 Loop Detection Report
+
+## 1. Final Decision
+
+Decision: LOOP_BACK_TO_W1
+
+Reason:
+
+- Upload size limit still unimplemented.
+
+## 7. Loop-Back Tasks for W1
+
+### Task 1: Implement 5MB upload rejection
+
+- Priority: P1
+- Blocking: Yes
+- Reason: test_runner reported "rejects files >5MB" failing.
+- Source issue: T-verify test failure on oversize upload.
+- Expected outcome: POST /upload returns 413 for >5MB and \`npm test\` passes.
+- Suggested owner agent: code_executor
+- Allowed globs:
+  - src/api/upload.ts
+- Acceptance criteria:
+  - Files over 5MB return 413.
+  - Existing happy-path upload tests stay green.
+`);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.report.decision).toBe("LOOP_BACK_TO_W1");
+		expect(result.report.tasks).toHaveLength(1);
+		expect(result.report.tasks[0]!.personaId).toBe("code_executor");
+		expect(result.report.tasks[0]!.allowedGlobs).toEqual(["src/api/upload.ts"]);
+
+		const coarse = loopBackTasksToCoarseTasks(result.report.tasks, 0);
+		expect(coarse[0]).toMatchObject({
+			personaId: "code_executor",
+			needsRefine: true,
+			allowedGlobs: ["src/api/upload.ts"],
+		});
+	});
+
 	it("parses human confirmation as a blocking decision", () => {
 		const result = compileMissionCheck(`Decision: NEEDS_HUMAN_CONFIRMATION`);
 		expect(result.ok).toBe(true);
