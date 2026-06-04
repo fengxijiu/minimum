@@ -661,4 +661,6 @@ npm run verify
 
 感谢 [resonix](https://github.com/resonix-dev/resonix)（@resonix-dev）、[pi code](https://github.com/earendil-works/pi)（@earendil-works）和 [CodeWhale](https://github.com/Hmbown/CodeWhale)（@Hmbown）在 Minimum 的设计与演进过程中带来的启发与帮助。
 
+同时感谢 [superpowers](https://github.com/obra/superpowers) 在任务分解、计划驱动执行、persona skill 组织和可复用工作流方法上的启发；Minimum-native Superpowers 的整合也受益于这些实践。
+
 ---
