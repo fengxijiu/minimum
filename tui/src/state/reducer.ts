@@ -467,6 +467,13 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
       };
     }
 
+    case 'pipeline.clear':
+      // Drop any pipeline/subagent chrome left over from an orchestrate run —
+      // used when a single-agent turn starts so its bottom area is clean.
+      return state.pipeline === null && state.subagents.length === 0
+        ? state
+        : { ...state, pipeline: null, subagents: [] };
+
     // ── subagent brief ────────────────────────────────────────────
     case 'subagent.update': {
       const now = Date.now();

@@ -15,7 +15,7 @@ import {
 } from './commands.js';
 import { LearnCommandService } from '../../dist/learn/LearnCommandService.js';
 import { loadLearnedSkillsSync } from '../../dist/skills/LearnedSkillLoader.js';
-import { mockRunner, uiEventToMessages, summarizeTool, summarizeToolResult, describePermissionArgs, buildErrorLines, type Runner, type EngineInfo, type UiEvent, type UiPlanStatus, type TuiConfirmationGate } from './engine.js';
+import { mockRunner, uiEventToMessages, summarizeTool, summarizeToolResult, describePermissionArgs, buildErrorLines, PermissionQueue, type Runner, type EngineInfo, type UiEvent, type UiPlanStatus, type TuiConfirmationGate } from './engine.js';
 import { scanFiles, readBranch, touch } from './files.js';
 import { getContextUsageK } from './context-usage.js';
 import {
@@ -183,13 +183,15 @@ export function App({
   }, []);
 
   const [state, dispatch] = useAgentStore(() => createInitialState(process.cwd()));
-  const [activePerm, setActivePerm] = useState<ActivePermission | null>(null);
   const [activeChoice, setActiveChoice] = useState<ChoiceRequest | null>(null);
+  // FIFO queue of permission prompts: only one is shown at a time, the rest wait
+  // their turn. The runner already holds each pending approval by id, so queued
+  // prompts resolve correctly once surfaced. Held in a ref so the streaming loop
+  // and the resolve callbacks share one authoritative instance.
+  const permQueueRef = useRef(new PermissionQueue<ActivePermission>());
   // Mutable refs so callbacks that close over these stay stable
   const stateRef = useRef(state);
   stateRef.current = state;
-  const activePermRef = useRef(activePerm);
-  activePermRef.current = activePerm;
   // Tracks the last-started tool message id so tool_result can close it out.
   const lastToolIdRef = useRef<string | null>(null);
   // Remembers the active tool's name + display args so a failure can attribute itself.
@@ -546,21 +548,49 @@ export function App({
     });
   }, [dispatch, initialSession, restoreSession]);
 
-  const allowPermission = useCallback(() => {
-    const perm = activePermRef.current;
-    if (!perm) return;
-    activeRunnerRef.current.resolvePermission?.(perm.id, { approved: true, reason: 'user approved' });
-    setActivePerm(null);
-    dispatch({ type: 'pending.clear' });
-    dispatch({ type: 'system.push', text: `Allowed ${perm.tool}.`, tone: 'ok' });
+  // Render the given permission prompt: flip pending state and push the panel.
+  const presentPermission = useCallback((perm: ActivePermission) => {
+    const args = perm.args;
+    const cmd = String((args as any).command ?? (args as any).path ?? perm.tool);
+    dispatch({ type: 'pending.set', value: 'permission' });
+    dispatch({
+      type: 'permission.show',
+      perm: {
+        tool: perm.tool,
+        cmd: `$ ${cmd}`,
+        cwd: stateRef.current.path,
+        note: `${perm.description} — ⏎ allow · esc deny`,
+        details: describePermissionArgs(args),
+        risk: perm.risk,
+      },
+    });
   }, [dispatch]);
 
-  const allowPermissionAlways = useCallback(() => {
-    const perm = activePermRef.current;
+  // After answering the active prompt, surface the next queued one or clear.
+  const advancePermission = useCallback(() => {
+    const next = permQueueRef.current.next();
+    if (next) presentPermission(next);
+    else dispatch({ type: 'pending.clear' });
+  }, [dispatch, presentPermission]);
+
+  const allowPermission = useCallback(() => {
+    const perm = permQueueRef.current.current;
     if (!perm) return;
-    activeRunnerRef.current.resolvePermission?.(perm.id, { approved: true, reason: 'user approved always' });
-    activeRunnerRef.current.setApprovalMode?.('full-auto');
-    setActivePerm(null);
+    activeRunnerRef.current.resolvePermission?.(perm.id, { approved: true, reason: 'user approved' });
+    dispatch({ type: 'system.push', text: `Allowed ${perm.tool}.`, tone: 'ok' });
+    advancePermission();
+  }, [dispatch, advancePermission]);
+
+  const allowPermissionAlways = useCallback(() => {
+    const runner = activeRunnerRef.current;
+    // The user opted into full-auto, so approve the active prompt and every
+    // request already queued behind it.
+    const all = permQueueRef.current.drain();
+    if (all.length === 0) return;
+    for (const perm of all) {
+      runner.resolvePermission?.(perm.id, { approved: true, reason: 'user approved always' });
+    }
+    runner.setApprovalMode?.('full-auto');
     dispatch({ type: 'pending.clear' });
     dispatch({ type: 'approval.change', mode: 'full-auto' });
     dispatch({ type: 'system.push', text: `Always allowing — switched to full-auto.`, tone: 'ok' });
@@ -586,14 +616,16 @@ export function App({
   }, [dispatch]);
 
   const dismissPending = useCallback((note: string) => {
-    const perm = activePermRef.current;
+    const perm = permQueueRef.current.current;
     if (perm) {
       activeRunnerRef.current.resolvePermission?.(perm.id, { approved: false, reason: 'user denied' });
-      setActivePerm(null);
+      dispatch({ type: 'system.push', text: note, tone: 'warn' });
+      advancePermission();
+      return;
     }
     dispatch({ type: 'pending.clear' });
     dispatch({ type: 'system.push', text: note, tone: 'warn' });
-  }, [dispatch]);
+  }, [dispatch, advancePermission]);
 
   // ── Submit handler (stable — uses stateRef, no state deps) ──────────
   // ── Shared streaming turn — used by both the single-agent loop and the
@@ -606,10 +638,17 @@ export function App({
       turnToolCountRef.current = 0;
       turnUsageRef.current = null;
       stormMapRef.current.clear();
+      // Drop any permission prompts left from a prior turn so they cannot leak
+      // into this one.
+      permQueueRef.current.clear();
       const ac = new AbortController();
       turnAbortRef.current = ac;
       dispatch({ type: 'turn.start' });
       if (isPipeline) dispatch({ type: 'pipeline.start' });
+      // A single-agent turn has no pipeline/subagents; clear any leftover
+      // orchestrate chrome so the first agent message starts with a clean
+      // bottom area (e.g. after switching from orchestrate to agent mode).
+      else dispatch({ type: 'pipeline.clear' });
       try {
         // ── Auto-retry wrapper (transient network / rate-limit errors) ──────
         let lastErr: unknown = null;
@@ -649,21 +688,10 @@ export function App({
             continue;
           }
           if (ev.kind === 'permission_request') {
-            const args = ev.args;
-            const cmd = String((args as any).command ?? (args as any).path ?? ev.tool);
-            setActivePerm({ id: ev.id, tool: ev.tool, args, risk: ev.risk, description: ev.description });
-            dispatch({ type: 'pending.set', value: 'permission' });
-            dispatch({
-              type: 'permission.show',
-              perm: {
-                tool: ev.tool,
-                cmd: `$ ${cmd}`,
-                cwd: stateRef.current.path,
-                note: `${ev.description} — ⏎ allow · esc deny`,
-                details: describePermissionArgs(args),
-                risk: ev.risk,
-              },
-            });
+            // Queue control: show this prompt only if nothing is already
+            // awaiting an answer; otherwise it waits its turn.
+            const show = permQueueRef.current.submit({ id: ev.id, tool: ev.tool, args: ev.args, risk: ev.risk, description: ev.description });
+            if (show) presentPermission(show);
             continue;
           }
           if (ev.kind === 'tool') {
@@ -864,7 +892,7 @@ export function App({
         dispatch({ type: 'messages.commit' });
       }
     })();
-  }, [dispatch, startChunkFlusher, scheduleChunkFlush, stopChunkFlusher, W_PHASES]);
+  }, [dispatch, startChunkFlusher, scheduleChunkFlush, stopChunkFlusher, W_PHASES, presentPermission]);
 
   const cancelCurrentTurn = useCallback(() => {
     const ac = turnAbortRef.current;
@@ -1079,6 +1107,18 @@ export function App({
     : sMode === 'orchestrate' ? 'orchestrate'
     : sMode === 'agent' ? 'agent' : 'mimo';
 
+  // Stabilize the ChatZone header element. Built inline it would be a fresh
+  // React node every render, which defeats ChatZone's React.memo and forces the
+  // heavy ChatStream to repaint on every unrelated state change (usage ticks,
+  // toasts, pipeline phases). Memoizing it lets ChatZone skip when only the
+  // bottom chrome changed.
+  const chatHeader = useMemo(() => (
+    <Box flexDirection="column">
+      <TitleZone path={sPath} branch={sBranch} mode={titleMode} />
+      {!sHasMessages && <WelcomeScreen path={sPath} engine={engineInfo} cols={chatCols} />}
+    </Box>
+  ), [sPath, sBranch, titleMode, sHasMessages, engineInfo, chatCols]);
+
   // ── Render: Claude Code style inline conversation flow ──────────────
   // The conversation (ChatZone) owns the terminal scrollback; the plan,
   // pipeline, toast, input and status bar form the live frame anchored at
@@ -1098,12 +1138,7 @@ export function App({
         maxRows={termSize.rows}
         reservedRows={bottomReserved}
         resizeRevision={termSize.revision}
-        header={
-          <Box flexDirection="column">
-            <TitleZone path={sPath} branch={sBranch} mode={titleMode} />
-            {!sHasMessages && <WelcomeScreen path={sPath} engine={engineInfo} cols={chatCols} />}
-          </Box>
-        }
+        header={chatHeader}
       />
 
       <PlanZone title={sPlanTitle} steps={sPlanSteps} />
