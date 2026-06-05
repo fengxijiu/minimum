@@ -178,3 +178,6 @@ export function findDanglingDeps(
 	}
 	return out;
 }
+
+/** Re-exported for discoverability — grant validation is catalog-aware (see CapabilityCatalog). */
+export { validateGrants } from "./CapabilityCatalog.js";
