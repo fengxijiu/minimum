@@ -111,3 +111,16 @@ export {
 	type ScheduleOptions,
 	type WaveEvent,
 } from "./WaveScheduler.js";
+export type { DagHarness, DagHarnessOptions } from "./DagHarness.js";
+export type { HarnessEvent, WorkerInternalEvent } from "./HarnessEvent.js";
+export { WaveHarness } from "./WaveHarness.js";
+export { DynamicHarness } from "./DynamicHarness.js";
+export { TaskGraphIndex } from "./TaskGraphIndex.js";
+export type { TaskRuntimeStatus } from "./TaskGraphIndex.js";
+export { ReadyQueue } from "./ReadyQueue.js";
+export { ResultStore } from "./ResultStore.js";
+export { ArtifactIndex } from "./ArtifactIndex.js";
+export { RunningSet } from "./RunningSet.js";
+export { ResourceManager } from "./ResourceManager.js";
+export type { ResourceConfig } from "./ResourceManager.js";
+export { WriteLockManager, globsOverlap } from "./WriteLockManager.js";

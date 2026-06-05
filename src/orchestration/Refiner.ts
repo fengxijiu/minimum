@@ -267,7 +267,9 @@ function assembleContract(
 		error = mergeError(error, `task ${task.id} needs_refine write contract requires explicit blockedCondition`);
 	}
 	const staticCompileCommands = opts.inputs.staticCompileCommands ?? [];
-	const requiresPostStaticCompile = task.personaId === "test_runner" || persona.readOnly === false;
+	const requiresPostStaticCompile =
+		(task.personaId === "test_runner" || persona.readOnly === false) &&
+		staticCompileCommands.length > 0;
 
 	const contract: TaskContract = {
 		taskId: task.id,

@@ -23,6 +23,18 @@ export interface ApprovalRequest {
 	risk: RiskLevel;
 	description: string;
 	timestamp: number;
+	policy?: ApprovalPolicyMetadata;
+}
+
+export interface ApprovalPolicyMetadata {
+	category?: string;
+	effect?: string;
+	matchedRule?: string;
+	command?: string;
+	reason?: string;
+	touchesSensitivePath?: boolean;
+	redirectWrites?: boolean;
+	network?: boolean;
 }
 
 export interface ApprovalResponse {

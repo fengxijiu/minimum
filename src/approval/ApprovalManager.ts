@@ -1,6 +1,7 @@
 import type {
 	ApprovalConfig,
 	ApprovalMode,
+	ApprovalPolicyMetadata,
 	ApprovalRequest,
 	ApprovalResponse,
 	RiskLevel,
@@ -64,8 +65,9 @@ export class ApprovalManager {
 		tool: string,
 		args: Record<string, any>,
 		description: string,
+		policy?: ApprovalPolicyMetadata,
 	): Promise<ApprovalRequest> {
-		const risk = this.assessRisk(tool, args);
+		const risk = this.assessRisk(tool, args, policy);
 		return {
 			id: `approval_${this.nextId++}`,
 			tool,
@@ -73,6 +75,7 @@ export class ApprovalManager {
 			risk,
 			description,
 			timestamp: Date.now(),
+			...(policy && { policy }),
 		};
 	}
 
@@ -210,8 +213,31 @@ export class ApprovalManager {
 		this.config = { ...this.config, ...config };
 	}
 
-	private assessRisk(tool: string, args: Record<string, any>): RiskLevel {
+	private assessRisk(tool: string, args: Record<string, any>, policy?: ApprovalPolicyMetadata): RiskLevel {
+		if (policy?.touchesSensitivePath) return "high";
+
 		if (LOW_RISK_TOOLS.has(tool)) return "low";
+
+		if (
+			tool === "shell_fs_read" ||
+			tool === "shell_search" ||
+			tool === "shell_git_read" ||
+			tool === "shell_env_probe"
+		) {
+			return "low";
+		}
+
+		if (
+			tool === "shell_test" ||
+			tool === "shell_typecheck" ||
+			tool === "shell_lint" ||
+			tool === "shell_build"
+		) {
+			return "medium";
+		}
+
+		if (tool === "shell_raw") return "high";
+
 		if (tool === "exec_shell") {
 			const cmd = String(args.command ?? "");
 			if (DANGEROUS_SHELL_RE.some((r) => r.test(cmd))) return "high";
@@ -222,9 +248,6 @@ export class ApprovalManager {
 			return "medium";
 		}
 		if (EDIT_TOOLS.has(tool)) return "medium";
-		// All git operations route through the single "git" tool with a
-		// subcommand in args — the standalone tool names "git_push"/"git_commit"
-		// don't exist in the registry, so we have to inspect the subcommand.
 		if (tool === "git") {
 			const sub = String(args.subcommand ?? "").toLowerCase();
 			if (sub === "push" || sub === "commit") return "high";

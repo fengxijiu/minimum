@@ -100,9 +100,24 @@ export interface IApprovalManager {
 		tool: string,
 		args: Record<string, any>,
 		description: string,
+		policy?: Record<string, unknown>,
 	): Promise<ApprovalRequest>;
 	checkApproval(request: ApprovalRequest): Promise<ApprovalResponse>;
 }
+
+const SELF_APPROVING_TOOLS = new Set([
+	"shell_fs_read",
+	"shell_search",
+	"shell_git_read",
+	"shell_env_probe",
+	"shell_test",
+	"shell_typecheck",
+	"shell_lint",
+	"shell_build",
+	"shell_raw",
+	"exec_shell",
+	"install_dependency",
+]);
 
 // ============ Types ============
 
@@ -560,7 +575,7 @@ export class MiMoLoop {
 						}
 
 						// 审批检查
-						if (this.config.approvalManager) {
+						if (this.config.approvalManager && !SELF_APPROVING_TOOLS.has(toolCall.function.name)) {
 							const request =
 								await this.config.approvalManager.requestApproval(
 									toolCall.function.name,

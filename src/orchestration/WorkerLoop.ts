@@ -28,6 +28,20 @@ import type {
 } from "../types/validator.js";
 import type { TaskContract } from "./TaskContract.js";
 
+const SELF_APPROVING_TOOLS = new Set([
+	"shell_fs_read",
+	"shell_search",
+	"shell_git_read",
+	"shell_env_probe",
+	"shell_test",
+	"shell_typecheck",
+	"shell_lint",
+	"shell_build",
+	"shell_raw",
+	"exec_shell",
+	"install_dependency",
+]);
+
 /**
  * WorkerLoop — multi-turn tool-calling loop for a single sub-agent task.
  *
@@ -510,7 +524,9 @@ export class WorkerLoop {
 		// Approval gate — only when an ApprovalManager is wired. The TUI's
 		// approvalMode (read-only / auto-edit / full-auto) lives inside this
 		// manager and decides whether the call needs a user confirmation.
-		if (this.approvalManager) {
+		// Shell tools (shell_*, exec_shell, install_dependency) manage their
+		// own approval internally and are skipped here.
+		if (this.approvalManager && !SELF_APPROVING_TOOLS.has(name)) {
 			try {
 				const request = await this.approvalManager.requestApproval(
 					name,

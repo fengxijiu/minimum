@@ -22,7 +22,7 @@ export interface ExecShellToolOptions {
 export class ExecShellTool {
 	name = "exec_shell";
 	description =
-		"Execute a shell command. Native arg-parsing supports `|` `&&` `||` `;` `>` `>>` `2>&1` cross-platform without invoking a real shell. Allowlisted commands (git status/diff/log, ls/cat/head/tail, npm test, vitest, tsc, biome, etc.) run immediately; non-allowlisted commands gate on the configured approval mode.";
+		"[deprecated] Legacy shell command runner. Prefer shell_fs_read, shell_search, shell_git_read, shell_env_probe, shell_test, shell_typecheck, shell_lint, shell_build, or shell_raw. Execute a shell command. Native arg-parsing supports `|` `&&` `||` `;` `>` `>>` `2>&1` cross-platform without invoking a real shell. Allowlisted commands run immediately; non-allowlisted commands gate on the configured approval mode.";
 
 	private readonly rootDir?: string;
 	private readonly defaultTimeoutSec: number;

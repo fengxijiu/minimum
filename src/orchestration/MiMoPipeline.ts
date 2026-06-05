@@ -17,6 +17,7 @@ import type { PersonaId } from "../personas/Persona.js";
 import { compileCoarse, classifyTaskType } from "./TaskCompiler.js";
 import { buildWaves } from "./TaskGraph.js";
 import type { CoarseDag, TaskContract, TaskInputs } from "./TaskContract.js";
+import { WaveHarness } from "./WaveHarness.js";
 import { compileRefinement, refineDag, type RefinementEntry } from "./Refiner.js";
 import { validateGrants, type GrantableCatalog } from "./CapabilityCatalog.js";
 import { buildArtifactMap, evaluateLaunchGate, isContextGapBlocked } from "./LaunchGate.js";
@@ -189,6 +190,8 @@ export interface PipelineOptions {
 	grantableCatalog?: GrantableCatalog;
 	/** Business-file writes observed by the caller and forwarded into W4 delivery. */
 	getDeliveryWrites?: () => Array<{ taskId: string; files: string[] }>;
+	/** Harness mode: "wave" (default) or "dynamic" (real-time dependency unlocking). */
+	harnessMode?: "wave" | "dynamic";
 }
 
 export interface PipelineResult {
@@ -940,21 +943,121 @@ function parseStaticCompileCommands(report: string): StaticCompileCandidate[] {
 }
 
 async function detectStaticCompileCommands(projectRoot: string): Promise<string[]> {
-	const packageJsonPath = path.join(projectRoot, "package.json");
+	const commands: string[] = [];
+
+	// ── TypeScript / JavaScript ──────────────────────────────────────────
 	try {
-		const raw = await fs.readFile(packageJsonPath, "utf-8");
+		const raw = await fs.readFile(path.join(projectRoot, "package.json"), "utf-8");
 		const parsed = JSON.parse(raw) as { scripts?: Record<string, unknown> };
-		if (typeof parsed.scripts?.typecheck === "string" && parsed.scripts.typecheck.trim()) {
-			return ["npm run typecheck"];
+		const scripts = parsed.scripts ?? {};
+		const hasPnpm = await fileExists(path.join(projectRoot, "pnpm-lock.yaml"));
+		const hasYarn = await fileExists(path.join(projectRoot, "yarn.lock"));
+		const hasBun = await fileExists(path.join(projectRoot, "bun.lockb"));
+		const runner = hasBun ? "bun" : hasPnpm ? "pnpm" : hasYarn ? "yarn" : "npm";
+		for (const key of ["typecheck", "type-check", "tsc", "check", "lint"] as const) {
+			if (typeof scripts[key] === "string" && (scripts[key] as string).trim()) {
+				commands.push(`${runner} run ${key}`);
+				break;
+			}
 		}
 	} catch {
-		// Best-effort only.
+		// not a node project
 	}
+	if (!commands.some((c) => /typecheck|tsc|lint/.test(c))) {
+		if (await fileExists(path.join(projectRoot, "tsconfig.json"))) {
+			commands.push("npx tsc --noEmit");
+		}
+	}
+
+	// ── Python ───────────────────────────────────────────────────────────
 	try {
-		await fs.access(path.join(projectRoot, "tsconfig.json"));
-		return ["npx tsc --noEmit"];
+		if (await fileExists(path.join(projectRoot, "pyproject.toml"))) {
+			const pyproject = await fs.readFile(path.join(projectRoot, "pyproject.toml"), "utf-8");
+			if (/^\[tool\.ruff/m.test(pyproject)) {
+				commands.push("ruff check .");
+			}
+			if (/^\[tool\.mypy/m.test(pyproject)) {
+				commands.push("mypy .");
+			}
+		}
 	} catch {
-		return [];
+		// ignore
+	}
+	if (!commands.some((c) => c.includes("ruff"))) {
+		if (
+			(await fileExists(path.join(projectRoot, ".flake8"))) ||
+			(await fileExists(path.join(projectRoot, "setup.cfg")))
+		) {
+			commands.push("flake8 .");
+		}
+	}
+	if (await fileExists(path.join(projectRoot, "pyrightconfig.json"))) {
+		commands.push("pyright");
+	}
+
+	// ── Go ───────────────────────────────────────────────────────────────
+	if (await fileExists(path.join(projectRoot, "go.mod"))) {
+		commands.push("go vet ./...");
+	}
+
+	// ── Rust ─────────────────────────────────────────────────────────────
+	if (await fileExists(path.join(projectRoot, "Cargo.toml"))) {
+		commands.push("cargo check");
+	}
+
+	// ── Java / Kotlin (Maven) ────────────────────────────────────────────
+	if (await fileExists(path.join(projectRoot, "pom.xml"))) {
+		commands.push("mvn compile -q");
+	}
+
+	// ── Java / Kotlin (Gradle) ───────────────────────────────────────────
+	if (
+		(await fileExists(path.join(projectRoot, "build.gradle"))) ||
+		(await fileExists(path.join(projectRoot, "build.gradle.kts")))
+	) {
+		commands.push("gradle compileJava");
+	}
+
+	// ── Ruby ─────────────────────────────────────────────────────────────
+	if (
+		(await fileExists(path.join(projectRoot, "Gemfile"))) &&
+		(await fileExists(path.join(projectRoot, ".rubocop.yml")))
+	) {
+		commands.push("rubocop");
+	}
+
+	// ── PHP ──────────────────────────────────────────────────────────────
+	if (
+		(await fileExists(path.join(projectRoot, "phpstan.neon"))) ||
+		(await fileExists(path.join(projectRoot, "phpstan.neon.dist")))
+	) {
+		commands.push("phpstan analyse");
+	}
+
+	// ── C# / .NET ────────────────────────────────────────────────────────
+	try {
+		const entries = await fs.readdir(projectRoot);
+		if (entries.some((e) => e.endsWith(".sln") || e.endsWith(".csproj"))) {
+			commands.push("dotnet build --no-restore");
+		}
+	} catch {
+		// ignore
+	}
+
+	// ── Dart / Flutter ───────────────────────────────────────────────────
+	if (await fileExists(path.join(projectRoot, "pubspec.yaml"))) {
+		commands.push("dart analyze");
+	}
+
+	return commands;
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+	try {
+		await fs.access(filePath);
+		return true;
+	} catch {
+		return false;
 	}
 }
 
@@ -1067,11 +1170,70 @@ async function runWaves(
 	opts: PipelineOptions,
 	emit: (e: PipelineEvent) => void,
 ): Promise<TaskResult[]> {
-	const { waves } = buildWaves(contracts, { validate: false });
-	return schedule(waves, {
+	// Phase 5: harnessMode — choose WaveHarness (default) or DynamicHarness.
+	const isDynamic = opts.harnessMode === "dynamic";
+	if (isDynamic) {
+		const { DynamicHarness } = await import("./DynamicHarness.js");
+		const harness = new DynamicHarness();
+		return harness.runToCompletion(contracts, {
+			projectRoot: opts.projectRoot,
+			executor: opts.executor,
+			onEvent: (event) => {
+				if (event.type === "task_started") {
+					emit({ type: "wave", event: { type: "task_start", waveIndex: 0, taskId: event.taskId } });
+					return;
+				}
+				if (event.type === "task_done") {
+					emit({ type: "wave", event: { type: "task_done", waveIndex: 0, result: event.result } });
+					return;
+				}
+				if (event.type === "task_blocked") {
+					emit({ type: "wave", event: { type: "task_done", waveIndex: 0, result: event.result } });
+					return;
+				}
+				if (event.type === "task_failed") {
+					emit({ type: "wave", event: { type: "task_done", waveIndex: 0, result: event.result } });
+					return;
+				}
+				if (event.type === "task_skipped") {
+					emit({ type: "wave", event: { type: "task_done", waveIndex: 0, result: { taskId: event.taskId, personaId: "code_executor", status: "blocked", report: "", memoryCandidateBody: undefined, errors: [event.reason], durationMs: 0 } } });
+					return;
+				}
+			},
+		});
+	}
+
+	// Phase 1: DagHarness abstraction — use WaveHarness (preserves existing behaviour).
+	const harness = new WaveHarness({ validateContracts: false });
+	return harness.runToCompletion(contracts, {
 		projectRoot: opts.projectRoot,
 		executor: opts.executor,
-		onEvent: (event) => emit({ type: "wave", event }),
+		onEvent: (event) => {
+			// Translate HarnessEvent → PipelineEvent for backwards compatibility.
+			if (event.type === "wave_start" || event.type === "wave_complete") {
+				// WaveHarness emits WaveEvent via schedule; forwarded via task_started/task_done.
+				// The wave_start/wave_complete HarnessEvents come from the harness adapter.
+				// We emit them as stage-level pipeline events.
+				return; // Handled via task-level events below; phase_start covers the rest.
+			}
+			if (event.type === "task_started") {
+				// Emit as wave task_start for TUI pipeline panel compatibility.
+				emit({ type: "wave", event: { type: "task_start", waveIndex: 0, taskId: event.taskId } });
+				return;
+			}
+			if (event.type === "task_done") {
+				emit({ type: "wave", event: { type: "task_done", waveIndex: 0, result: event.result } });
+				return;
+			}
+			if (event.type === "task_blocked") {
+				emit({ type: "wave", event: { type: "task_done", waveIndex: 0, result: event.result } });
+				return;
+			}
+			if (event.type === "task_failed") {
+				emit({ type: "wave", event: { type: "task_done", waveIndex: 0, result: event.result } });
+				return;
+			}
+		},
 	});
 }
 

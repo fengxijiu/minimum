@@ -14,6 +14,15 @@ import { ChoiceTool } from "../tools/choice/ChoiceTool.js";
 import type { ConfirmationGate } from "../tools/choice/ConfirmationGate.js";
 import { ExecShellTool } from "../tools/shell/ExecShellTool.js";
 import { InstallDependencyTool } from "../tools/shell/InstallDependencyTool.js";
+import { ShellFsReadTool } from "../tools/shell/tools/ShellFsReadTool.js";
+import { ShellSearchTool } from "../tools/shell/tools/ShellSearchTool.js";
+import { ShellGitReadTool } from "../tools/shell/tools/ShellGitReadTool.js";
+import { ShellEnvProbeTool } from "../tools/shell/tools/ShellEnvProbeTool.js";
+import { ShellTestTool } from "../tools/shell/tools/ShellTestTool.js";
+import { ShellTypecheckTool } from "../tools/shell/tools/ShellTypecheckTool.js";
+import { ShellLintTool } from "../tools/shell/tools/ShellLintTool.js";
+import { ShellBuildTool } from "../tools/shell/tools/ShellBuildTool.js";
+import { ShellRawTool } from "../tools/shell/tools/ShellRawTool.js";
 import { JobRegistry } from "../tools/shell/JobRegistry.js";
 import { RunBackgroundTool } from "../tools/shell/RunBackgroundTool.js";
 import { JobOutputTool } from "../tools/shell/JobOutputTool.js";
@@ -109,6 +118,15 @@ export function createMiMoStack(
 		new TodoWriteTool(),
 		new ApplyPatchTool(),
 		new ChoiceTool({ gate: deps.confirmationGate }),
+		new ShellFsReadTool(shellOpts),
+		new ShellSearchTool(shellOpts),
+		new ShellGitReadTool(shellOpts),
+		new ShellEnvProbeTool(shellOpts),
+		new ShellTestTool(shellOpts),
+		new ShellTypecheckTool(shellOpts),
+		new ShellLintTool(shellOpts),
+		new ShellBuildTool(shellOpts),
+		new ShellRawTool(shellOpts),
 		new ExecShellTool(shellOpts),
 		new InstallDependencyTool({ rootDir: workingDirectory, approvalManager }),
 		new RunBackgroundTool({ jobs, ...shellOpts }),

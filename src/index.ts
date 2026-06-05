@@ -38,7 +38,20 @@ export {
 export { getTsDiagnostics } from "./lsp/index.js";
 
 // Shell tools
-export { ExecShellTool, InstallDependencyTool } from "./tools/shell/index.js";
+export {
+	ExecShellTool,
+	InstallDependencyTool,
+	ShellCategoryTool,
+	ShellFsReadTool,
+	ShellSearchTool,
+	ShellGitReadTool,
+	ShellEnvProbeTool,
+	ShellTestTool,
+	ShellTypecheckTool,
+	ShellLintTool,
+	ShellBuildTool,
+	ShellRawTool,
+} from "./tools/shell/index.js";
 
 // Git tools
 export { GitTool } from "./tools/git/index.js";

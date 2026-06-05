@@ -1059,7 +1059,7 @@ describe("static compile command resolution", () => {
 		});
 	});
 
-	it("defers write tasks when no static compile commands can be resolved", async () => {
+	it("runs write tasks when no static compile commands can be resolved", async () => {
 		const events: PipelineEvent[] = [];
 		const ran: string[] = [];
 		const executor: WorkerExecutor = {
@@ -1078,8 +1078,8 @@ describe("static compile command resolution", () => {
 		});
 
 		expect(result.ok).toBe(true);
-		expect(ran).toEqual(["T0-1"]);
-		expect(events.some((e) => e.type === "task_deferred" && (e as any).taskId === "T2-1")).toBe(true);
+		expect(ran).toEqual(["T0-1", "T2-1"]);
+		expect(events.some((e) => e.type === "task_deferred" && (e as any).taskId === "T2-1")).toBe(false);
 	});
 
 	it("prefers repo_scout static compile commands over auto-detected defaults", async () => {
