@@ -23,6 +23,52 @@ export interface EngineInfo {
   mcpToolCount?: number;
 }
 
+export interface McpOverviewInfo {
+  connected: Array<{
+    name: string;
+    transport: 'stdio' | 'sse' | 'http';
+    url?: string;
+    headerKeys: string[];
+    allowedTools?: string[];
+    deniedTools?: string[];
+    toolNames: string[];
+    toolCount: number;
+    resourceCount: number;
+    promptCount: number;
+  }>;
+  failed: Array<{
+    name: string;
+    transport: 'stdio' | 'sse' | 'http';
+    url?: string;
+    headerKeys: string[];
+    allowedTools?: string[];
+    deniedTools?: string[];
+    error: string;
+  }>;
+  totalTools: number;
+  totalResources: number;
+  totalPrompts: number;
+}
+
+export interface McpResourceEntry {
+  server: string;
+  uri: string;
+  name: string;
+  description?: string;
+  mimeType?: string;
+}
+
+export interface McpPromptEntry {
+  server: string;
+  name: string;
+  description?: string;
+  arguments?: Array<{
+    name: string;
+    description?: string;
+    required?: boolean;
+  }>;
+}
+
 /**
  * UiEvent — mirrors the root package's EngineBridge contract
  * (src/bridge/EngineBridge.ts).
@@ -102,6 +148,11 @@ export interface Runner {
   completeText?(prompt: string): Promise<string>;
   /** Refresh command-visible learned skills after /learn apply --load. */
   reloadSkills?(): Promise<void>;
+  getMcpOverview?(): Promise<McpOverviewInfo>;
+  listMcpResources?(): Promise<McpResourceEntry[]>;
+  readMcpResource?(ref: string): Promise<unknown>;
+  listMcpPrompts?(): Promise<McpPromptEntry[]>;
+  getMcpPrompt?(name: string, args?: Record<string, unknown>): Promise<unknown>;
 }
 
 const KIND: Record<string, ToolKind> = {
@@ -291,6 +342,11 @@ export const mockRunner: Runner = {
     yield { kind: 'assistant', text: '(mock) set MIMO_API_KEY and rebuild the engine (npm run build in the root) to stream live MiMo output.' };
     yield { kind: 'done', success: true };
   },
+  getMcpOverview: async () => ({ connected: [], failed: [], totalTools: 0, totalResources: 0, totalPrompts: 0 }),
+  listMcpResources: async () => [],
+  readMcpResource: async () => ({ message: 'MCP unavailable in mock runner.' }),
+  listMcpPrompts: async () => [],
+  getMcpPrompt: async () => ({ message: 'MCP unavailable in mock runner.' }),
 };
 
 function fallbackInfo(reason: EngineFallbackReason, error?: string): EngineInfo {
@@ -473,21 +529,30 @@ export async function createEngineRunner(
     // pipeline can call them. Resilient: a bad server is skipped, not fatal.
     let mcpServerNames: string[] = [];
     let mcpToolCount = 0;
+    let mcpFailedDetails: McpOverviewInfo['failed'] = [];
     const mcpServers = Array.isArray(userConfig.mcpServers) ? userConfig.mcpServers : [];
+    const mcpManager = eng.McpManager ? new eng.McpManager({ projectRoot: workingDirectory, audit: true }) : undefined;
     if (mcpServers.length && eng.connectMcpServers && eng.McpManager) {
-      const mcpManager = new eng.McpManager();
       try {
         const res = await eng.connectMcpServers({
-          manager: mcpManager,
+          manager: mcpManager!,
           register: (t: unknown) => tools.register(t),
           servers: mcpServers,
         });
         mcpServerNames = res.connected;
         mcpToolCount = res.toolCount;
+        mcpFailedDetails = res.failedDetails;
         // Best-effort cleanup: kill MCP child processes on exit.
-        process.once('exit', () => { try { void mcpManager.disconnectAll(); } catch { /* ignore */ } });
+        process.once('exit', () => { try { void mcpManager!.disconnectAll(); } catch { /* ignore */ } });
       } catch { /* MCP is optional — never block startup */ }
     }
+    const mcpService = eng.McpCommandService
+      ? new eng.McpCommandService({
+          projectRoot: workingDirectory,
+          ...(mcpManager ? { manager: mcpManager } : {}),
+          failedServers: mcpFailedDetails,
+        })
+      : undefined;
 
     // Wire learned skills into the single-agent system context using a two-tier approach:
     //   • Brief catalog  — always shown: name + one-line description + trigger keywords
@@ -574,6 +639,17 @@ export async function createEngineRunner(
         // Skills are re-read on every turn via skillsSystemContent — no cache to bust.
         // Calling reloadSkills is a no-op at the engine level; the next turn will pick up changes.
       },
+      getMcpOverview: async () => mcpService?.getOverview() ?? { connected: [], failed: [], totalTools: 0, totalResources: 0, totalPrompts: 0 },
+      listMcpResources: async () => mcpService?.listResources() ?? [],
+      readMcpResource: async (ref: string) => {
+        if (!mcpService) throw new Error('MCP command service unavailable');
+        return mcpService.readResource(ref);
+      },
+      listMcpPrompts: async () => mcpService?.listPrompts() ?? [],
+      getMcpPrompt: async (name: string, args?: Record<string, unknown>) => {
+        if (!mcpService) throw new Error('MCP command service unavailable');
+        return mcpService.getPrompt(name, args);
+      },
     };
     const sessionFlusher: SessionFlusher | undefined = sessionManager
       ? { flushSync: () => sessionManager.flushSync() }
@@ -602,6 +678,7 @@ export async function createEngineRunner(
         validator,
         model: userConfig.defaultModel ?? 'mimo-v2.5-pro',
         billingMode,
+        ...(userConfig.capabilityGrants && { capabilityGrants: userConfig.capabilityGrants }),
       });
       pipelineRunner = {
         send: (input: string) => pipelineBridge.send(input),

@@ -356,6 +356,43 @@ describe("summarizePipelineComplete writes", () => {
 		const { text } = summarizePipelineComplete([okResult("T2-1", "code_executor", "implemented upload")]);
 		expect(text).not.toContain("writes (");
 	});
+
+	it("surfaces goal, conclusion, terminal deliverable, and artifacts when meta is supplied", () => {
+		const { text } = summarizePipelineComplete(
+			[okResult("T0-1", "repo_scout", "found the routes"), okResult("T2-1", "reviewer", "recommend p95 latency + error-rate metrics")],
+			undefined,
+			{
+				goal: "explore what metrics to add",
+				conclusion: "Found 8 monitorable surfaces.\n- p95 latency\n- error rate",
+				leafTaskIds: ["T2-1"],
+				artifacts: ["/repo/.minimum/tasks/x/dag.json"],
+			},
+		);
+		expect(text).toContain("goal: explore what metrics to add");
+		expect(text).toContain("conclusion:");
+		expect(text).toContain("Found 8 monitorable surfaces.");
+		expect(text).toContain("- p95 latency");
+		// Terminal task promoted into its own result section…
+		expect(text).toContain("result:");
+		expect(text).toContain("- T2-1 (reviewer)");
+		expect(text).toContain("recommend p95 latency + error-rate metrics");
+		// …and skipped in the outputs ledger so the deliverable is not printed twice.
+		expect(text).not.toContain("- T2-1 (reviewer) ok");
+		// …while the non-leaf task still appears in the outputs ledger.
+		expect(text).toContain("- T0-1 (repo_scout) ok");
+		expect(text.indexOf("result:")).toBeLessThan(text.indexOf("outputs:"));
+		expect(text).toContain("artifacts:");
+		expect(text).toContain("- /repo/.minimum/tasks/x/dag.json");
+	});
+
+	it("renders the legacy summary unchanged when no meta is supplied", () => {
+		const { text } = summarizePipelineComplete([okResult("T2-1", "reviewer", "done")]);
+		expect(text).not.toContain("goal:");
+		expect(text).not.toContain("conclusion:");
+		expect(text).not.toContain("result:");
+		expect(text).not.toContain("artifacts:");
+		expect(text).toContain("outputs:");
+	});
 });
 
 describe("PipelineBridge", () => {
@@ -405,5 +442,41 @@ describe("PipelineBridge", () => {
 		});
 		resumed.loadHistory(history);
 		expect(resumed.getHistory()).toEqual(history);
+	});
+});
+
+import { buildCatalogForBridge } from "../../src/bridge/index.js";
+
+describe("buildCatalogForBridge", () => {
+	let bdir: string;
+	beforeEach(() => {
+		bdir = fs.mkdtempSync(path.join(os.tmpdir(), "bridge-cat-"));
+		const learned = path.join(bdir, ".minimum", "skills", "learned", "pdf-extract");
+		fs.mkdirSync(learned, { recursive: true });
+		fs.writeFileSync(path.join(learned, "SKILL.md"), "---\n---\n## When to Use\n- PDF\n");
+	});
+	afterEach(() => fs.rmSync(bdir, { recursive: true, force: true }));
+
+	const host = {
+		getDefinitions: () => [
+			{ name: "read_file", description: "", parameters: { type: "object", properties: {} } },
+			{ name: "mcp__gh__create_issue", description: "open issue", parameters: { type: "object", properties: {} } },
+			{ name: "mcp__gh__delete_repo", description: "danger", parameters: { type: "object", properties: {} } },
+		],
+	};
+
+	it("builds a catalog from host MCP tools minus denylist (skipping non-mcp tools)", async () => {
+		const cat = await buildCatalogForBridge({
+			projectRoot: bdir,
+			tools: host as never,
+			capabilityGrants: { enabled: true, denylistSkills: [], denylistMcpTools: ["mcp__gh__delete_repo"] },
+		});
+		expect(cat!.mcpTools.map((t) => t.name)).toEqual(["mcp__gh__create_issue"]);
+		expect(cat!.skills.map((s) => s.id)).toContain("pdf-extract");
+	});
+
+	it("returns undefined when grants are disabled", async () => {
+		const cat = await buildCatalogForBridge({ projectRoot: bdir, tools: undefined, capabilityGrants: { enabled: false } });
+		expect(cat).toBeUndefined();
 	});
 });

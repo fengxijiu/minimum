@@ -2,6 +2,7 @@ import type { ApprovalManager } from "../approval/ApprovalManager.js";
 import type { ApprovalResponse } from "../approval/types.js";
 import type { BillingMode } from "../clients/MiMoPricing.js";
 import type { IToolHost } from "../loop/MiMoLoop.js";
+import { buildGrantableCatalog, type GrantableCatalog } from "../orchestration/CapabilityCatalog.js";
 import type { ICodeValidator } from "../types/validator.js";
 import {
 	createPlannerBridge,
@@ -45,6 +46,31 @@ export interface PipelineBridgeOptions {
 	 *  default pro/CNY combo. */
 	model?: string;
 	billingMode?: BillingMode;
+	/** Master-granted capability policy (denylist + kill switch); from MiMoConfig. */
+	capabilityGrants?: { enabled?: boolean; denylistSkills?: string[]; denylistMcpTools?: string[] };
+}
+
+/**
+ * Build the grantable-capability catalog for a run: learned skills + the MCP
+ * tools advertised by the shared tool host (names start with `mcp__`), minus the
+ * configured denylists. Returns undefined when grants are disabled so the
+ * pipeline offers/validates nothing.
+ */
+export async function buildCatalogForBridge(opts: {
+	projectRoot: string;
+	tools?: IToolHost;
+	capabilityGrants?: { enabled?: boolean; denylistSkills?: string[]; denylistMcpTools?: string[] };
+}): Promise<GrantableCatalog | undefined> {
+	if (opts.capabilityGrants?.enabled === false) return undefined;
+	const mcpTools = (opts.tools?.getDefinitions() ?? [])
+		.filter((t) => t.name.startsWith("mcp__"))
+		.map((t) => ({ name: t.name, description: t.description ?? "" }));
+	return buildGrantableCatalog({
+		projectRoot: opts.projectRoot,
+		mcpTools,
+		denylistSkills: opts.capabilityGrants?.denylistSkills ?? [],
+		denylistMcpTools: opts.capabilityGrants?.denylistMcpTools ?? [],
+	});
 }
 
 export class PipelineBridge {
@@ -150,8 +176,9 @@ export class PipelineBridge {
 		const push = (e: PipelineEvent) => {
 			if (e.type === "pipeline_complete") {
 				// Enrich the W4 summary with the per-task written-file list, which
-				// only the bridge has (accumulated from worker tool calls).
-				const { text, tone } = summarizePipelineComplete(e.results, writtenByTask);
+				// only the bridge has (accumulated from worker tool calls), plus the
+				// goal/conclusion/deliverable context carried on the event.
+				const { text, tone } = summarizePipelineComplete(e.results, writtenByTask, metaOf(e));
 				queue.push({ kind: "notice", text, tone });
 			} else {
 				for (const ui of translatePipelineEvent(e)) queue.push(ui);
@@ -295,12 +322,18 @@ export class PipelineBridge {
 		});
 
 		let done = false;
+		const grantableCatalog = await buildCatalogForBridge({
+			projectRoot: this.opts.projectRoot,
+			tools: this.opts.tools,
+			capabilityGrants: this.opts.capabilityGrants,
+		});
 		const finished = runPipeline(effectiveInput, {
 			projectRoot: this.opts.projectRoot,
 			planner,
 			executor,
 			onEvent: push,
 			choiceGate: this.opts.choiceGate,
+			...(grantableCatalog && { grantableCatalog }),
 		})
 			.then((r) => {
 				this.recordTurn(userInput, summarizePipelineResult(r));
@@ -512,7 +545,7 @@ export function translatePipelineEvent(e: PipelineEvent): UiEvent[] {
 			];
 		}
 		case "pipeline_complete": {
-			const { text, tone } = summarizePipelineComplete(e.results);
+			const { text, tone } = summarizePipelineComplete(e.results, undefined, metaOf(e));
 			return [{ kind: "notice", text, tone }];
 		}
 		case "pipeline_error":
@@ -565,9 +598,33 @@ function translateWaveEvent(w: WaveEvent): UiEvent[] {
  * totals, a per-persona tally of where the work went, and a per-task list of
  * what each task produced (its task_report) plus execution details.
  */
+/**
+ * Goal-and-deliverable context for the W4 summary. Sourced from the
+ * pipeline_complete event: the original goal, a synthesized conclusion, the
+ * terminal (leaf) task ids whose reports are the actual deliverables, and the
+ * persisted artifact paths.
+ */
+export interface CompletionMeta {
+	goal?: string;
+	conclusion?: string;
+	leafTaskIds?: string[];
+	artifacts?: string[];
+}
+
+/** Project the completion context off a pipeline_complete event into CompletionMeta. */
+function metaOf(e: Extract<PipelineEvent, { type: "pipeline_complete" }>): CompletionMeta {
+	return {
+		...(e.goal !== undefined && { goal: e.goal }),
+		...(e.conclusion !== undefined && { conclusion: e.conclusion }),
+		...(e.leafTaskIds !== undefined && { leafTaskIds: e.leafTaskIds }),
+		...(e.artifacts !== undefined && { artifacts: e.artifacts }),
+	};
+}
+
 export function summarizePipelineComplete(
 	results: TaskResult[],
 	writtenByTask?: Map<string, Set<string>>,
+	meta?: CompletionMeta,
 ): { text: string; tone: "ok" | "warn" } {
 	const ok = results.filter((r) => r.status === "ok");
 	const blocked = results.filter((r) => r.status === "blocked");
@@ -576,6 +633,8 @@ export function summarizePipelineComplete(
 	const lines: string[] = [
 		`Pipeline complete (W4) · ${results.length} task(s): ${ok.length} ok, ${blocked.length} blocked, ${errored.length} error`,
 	];
+
+	if (meta?.goal) lines.push(`goal: ${clip(meta.goal, 200)}`);
 
 	const byPersona = new Map<string, { ok: number; blocked: number; error: number }>();
 	for (const r of results) {
@@ -595,12 +654,46 @@ export function summarizePipelineComplete(
 		.join(" · ");
 	if (personaLine) lines.push(`by persona — ${personaLine}`);
 
-	if (results.length) {
+	// Headline: the synthesized conclusion answering the goal.
+	if (meta?.conclusion) {
+		lines.push("conclusion:");
+		lines.push(...indentBlock(meta.conclusion, 800));
+	}
+
+	// Deliverables: terminal task reports at higher fidelity than the ledger.
+	const leafSet = new Set(meta?.leafTaskIds ?? []);
+	const leaves = results.filter((r) => leafSet.has(r.taskId));
+	if (leaves.length) {
+		lines.push("result:");
+		for (const r of leaves) {
+			lines.push(`  - ${r.taskId} (${r.personaId})`);
+			lines.push(...indentBlock(clip(r.report, 600) || "(no task report returned)", 600, 6));
+		}
+	}
+
+	// Where the real outputs live on disk.
+	if (meta?.artifacts?.length) {
+		lines.push("artifacts:");
+		for (const a of meta.artifacts) lines.push(`  - ${a}`);
+	}
+
+	// Per-task ledger for traceability — skip leaf tasks already shown in full
+	// under "result:" so the deliverable is not printed twice.
+	const ledger = results.filter((r) => !leafSet.has(r.taskId));
+	if (ledger.length) {
 		lines.push("outputs:");
-		for (const r of results) lines.push(...describeTaskOutput(r, writtenByTask?.get(r.taskId)));
+		for (const r of ledger) lines.push(...describeTaskOutput(r, writtenByTask?.get(r.taskId)));
 	}
 
 	return { text: lines.join("\n"), tone: blocked.length || errored.length ? "warn" : "ok" };
+}
+
+/** Indent a (possibly multi-line) block, capping total length with an ellipsis. */
+function indentBlock(text: string, maxLen: number, indent = 2): string[] {
+	const trimmed = text.trim();
+	const capped = trimmed.length > maxLen ? `${trimmed.slice(0, maxLen - 1)}…` : trimmed;
+	const pad = " ".repeat(indent);
+	return capped.split("\n").map((l) => `${pad}${l}`.trimEnd());
 }
 
 /** One task's lines for the W4 summary: a header, its deliverable, written files, and details. */

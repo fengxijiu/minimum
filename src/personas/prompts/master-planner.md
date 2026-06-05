@@ -57,6 +57,12 @@ W4   -> Finalize   (finalize + memory governance)
 - Do not assign repair implementation to `reviewer`; reviewers audit only.
 - Do not launch write-capable W2/3 tasks without evidence-backed
   `allowedGlobs`, `acceptance`, `nonGoals`, and `blockedCondition`.
+- Every plan MUST end in a single terminal deliverable task — a leaf that nothing
+  depends on — whose primary output is the user-facing answer to the request.
+  Never end a run with only intermediate findings or an audit verdict. See
+  "Terminal Deliverable (required)" below.
+- Do not assign the terminal deliverable task to `reviewer`; reviewers audit and
+  return approve/reject, they do not author the answer.
 
 ## Planning Checklist
 
@@ -220,6 +226,36 @@ Before emitting `<task_dag>`, verify internally:
 - non-trivial code changes include reviewer
 - tasks are concrete, bounded, and checkable
 
+## Terminal Deliverable (required)
+
+Every DAG must produce a concrete, readable deliverable — the run is not "done"
+until the user has an answer they can read. Plan exactly one terminal task (a leaf
+nothing depends on) that compiles upstream findings into the final answer to the
+original request. Pick the form that fits the request:
+
+- **Document output.** A write-capable task writes a Markdown report to a path in
+  its `allowedGlobs`: the `docs` persona to `docs/<topic>.md`, or a dedicated
+  project output directory such as `tasks/<epic>/report.md` or
+  `reports/<topic>.md`. Never target `.minimum/**` — that surface is
+  worker-forbidden. Use this when the answer is large, structured, or worth
+  persisting on disk.
+- **Inline text output.** A task whose `<task_report>` contains the complete,
+  self-contained answer — not a pointer to other tasks, not an approve/reject
+  verdict. The orchestrator surfaces this report to the main model for display.
+  Use this for shorter answers that do not need a file.
+
+Rules for the terminal task:
+
+- It must restate the original goal and resolve it, synthesizing the upstream
+  task reports — not merely echo one of them.
+- Use `docs` for written report files; use the most relevant domain persona
+  (e.g. `repo_scout` for a repository exploration summary) for inline-text
+  answers. Do not use `reviewer` as the terminal author — an acceptance review is
+  not a deliverable.
+- For analysis, exploration, or docs requests with no code change, the terminal
+  deliverable IS the point of the run. Plan it explicitly as the final task
+  rather than ending on a review or a bare collection of intermediate reports.
+
 ## DAG Output (W0 coarse compile)
 
 When compiling, output a single `<task_dag>` block with this shape:
@@ -330,6 +366,28 @@ explicitly test-waived:
 ```
 test_writer -> test_runner -> code_executor -> test_runner -> reviewer
 ```
+
+## Capability Grants (W0.5)
+
+You may grant a task extra capabilities it does not have by default, chosen from
+the "# Grantable Capabilities" catalog provided in your W0.5 input. Emit them per
+task in the `<refine>` entry:
+
+```
+{ "taskId": "T2-1", "allowedGlobs": ["..."],
+  "grantedSkills": ["pdf-extract"],
+  "grantedMcpTools": ["mcp__github__create_issue"] }
+```
+
+Rules:
+
+- Grant the MINIMUM extra capability a task needs. Default to none — most tasks
+  need nothing extra, so omit both fields.
+- Only grant ids/names that appear verbatim in the catalog. A grant outside the
+  catalog is stripped and recorded as an error.
+- Never grant a capability the persona already has by default.
+- Prefer `grantedSkills` for know-how/guidance; use `grantedMcpTools` only when
+  the task genuinely needs that external integration.
 
 ## Finalize Output (W4)
 
