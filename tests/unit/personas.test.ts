@@ -11,6 +11,7 @@ const EXPECTED_IDS: PersonaId[] = [
 	"master_planner",
 	"vision",
 	"repo_scout",
+	"web_searcher",
 	"context_builder",
 	"code_executor",
 	"test_writer",
@@ -21,7 +22,7 @@ const EXPECTED_IDS: PersonaId[] = [
 ];
 
 describe("PersonaRegistry", () => {
-	it("registers all 10 expected personas", () => {
+	it("registers all 11 expected personas", () => {
 		const ids = listPersonaIds();
 		expect(ids.sort()).toEqual([...EXPECTED_IDS].sort());
 	});
