@@ -1066,3 +1066,11 @@ describe("master capability grants (W0.5 → worker)", () => {
 		expect(seen).not.toContain("mcp__gh__nope");
 	});
 });
+
+import { PERCEPTION_PERSONAS } from "../../src/orchestration/index.js";
+
+describe("web_searcher is a perception persona", () => {
+	it("is included so it runs in W1", () => {
+		expect(PERCEPTION_PERSONAS.has("web_searcher")).toBe(true);
+	});
+});

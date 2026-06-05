@@ -58,6 +58,7 @@ import type { ChoicePayload, ConfirmationGate } from "../tools/choice/Confirmati
 export const PERCEPTION_PERSONAS: ReadonlySet<PersonaId> = new Set<PersonaId>([
 	"vision",
 	"repo_scout",
+	"web_searcher",
 	"context_builder",
 ]);
 
