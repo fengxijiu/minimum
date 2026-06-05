@@ -56,6 +56,11 @@ export interface TaskContract {
 	/** Upstream task ids that must complete before this task starts. */
 	dependsOn: string[];
 
+	/** Skills the master granted this task on top of the persona's defaults. */
+	grantedSkills: string[];
+	/** MCP tool names (mcp__server__tool) the master granted this task. */
+	grantedMcpTools: string[];
+
 	/** If true, a path violation aborts the task instead of denying the call. */
 	abortOnConflict: boolean;
 }

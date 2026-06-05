@@ -34,6 +34,10 @@ export interface RefinementEntry {
 	contextPack?: string;
 	/** Absolute path to the persisted context pack, filled by MiMoPipeline. */
 	contextPackPath?: string;
+	/** Skills the master grants this task (ids from the grantable catalog). */
+	grantedSkills?: string[];
+	/** MCP tool names the master grants this task. */
+	grantedMcpTools?: string[];
 }
 
 export interface RefineCompileSuccess {
@@ -112,6 +116,14 @@ function validateEntry(
 	if (contextPack !== undefined && typeof contextPack !== "string")
 		return { ok: false, error: `refine entry ${taskId}: contextPack must be string or omitted` };
 
+	const grantedSkills = raw.grantedSkills ?? raw.granted_skills ?? [];
+	if (!Array.isArray(grantedSkills) || !grantedSkills.every((s) => typeof s === "string"))
+		return { ok: false, error: `refine entry ${taskId}: grantedSkills must be string[] or omitted` };
+
+	const grantedMcpTools = raw.grantedMcpTools ?? raw.granted_mcp_tools ?? [];
+	if (!Array.isArray(grantedMcpTools) || !grantedMcpTools.every((s) => typeof s === "string"))
+		return { ok: false, error: `refine entry ${taskId}: grantedMcpTools must be string[] or omitted` };
+
 	return {
 		ok: true,
 		entry: {
@@ -126,6 +138,8 @@ function validateEntry(
 			}),
 			...(constraints !== undefined && { constraints: constraints as string[] }),
 			...(contextPack !== undefined && { contextPack }),
+			grantedSkills: grantedSkills as string[],
+			grantedMcpTools: grantedMcpTools as string[],
 		},
 	};
 }
@@ -276,6 +290,8 @@ function assembleContract(
 		outputSchema: persona.outputSchema,
 		parallelGroup: task.parallelGroup,
 		dependsOn: task.dependsOn,
+		grantedSkills: entry?.grantedSkills ?? [],
+		grantedMcpTools: entry?.grantedMcpTools ?? [],
 		abortOnConflict: false,
 	};
 

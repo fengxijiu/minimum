@@ -331,3 +331,51 @@ describe("refineDag", () => {
 		expect(errors.every((e) => e.taskId !== "_glob_conflict")).toBe(true);
 	});
 });
+
+describe("master capability grants", () => {
+	it("grant fields default to empty on a contract with no granted entry", () => {
+		const { contracts } = refineDag(mkDag(), {
+			inputs: baseInputs,
+			refinement: new Map(),
+			validate: false,
+		});
+		const c = contracts.find((x) => x.taskId === "T2-1")!;
+		expect(c.grantedSkills).toEqual([]);
+		expect(c.grantedMcpTools).toEqual([]);
+	});
+
+	it("compileRefinement parses grantedSkills and grantedMcpTools, defaulting to []", () => {
+		const text = `<refine>{"tasks":[
+			{"taskId":"T2-1","allowedGlobs":["src/a.ts"],"grantedSkills":["pdf-extract"],"grantedMcpTools":["mcp__gh__create_issue"]},
+			{"taskId":"T2-2","allowedGlobs":["src/b.ts"]}
+		]}</refine>`;
+		const res = compileRefinement(text);
+		expect(res.ok).toBe(true);
+		if (!res.ok) return;
+		expect(res.entries.get("T2-1")!.grantedSkills).toEqual(["pdf-extract"]);
+		expect(res.entries.get("T2-1")!.grantedMcpTools).toEqual(["mcp__gh__create_issue"]);
+		expect(res.entries.get("T2-2")!.grantedSkills).toEqual([]);
+		expect(res.entries.get("T2-2")!.grantedMcpTools).toEqual([]);
+	});
+
+	it("flows a parsed grant onto the assembled contract", () => {
+		const res = compileRefinement(
+			`<refine>{"tasks":[{"taskId":"T2-1","allowedGlobs":["src/upload.ts"],"acceptance":["x"],"blockedCondition":"blocked if T0-1.file_list is unavailable or incomplete","grantedMcpTools":["mcp__gh__create_issue"]}]}</refine>`,
+		);
+		expect(res.ok).toBe(true);
+		if (!res.ok) return;
+		const { contracts } = refineDag(mkDag(), {
+			inputs: baseInputs,
+			refinement: res.entries,
+			validate: false,
+		});
+		expect(contracts.find((c) => c.taskId === "T2-1")!.grantedMcpTools).toEqual(["mcp__gh__create_issue"]);
+	});
+
+	it("rejects a non-string-array grant", () => {
+		const res = compileRefinement(
+			`<refine>{"tasks":[{"taskId":"T2-1","allowedGlobs":["src/a.ts"],"grantedSkills":"pdf"}]}</refine>`,
+		);
+		expect(res.ok).toBe(false);
+	});
+});
