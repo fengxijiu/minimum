@@ -487,6 +487,26 @@ export class WorkerLoop {
 			}
 		}
 
+		// install_dependency writes manifest/lockfile targets — verify they're
+		// within the contract's allowed paths before execution.
+		if (name === "install_dependency") {
+			const { dependencyWriteTargets } = await import("../tools/shell/InstallDependencyTool.js");
+			const writeTargets = dependencyWriteTargets(args, this.projectRoot);
+			for (const target of writeTargets) {
+				const decision = checkWrite(target, {
+					persona,
+					contract,
+					projectRoot: this.projectRoot,
+				});
+				if (!decision.ok) {
+					return {
+						kind: "denied",
+						reason: `install_dependency: write target "${target}" not in allowedGlobs — ${decision.reason}`,
+					};
+				}
+			}
+		}
+
 		// Approval gate — only when an ApprovalManager is wired. The TUI's
 		// approvalMode (read-only / auto-edit / full-auto) lives inside this
 		// manager and decides whether the call needs a user confirmation.

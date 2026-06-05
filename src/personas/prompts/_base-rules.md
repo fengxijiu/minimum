@@ -60,9 +60,11 @@ High-risk (inspect carefully, explain necessity before changing):
 
 ## 5. Shell Command Rules
 
+Use `install_dependency` for dependency installation. Never use `exec_shell` for
+package installation commands (npm install, pip install, etc.).
+
 Require explicit user approval before running:
 ```
-npm/pnpm/yarn install  pip install  cargo add  go get
 git add  git commit  git push  git reset  git checkout  git clean  git rebase
 rm  mv  chmod  chown  sudo  curl  wget  docker
 ```

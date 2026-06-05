@@ -62,23 +62,24 @@ function RoleLabel({ role }: { role: Role }) {
 // inline parsing handles bold, italic, code, strikethrough and links.
 
 type MdSpan =
-  | { k: 't' | 'b' | 'i' | 'c' | 's'; v: string }
+  | { k: 't' | 'b' | 'i' | 'bi' | 'c' | 's'; v: string }
   | { k: 'a'; v: string; href: string };
 
 function parseInlineMd(text: string): MdSpan[] {
   const spans: MdSpan[] = [];
-  // bold ** **  ·  italic * *  ·  italic _ _  ·  strike ~~ ~~  ·  code ` `  ·  link [t](u)
-  const re = /\*\*([^*]+)\*\*|\*([^*]+)\*|_([^_]+)_|~~([^~]+)~~|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\)/g;
+  // bi *** ***  ·  bold ** **  ·  italic * *  ·  italic _ _  ·  strike ~~ ~~  ·  code ` `  ·  link [t](u)
+  const re = /\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*(.+?)\*|_(.+?)_|~~(.+?)~~|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\)/g;
   let last = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) spans.push({ k: 't', v: text.slice(last, m.index) });
-    if (m[1] !== undefined) spans.push({ k: 'b', v: m[1] });
-    else if (m[2] !== undefined) spans.push({ k: 'i', v: m[2] });
+    if (m[1] !== undefined) spans.push({ k: 'bi', v: m[1] });
+    else if (m[2] !== undefined) spans.push({ k: 'b', v: m[2] });
     else if (m[3] !== undefined) spans.push({ k: 'i', v: m[3] });
-    else if (m[4] !== undefined) spans.push({ k: 's', v: m[4] });
-    else if (m[5] !== undefined) spans.push({ k: 'c', v: m[5] });
-    else spans.push({ k: 'a', v: m[6]!, href: m[7]! });
+    else if (m[4] !== undefined) spans.push({ k: 'i', v: m[4] });
+    else if (m[5] !== undefined) spans.push({ k: 's', v: m[5] });
+    else if (m[6] !== undefined) spans.push({ k: 'c', v: m[6] });
+    else spans.push({ k: 'a', v: m[7]!, href: m[8]! });
     last = m.index + m[0].length;
   }
   if (last < text.length) spans.push({ k: 't', v: text.slice(last) });
@@ -93,6 +94,7 @@ function InlineMd({ text, color }: { text: string; color?: string }) {
         switch (s.k) {
           case 'b': return <Text key={i} bold color={color}>{s.v}</Text>;
           case 'i': return <Text key={i} italic color={color}>{s.v}</Text>;
+          case 'bi': return <Text key={i} bold italic color={color}>{s.v}</Text>;
           case 's': return <Text key={i} strikethrough color={theme.muted}>{s.v}</Text>;
           case 'c': return <Text key={i} color={theme.accent2}>{s.v}</Text>;
           case 'a': return <Text key={i} color={theme.accent} underline>{s.v}</Text>;
@@ -129,12 +131,67 @@ type TableData = {
 // Strip inline-markdown markers to get visual character count for column sizing.
 function stripMd(text: string): string {
   return text
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/\*([^*]+)\*/g, '$1')
-    .replace(/_([^_]+)_/g, '$1')
-    .replace(/~~([^~]+)~~/g, '$1')
+    .replace(/\*\*\*(.+?)\*\*\*/g, '$1')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/\*(.+?)\*/g, '$1')
+    .replace(/_(.+?)_/g, '$1')
+    .replace(/~~(.+?)~~/g, '$1')
     .replace(/`([^`]+)`/g, '$1')
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+}
+
+function visualWidth(text: string): number {
+  let w = 0;
+  for (const ch of text) {
+    const code = ch.codePointAt(0)!;
+    if (
+      (code >= 0x4E00 && code <= 0x9FFF) ||
+      (code >= 0x3400 && code <= 0x4DBF) ||
+      (code >= 0x3000 && code <= 0x303F) ||
+      (code >= 0xFF00 && code <= 0xFF60) ||
+      (code >= 0xFFE0 && code <= 0xFFE6) ||
+      (code >= 0xAC00 && code <= 0xD7AF) ||
+      (code >= 0x2E80 && code <= 0x2EFF) ||
+      (code >= 0x3040 && code <= 0x309F) ||
+      (code >= 0x30A0 && code <= 0x30FF)
+    ) {
+      w += 2;
+    } else {
+      w += 1;
+    }
+  }
+  return w;
+}
+
+function truncateCell(text: string, maxVisWidth: number): string {
+  if (maxVisWidth <= 0) return '';
+  const spans = parseInlineMd(text);
+  const parts: string[] = [];
+  let w = 0;
+  for (const span of spans) {
+    if (span.k === 't') {
+      for (const ch of span.v) {
+        const code = ch.codePointAt(0)!;
+        const cw = (code >= 0x4E00 && code <= 0x9FFF) || (code >= 0x3400 && code <= 0x4DBF) ||
+                   (code >= 0x3000 && code <= 0x303F) || (code >= 0xFF00 && code <= 0xFF60) ||
+                   (code >= 0xFFE0 && code <= 0xFFE6) || (code >= 0xAC00 && code <= 0xD7AF) ||
+                   (code >= 0x2E80 && code <= 0x2EFF) || (code >= 0x3040 && code <= 0x309F) ||
+                   (code >= 0x30A0 && code <= 0x30FF) ? 2 : 1;
+        if (w + cw > maxVisWidth) return parts.join('');
+        parts.push(ch);
+        w += cw;
+      }
+    } else {
+      const marker = span.k === 'bi' ? '***' : span.k === 'b' ? '**' : span.k === 'i' ? '*' :
+                     span.k === 's' ? '~~' : span.k === 'c' ? '`' : '';
+      const contentVisW = visualWidth(span.v);
+      if (w + contentVisW <= maxVisWidth) {
+        parts.push(marker, span.v, marker);
+        w += contentVisW;
+      }
+    }
+  }
+  return parts.join('');
 }
 
 function splitTableRow(line: string): string[] {
@@ -166,8 +223,8 @@ function buildTableData(tableLines: string[], availCols?: number): TableData | n
   const aligns  = parseSepAligns(tableLines[1]!).slice(0, headers.length);
   const rows    = tableLines.slice(2).map(l => splitTableRow(l).slice(0, headers.length));
   let colWidths = headers.map((h, ci) => {
-    const hLen = stripMd(h).length;
-    const maxD = rows.reduce((mx, row) => Math.max(mx, stripMd(row[ci] ?? '').length), 0);
+    const hLen = visualWidth(stripMd(h));
+    const maxD = rows.reduce((mx, row) => Math.max(mx, visualWidth(stripMd(row[ci] ?? ''))), 0);
     return Math.min(MAX_COL_WIDTH, Math.max(hLen, maxD, 1));
   });
   // Pad aligns to match column count
@@ -206,7 +263,7 @@ const TableDataRow = React.memo(function TableDataRow({ cells, colWidths, aligns
       <Text color={theme.line}>│</Text>
       {colWidths.map((cw, ci) => {
         const raw  = cells[ci] ?? '';
-        const vis  = Math.min(stripMd(raw).length, cw);
+        const vis  = Math.min(visualWidth(stripMd(raw)), cw);
         const align = aligns[ci] ?? 'l';
         const excess = Math.max(0, cw - vis);
         const preN  = align === 'r' ? excess + 1 : align === 'c' ? Math.floor(excess / 2) + 1 : 1;
@@ -215,8 +272,8 @@ const TableDataRow = React.memo(function TableDataRow({ cells, colWidths, aligns
           <React.Fragment key={ci}>
             <Text color={fg}>{' '.repeat(preN)}</Text>
             {isHeader
-              ? <Text bold color={fg}>{raw.slice(0, cw)}</Text>
-              : <InlineMd text={raw.slice(0, cw)} color={fg} />}
+              ? <Text bold color={fg}>{truncateCell(stripMd(raw), cw)}</Text>
+              : <InlineMd text={truncateCell(raw, cw)} color={fg} />}
             <Text color={fg}>{' '.repeat(postN)}</Text>
             <Text color={theme.line}>│</Text>
           </React.Fragment>

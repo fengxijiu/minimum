@@ -133,6 +133,18 @@ export class PipelineBridge {
 		// snapshot so the TUI can render a live brief without having to
 		// re-derive state from a stream of partial updates.
 		const progress = new Map<string, SubagentProgress>();
+		// Per-task usage snapshots — each worker's latest cumulative usage.
+		// Re-summed on every update to drive the top-level ctx/cost meter.
+		const taskUsageSnapshots = new Map<string, {
+			totalTokens: number; promptTokens: number; completionTokens: number;
+			cachedTokens: number; toolCalls: number; steps: number;
+			totalCost: number; currency: "CNY" | "Credits";
+		}>();
+		const usageAccum = {
+			totalTokens: 0, promptTokens: 0, completionTokens: 0,
+			cachedTokens: 0, toolCalls: 0, steps: 0,
+			totalCost: 0, currency: "CNY" as "CNY" | "Credits",
+		};
 		// Files each task actually wrote, accumulated from worker tool calls.
 		// pendingWriteByTask remembers the path of the most recent write call so a
 		// later denial/rollback can retract it (the deny/rollback signals don't
@@ -176,7 +188,7 @@ export class PipelineBridge {
 		const push = (e: PipelineEvent) => {
 			if (e.type === "pipeline_complete") {
 				const { text, tone } = summarizePipelineBrief(e.results, metaOf(e));
-				queue.push({ kind: "notice", text, tone });
+				queue.push({ kind: "assistant", text });
 			} else {
 				for (const ui of translatePipelineEvent(e)) queue.push(ui);
 			}
@@ -217,6 +229,39 @@ export class PipelineBridge {
 		const pushUi = (e: UiEvent) => {
 			queue.push(e);
 			wake();
+		};
+		const recalcUsage = () => {
+			usageAccum.totalTokens = 0;
+			usageAccum.promptTokens = 0;
+			usageAccum.completionTokens = 0;
+			usageAccum.cachedTokens = 0;
+			usageAccum.toolCalls = 0;
+			usageAccum.steps = 0;
+			usageAccum.totalCost = 0;
+			for (const snap of taskUsageSnapshots.values()) {
+				usageAccum.totalTokens += snap.totalTokens;
+				usageAccum.promptTokens += snap.promptTokens;
+				usageAccum.completionTokens += snap.completionTokens;
+				usageAccum.cachedTokens += snap.cachedTokens;
+				usageAccum.toolCalls += snap.toolCalls;
+				usageAccum.steps += snap.steps;
+				usageAccum.totalCost += snap.totalCost;
+				usageAccum.currency = snap.currency;
+			}
+		};
+		const emitAggregatedUsage = () => {
+			pushUi({
+				kind: "usage",
+				contextTokens: usageAccum.totalTokens,
+				totalTokens: usageAccum.totalTokens,
+				promptTokens: usageAccum.promptTokens,
+				completionTokens: usageAccum.completionTokens,
+				cachedTokens: usageAccum.cachedTokens,
+				toolCalls: usageAccum.toolCalls,
+				steps: usageAccum.steps,
+				totalCost: usageAccum.totalCost,
+				currency: usageAccum.currency,
+			});
 		};
 
 		// Take over the ApprovalManager's prompter for the duration of this
@@ -296,6 +341,18 @@ export class PipelineBridge {
 						snap.currency = ev.usage.currency;
 						snap.toolCalls = ev.usage.toolCalls;
 						snap.step = ev.usage.steps;
+						taskUsageSnapshots.set(contract.taskId, {
+							totalTokens: ev.usage.totalTokens,
+							promptTokens: ev.usage.promptTokens,
+							completionTokens: ev.usage.completionTokens,
+							cachedTokens: ev.usage.cachedTokens,
+							toolCalls: ev.usage.toolCalls,
+							steps: ev.usage.steps,
+							totalCost: ev.usage.totalCost,
+							currency: ev.usage.currency,
+						});
+						recalcUsage();
+						emitAggregatedUsage();
 						break;
 					case "content":
 					case "reasoning":
@@ -315,6 +372,18 @@ export class PipelineBridge {
 					snap.updatedAt = Date.now();
 					emitProgress(contract, snap);
 				}
+				taskUsageSnapshots.set(contract.taskId, {
+					totalTokens: usage.totalTokens,
+					promptTokens: usage.promptTokens,
+					completionTokens: usage.completionTokens,
+					cachedTokens: usage.cachedTokens,
+					toolCalls: usage.toolCalls,
+					steps: usage.steps,
+					totalCost: usage.totalCost,
+					currency: usage.currency,
+				});
+				recalcUsage();
+				emitAggregatedUsage();
 			},
 		});
 

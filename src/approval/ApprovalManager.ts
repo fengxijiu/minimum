@@ -217,6 +217,10 @@ export class ApprovalManager {
 			if (DANGEROUS_SHELL_RE.some((r) => r.test(cmd))) return "high";
 			return "medium";
 		}
+		if (tool === "install_dependency") {
+			if (args.allowScripts === true) return "high";
+			return "medium";
+		}
 		if (EDIT_TOOLS.has(tool)) return "medium";
 		// All git operations route through the single "git" tool with a
 		// subcommand in args — the standalone tool names "git_push"/"git_commit"

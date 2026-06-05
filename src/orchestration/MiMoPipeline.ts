@@ -371,7 +371,26 @@ export async function runPipeline(
 		if (mission.report.decision === "NEEDS_HUMAN_CONFIRMATION") {
 			const reason = `mission checker requires human confirmation${mission.report.reason ? `: ${mission.report.reason}` : ""}`;
 			emit({ type: "human_confirmation_required", phase: "W3.5", reason });
-			return { ok: false, results: allResults, statusReason: "human_confirmation", error: reason };
+			const choice = await askPipelineChoice(opts.choiceGate, {
+				question: "Accept 需要人工确认，如何继续？",
+				context: mission.report.reason ?? undefined,
+				options: [
+					{ id: "stop_for_human", title: "暂停", summary: "安全停止，等待人工审查。" },
+					{ id: "approve_to_w4", title: "推进到 Finalize", summary: "用户 override，跳过确认直接进入 W4。" },
+				],
+				allowCustom: false,
+			});
+			if (!choice || choice === "stop_for_human") {
+				return { ok: false, results: allResults, statusReason: "human_confirmation", error: reason };
+			}
+			emit({ type: "pipeline_choice", phase: "W3.5", choiceId: choice, reason: "needs_human_confirmation override" });
+			if (choice === "approve_to_w4") {
+				statusReason = "user_override";
+				knownIssues.push(`W3.5 NEEDS_HUMAN_CONFIRMATION overridden by user: ${reason}`);
+				break;
+			}
+			const unsupported = `unsupported W3.5 human confirmation choice: ${choice}`;
+			return { ok: false, results: allResults, statusReason: "human_confirmation", error: unsupported };
 		}
 		if (missionLoopIndex >= maxMissionRepairLoops) {
 			const capChoice = await askPipelineChoice(opts.choiceGate, {

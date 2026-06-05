@@ -66,6 +66,9 @@ export function evaluateLaunchGate(
 			continue;
 		}
 		if (upstream.status !== "ok") {
+			if (hasNonBlockingDirective(upstream)) {
+				continue;
+			}
 			issues.push({
 				taskId: contract.taskId,
 				requirement,
@@ -75,6 +78,9 @@ export function evaluateLaunchGate(
 		}
 		const value = artifacts.get(requirement.sourceTaskId)?.get(requirement.artifact)?.trim();
 		if (!value) {
+			if (hasNonBlockingDirective(upstream)) {
+				continue;
+			}
 			issues.push({
 				taskId: contract.taskId,
 				requirement,
@@ -83,6 +89,12 @@ export function evaluateLaunchGate(
 		}
 	}
 	return { ok: issues.length === 0, issues };
+}
+
+export function hasNonBlockingDirective(result: TaskResult): boolean {
+	const directive = extractXmlBlock(result.report, "pipeline_directive");
+	if (!directive) return false;
+	return /blocking:\s*false/i.test(directive);
 }
 
 export function isContextGapBlocked(result: TaskResult): boolean {

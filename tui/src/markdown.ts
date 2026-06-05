@@ -1,4 +1,4 @@
-export type MarkdownInlineKind = 'text' | 'strong' | 'emphasis' | 'code';
+export type MarkdownInlineKind = 'text' | 'strong' | 'emphasis' | 'strong_emphasis' | 'code';
 
 export type MarkdownInline = {
   kind: MarkdownInlineKind;
@@ -27,6 +27,25 @@ function findClosing(input: string, marker: string, from: number): number {
   return idx >= 0 ? idx : -1;
 }
 
+function findCloseMarker(input: string, marker: string, from: number): number {
+  let idx = input.indexOf(marker, from);
+  while (idx >= 0) {
+    if (marker === '*') {
+      const prevOk = idx === 0 || input[idx - 1] !== '*';
+      const nextOk = idx + 1 >= input.length || input[idx + 1] !== '*';
+      if (prevOk && nextOk) return idx;
+    } else if (marker === '_') {
+      const prevOk = idx === 0 || input[idx - 1] !== '_';
+      const nextOk = idx + 1 >= input.length || input[idx + 1] !== '_';
+      if (prevOk && nextOk) return idx;
+    } else {
+      return idx;
+    }
+    idx = input.indexOf(marker, idx + 1);
+  }
+  return -1;
+}
+
 export function parseInlineMarkdown(input: string): MarkdownInline[] {
   const segments: MarkdownInline[] = [];
   let i = 0;
@@ -43,19 +62,29 @@ export function parseInlineMarkdown(input: string): MarkdownInline[] {
       }
     }
 
+    const triMarker = rest.startsWith('***') ? '***' : rest.startsWith('___') ? '___' : null;
+    if (triMarker) {
+      const end = findClosing(input, triMarker, i + 3);
+      if (end > i + 3) {
+        pushText(segments, 'strong_emphasis', input.slice(i + 3, end));
+        i = end + 3;
+        continue;
+      }
+    }
+
     const strongMarker = rest.startsWith('**') ? '**' : rest.startsWith('__') ? '__' : null;
     if (strongMarker) {
-      const end = findClosing(input, strongMarker, i + strongMarker.length);
-      if (end > i + strongMarker.length) {
-        pushText(segments, 'strong', input.slice(i + strongMarker.length, end));
-        i = end + strongMarker.length;
+      const end = findClosing(input, strongMarker, i + 2);
+      if (end > i + 2) {
+        pushText(segments, 'strong', input.slice(i + 2, end));
+        i = end + 2;
         continue;
       }
     }
 
     const emphasisMarker = rest.startsWith('*') ? '*' : rest.startsWith('_') ? '_' : null;
     if (emphasisMarker) {
-      const end = findClosing(input, emphasisMarker, i + 1);
+      const end = findCloseMarker(input, emphasisMarker, i + 1);
       if (end > i + 1) {
         pushText(segments, 'emphasis', input.slice(i + 1, end));
         i = end + 1;

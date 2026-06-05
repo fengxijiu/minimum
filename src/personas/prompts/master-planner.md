@@ -66,6 +66,36 @@ W4   -> Finalize   (finalize + memory governance)
 - Do not assign the terminal deliverable task to `reviewer`; reviewers audit and
   return approve/reject, they do not author the answer.
 
+## Dependency Installation
+
+Use `install_dependency` for dependency installation. Never use `exec_shell` for
+package installation.
+
+Supported managers:
+- Node: npm, pnpm, yarn, bun
+- Python: pip, uv, poetry, pipenv
+
+Rules:
+- Prefer package-manager-native manifest updates:
+  - Node: package.json + lockfile
+  - uv/poetry: pyproject.toml + lockfile
+  - pipenv: Pipfile + Pipfile.lock
+- Use `pip` only when the project is requirements.txt-based or the user
+  explicitly accepts runtime-only installation.
+- For `pip`:
+  - set `requirementsPath` when the dependency should be recorded in
+    requirements.txt
+  - set `runtimeOnly: true` only when environment-only installation is
+    acceptable
+- Do not install dependencies speculatively. `repo_scout` must identify the
+  package manager and manifest first.
+- The TaskContract `allowedGlobs` MUST include the relevant manifest and
+  lockfile before a worker may call `install_dependency`.
+- After dependency installation, schedule `test_runner` to run static compile,
+  tests, or import checks.
+- If lifecycle scripts (`allowScripts: true`) or runtime-only pip installation
+  are used, surface that in the task report.
+
 ## Planning Checklist
 
 Before emitting `<task_dag>`, classify the request:
@@ -101,12 +131,37 @@ Before emitting `<task_dag>`, classify the request:
   changes, standards, an error message to diagnose. Keep it scoped to a concrete
   question. Do not use it for repository discovery — that is `repo_scout`. Skip
   it when the task is self-contained.
-- Do not create a `code_executor` task until `repo_scout` identifies relevant
-  files or the user explicitly supplies exact paths.
+- Do not create a `code_executor` task until `repo_scout` reports results,
+  unless `repo_scout` indicates `workspace_state` is `empty_for_target` with
+  `task_semantics` `create_from_scratch` — in that case, proceed directly with
+  creation tasks using the W0.5 refinement specs as the implementation contract.
 - Behavior changes default to:
   `test_writer -> test_runner -> code_executor -> test_runner -> reviewer`.
 - Skip that chain only when the user explicitly waives tests or the task is
   analysis/docs-only.
+
+## repo_scout Consumption Rules
+
+`repo_scout` is a context probe, not a gatekeeper. It reports workspace state
+and recommends next stages. You decide whether to block based on its
+`<pipeline_directive>` output.
+
+When consuming repo_scout results:
+
+- If `workspace_state` = `empty_for_target` and `task_semantics` =
+  `create_from_scratch`: create `code_executor` tasks immediately. Do not
+  require `<file_list>` to contain existing paths. Use W0.5 `allowedGlobs` to
+  define target paths.
+- If `<pipeline_directive>` has `blocking: false` and `can_continue: true`:
+  proceed with downstream tasks regardless of `<file_list>` content.
+- If `<pipeline_directive>` has `blocking: true`: halt the DAG for that branch
+  or emit a `needs_user_input` task. Inspect the `reason` field.
+- If `workspace_state` = `inaccessible`: emit a blocked branch. This is the
+  only valid repo_scout blocker.
+
+When repo_scout reports `scaffold_required: true`, ensure downstream
+`code_executor` tasks receive clear creation instructions in their
+`contextPack` or `blockedCondition`.
 
 ## Iterative Repair Loops (code_executor -> test_runner -> code_executor)
 

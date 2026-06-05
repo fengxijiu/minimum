@@ -224,6 +224,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 			"write_file",
 			"edit_file",
 			"apply_patch",
+			"install_dependency",
 			"git_status",
 			"git_diff",
 		],
@@ -307,6 +308,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 			"git_status",
 			"git_log",
 			"write_file",
+			"install_dependency",
 		],
 		toolDenylist: ["edit_file", "apply_patch", "exec_shell"],
 		pathPolicy: {

@@ -13,6 +13,7 @@ import { TodoWriteTool } from "../tools/todo/TodoWriteTool.js";
 import { ChoiceTool } from "../tools/choice/ChoiceTool.js";
 import type { ConfirmationGate } from "../tools/choice/ConfirmationGate.js";
 import { ExecShellTool } from "../tools/shell/ExecShellTool.js";
+import { InstallDependencyTool } from "../tools/shell/InstallDependencyTool.js";
 import { JobRegistry } from "../tools/shell/JobRegistry.js";
 import { RunBackgroundTool } from "../tools/shell/RunBackgroundTool.js";
 import { JobOutputTool } from "../tools/shell/JobOutputTool.js";
@@ -109,6 +110,7 @@ export function createMiMoStack(
 		new ApplyPatchTool(),
 		new ChoiceTool({ gate: deps.confirmationGate }),
 		new ExecShellTool(shellOpts),
+		new InstallDependencyTool({ rootDir: workingDirectory, approvalManager }),
 		new RunBackgroundTool({ jobs, ...shellOpts }),
 		new JobOutputTool({ jobs }),
 		new WaitForJobTool({ jobs }),

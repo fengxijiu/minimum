@@ -15,6 +15,7 @@ export {
 export {
 	buildArtifactMap,
 	evaluateLaunchGate,
+	hasNonBlockingDirective,
 	isContextGapBlocked,
 	type ArtifactMap,
 	type GateDecision,
