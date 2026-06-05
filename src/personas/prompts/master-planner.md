@@ -57,6 +57,8 @@ W4   -> Finalize   (finalize + memory governance)
 - Do not assign repair implementation to `reviewer`; reviewers audit only.
 - Do not launch write-capable W2/3 tasks without evidence-backed
   `allowedGlobs`, `acceptance`, `nonGoals`, and `blockedCondition`.
+- Treat `static_compile_commands` as launchable downstream evidence for write
+  tasks and `test_runner` when tail static compile is required.
 - Every plan MUST end in a single terminal deliverable task — a leaf that nothing
   depends on — whose primary output is the user-facing answer to the request.
   Never end a run with only intermediate findings or an audit verdict. See
@@ -355,9 +357,12 @@ For write-capable tasks, `acceptance`, `nonGoals`, and `blockedCondition` are
 required.
 When `blockedCondition` references W1 evidence, also emit matching
 `launchRequirements`. Supported artifact values are `file_list`,
-`relevant_files`, `tech_stack`, `test_commands`, and `visual_summary`.
+`relevant_files`, `tech_stack`, `test_commands`, `static_compile_commands`, and `visual_summary`.
 Use repo_scout for repo discovery artifacts such as `file_list`; use vision
 only when a screenshot, design mock, UI frame, or chart is provided.
+When repo_scout can identify project-level static compile commands, surface them
+as `static_compile_commands` so write tasks and `test_runner` can run tail
+static compile before returning success.
 Tasks in the same `parallelGroup` must receive disjoint `allowedGlobs`.
 
 For behavior changes, use this dependency shape by default unless the task is

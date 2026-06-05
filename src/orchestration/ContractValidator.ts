@@ -55,6 +55,12 @@ export function validateContract(contract: TaskContract): ValidationResult {
 			errors.push("inputs.artifacts must be an array");
 		if (!Array.isArray(contract.inputs.constraints))
 			errors.push("inputs.constraints must be an array");
+		if (
+			contract.inputs.staticCompileCommands !== undefined &&
+			!Array.isArray(contract.inputs.staticCompileCommands)
+		) {
+			errors.push("inputs.staticCompileCommands must be an array when provided");
+		}
 	}
 
 	if (!Array.isArray(contract.acceptance) || contract.acceptance.length === 0)
@@ -78,6 +84,14 @@ export function validateContract(contract: TaskContract): ValidationResult {
 		errors.push("dependsOn must be an array (use [] for no deps)");
 
 	if (!contract.outputSchema) errors.push("outputSchema is required");
+	if (contract.postStaticCompile) {
+		if (typeof contract.postStaticCompile.required !== "boolean") {
+			errors.push("postStaticCompile.required must be boolean");
+		}
+		if (!Array.isArray(contract.postStaticCompile.commands)) {
+			errors.push("postStaticCompile.commands must be an array");
+		}
+	}
 
 	return { ok: errors.length === 0, errors };
 }

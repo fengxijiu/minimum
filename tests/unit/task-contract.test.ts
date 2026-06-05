@@ -40,6 +40,21 @@ describe("validateContract", () => {
 		expect(r.errors).toEqual([]);
 	});
 
+	it("accepts postStaticCompile when commands are provided", () => {
+		const r = validateContract(
+			makeContract({
+				inputs: {
+					userGoal: "image upload page",
+					artifacts: [],
+					constraints: [],
+					staticCompileCommands: ["npm run typecheck"],
+				},
+				postStaticCompile: { required: true, commands: ["npm run typecheck"] },
+			}),
+		);
+		expect(r.ok).toBe(true);
+	});
+
 	describe("required fields", () => {
 		const required = [
 			["taskId", { taskId: "" }],

@@ -36,7 +36,7 @@ import {
 } from "./PipelineArtifactStore.js";
 import { schedule, type WaveEvent } from "./WaveScheduler.js";
 import { stageLabel, stageName } from "./StageDisplay.js";
-import type { TaskResult, WorkerExecutor } from "./TaskRunner.js";
+import { extractXmlBlock, type TaskResult, type WorkerExecutor } from "./TaskRunner.js";
 import type { ChoicePayload, ConfirmationGate } from "../tools/choice/ConfirmationGate.js";
 
 /**
@@ -555,6 +555,11 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 			return { ok: false, result: fail(emit, "W1", e, allResults) };
 		}
 	}
+	const staticCompileCommands = await resolveStaticCompileCommands(opts.projectRoot, allResults);
+	const effectiveInputs: TaskInputs = {
+		...baseInputs,
+		...(staticCompileCommands.length > 0 && { staticCompileCommands }),
+	};
 
 	// ── W0.5: refine ──────────────────────────────────────────────────────────
 	let allContracts: TaskContract[] = [];
@@ -610,7 +615,7 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 			}
 		}
 		const refined = refineDag(dag, {
-			inputs: baseInputs,
+			inputs: effectiveInputs,
 			refinement,
 		});
 		allContracts = refined.contracts;
@@ -651,6 +656,7 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 			artifactPaths.contracts.push(contractsPath);
 			const confirmation = buildDagConfirmation({
 				userRequest: baseInputs.userGoal,
+				staticCompileCommands,
 				dag,
 				contracts: allContracts,
 				refineErrors,
@@ -754,6 +760,7 @@ async function askPipelineChoice(
 
 function buildDagConfirmation(args: {
 	userRequest: string;
+	staticCompileCommands: string[];
 	dag: CoarseDag;
 	contracts: TaskContract[];
 	refineErrors: ReturnType<typeof refineDag>["errors"];
@@ -771,6 +778,7 @@ function buildDagConfirmation(args: {
 		`Scan 感知结果: ${perception.length ? perception.map((r) => `${r.taskId}/${r.personaId}/${r.status}`).join(", ") : "无感知任务"}`,
 		`Refine contracts: ${args.contracts.length} 个，预计 Build 启动: ${runnable.length} 个`,
 		`launchRequirements: ${launchRequirementCount} 条`,
+		`static compile: ${args.staticCompileCommands.length ? args.staticCompileCommands.join(" ; ") : "none"}`,
 		`refine errors: ${args.refineErrors.length ? args.refineErrors.map((e) => `${e.taskId}: ${e.errors.join("; ")}`).join(" | ") : "无"}`,
 		`known issues: ${args.knownIssues.length ? args.knownIssues.slice(-3).join(" | ") : "无"}`,
 	];
@@ -833,6 +841,78 @@ function buildDagFlow(
 	return lines.join("\n");
 }
 
+type StaticCompileCandidate = {
+	command: string;
+	source?: string;
+	confidence: "high" | "medium" | "low";
+};
+
+async function resolveStaticCompileCommands(
+	projectRoot: string,
+	results: TaskResult[],
+): Promise<string[]> {
+	const observed = selectObservedStaticCompileCommands(results);
+	if (observed.length > 0) return observed;
+	return detectStaticCompileCommands(projectRoot);
+}
+
+function selectObservedStaticCompileCommands(results: TaskResult[]): string[] {
+	const candidates = results
+		.filter((result) => result.personaId === "repo_scout" && result.status === "ok")
+		.flatMap((result) => parseStaticCompileCommands(result.report));
+	if (candidates.length === 0) return [];
+	const rank = { high: 3, medium: 2, low: 1 };
+	const best = Math.max(...candidates.map((candidate) => rank[candidate.confidence]));
+	return [...new Set(candidates.filter((candidate) => rank[candidate.confidence] === best).map((candidate) => candidate.command))];
+}
+
+function parseStaticCompileCommands(report: string): StaticCompileCandidate[] {
+	const body = extractXmlBlock(report, "static_compile_commands");
+	if (!body) return [];
+	const commands: StaticCompileCandidate[] = [];
+	let current: StaticCompileCandidate | undefined;
+	for (const rawLine of body.split("\n")) {
+		const line = rawLine.trimEnd();
+		const commandMatch = /^\s*-\s*command:\s*(.+)$/.exec(line);
+		if (commandMatch) {
+			if (current?.command) commands.push(current);
+			current = { command: commandMatch[1]!.trim(), confidence: "medium" };
+			continue;
+		}
+		if (!current) continue;
+		const sourceMatch = /^\s*source:\s*(.+)$/.exec(line.trim());
+		if (sourceMatch) {
+			current.source = sourceMatch[1]!.trim();
+			continue;
+		}
+		const confidenceMatch = /^\s*confidence:\s*(high|medium|low)\s*$/i.exec(line.trim());
+		if (confidenceMatch) {
+			current.confidence = confidenceMatch[1]!.toLowerCase() as StaticCompileCandidate["confidence"];
+		}
+	}
+	if (current?.command) commands.push(current);
+	return commands;
+}
+
+async function detectStaticCompileCommands(projectRoot: string): Promise<string[]> {
+	const packageJsonPath = path.join(projectRoot, "package.json");
+	try {
+		const raw = await fs.readFile(packageJsonPath, "utf-8");
+		const parsed = JSON.parse(raw) as { scripts?: Record<string, unknown> };
+		if (typeof parsed.scripts?.typecheck === "string" && parsed.scripts.typecheck.trim()) {
+			return ["npm run typecheck"];
+		}
+	} catch {
+		// Best-effort only.
+	}
+	try {
+		await fs.access(path.join(projectRoot, "tsconfig.json"));
+		return ["npx tsc --noEmit"];
+	} catch {
+		return [];
+	}
+}
+
 function summarizeRawReport(raw: string): string {
 	const trimmed = raw.replace(/\s+/g, " ").trim();
 	return trimmed.length > 360 ? `${trimmed.slice(0, 360)}...` : trimmed;
@@ -874,6 +954,12 @@ function applyLaunchGate(args: {
 		}
 
 		const reason = decision.issues.map((issue) => issue.reason).join("; ");
+		if (decision.issues.some((issue) => issue.requirement.artifact === "static_compile_commands")) {
+			deferred.add(contract.taskId);
+			knownIssues.push(`W2/3 ${contract.taskId} deferred: ${reason}`);
+			emit({ type: "task_deferred", phase: "W2/3", taskId: contract.taskId, reason, ...(contract.blockedCondition && { blockedCondition: contract.blockedCondition }) });
+			continue;
+		}
 		if (!gateRetryKeys.has(contract.taskId)) {
 			gateRetryKeys.add(contract.taskId);
 			knownIssues.push(`W2/3 ${contract.taskId} launch gate missing context; allowing one same-contract retry: ${reason}`);

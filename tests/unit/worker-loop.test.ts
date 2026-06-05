@@ -207,6 +207,67 @@ describe("WorkerLoop", () => {
 		expect(events[0]).toMatch(/denylist|allowlist/);
 	});
 
+	it("allows write personas to run only whitelisted postStaticCompile shell commands", async () => {
+		const client = scriptedClient([
+			{
+				toolCalls: [{ id: "c1", name: "exec_shell", args: '{"command":"npm run typecheck"}' }],
+				usage: { promptTokens: 50, completionTokens: 10, totalTokens: 60 },
+			},
+			{
+				content: "<task_report><status>ok</status>done</task_report>",
+				usage: { promptTokens: 60, completionTokens: 20, totalTokens: 80 },
+			},
+		]);
+		const tools = recordingToolHost(["exec_shell"], () => ({ content: "typecheck ok" }));
+		const loop = new WorkerLoop({ client, tools, projectRoot: "/repo" });
+
+		const result = await loop.runTask({
+			systemPrompt: "sys",
+			userPrompt: "go",
+			persona: persona(),
+			contract: contract({
+				inputs: { userGoal: "", artifacts: [], constraints: [], staticCompileCommands: ["npm run typecheck"] },
+				postStaticCompile: { required: true, commands: ["npm run typecheck"] },
+			}),
+		});
+
+		expect(result.text).toContain("<task_report>");
+		expect(tools.calls).toHaveLength(1);
+		expect(tools.calls[0]?.name).toBe("exec_shell");
+	});
+
+	it("denies non-whitelisted postStaticCompile shell commands for write personas", async () => {
+		const client = scriptedClient([
+			{
+				toolCalls: [{ id: "c1", name: "exec_shell", args: '{"command":"npm test"}' }],
+				usage: { promptTokens: 50, completionTokens: 10, totalTokens: 60 },
+			},
+			{
+				content: "<task_report><status>blocked</status>done</task_report>",
+				usage: { promptTokens: 60, completionTokens: 20, totalTokens: 80 },
+			},
+		]);
+		const tools = recordingToolHost(["exec_shell"], () => ({ content: "ok" }));
+		const denies: string[] = [];
+		const loop = new WorkerLoop({ client, tools, projectRoot: "/repo" });
+
+		await loop.runTask({
+			systemPrompt: "sys",
+			userPrompt: "go",
+			persona: persona(),
+			contract: contract({
+				inputs: { userGoal: "", artifacts: [], constraints: [], staticCompileCommands: ["npm run typecheck"] },
+				postStaticCompile: { required: true, commands: ["npm run typecheck"] },
+			}),
+			onEvent: (ev) => {
+				if (ev.type === "tool_denied") denies.push(ev.reason);
+			},
+		});
+
+		expect(tools.calls).toHaveLength(0);
+		expect(denies[0]).toMatch(/static compile/i);
+	});
+
 	it("blocks writes that escape contract.allowedGlobs", async () => {
 		const client = scriptedClient([
 			{

@@ -5,6 +5,7 @@ export type LaunchArtifact =
 	| "relevant_files"
 	| "tech_stack"
 	| "test_commands"
+	| "static_compile_commands"
 	| "visual_summary";
 
 export interface LaunchRequirement {
@@ -42,6 +43,11 @@ export interface TaskContract {
 	blockedCondition?: string;
 	/** Structured W0.5 launch gate evidence required before scheduling. */
 	launchRequirements?: LaunchRequirement[];
+	/** Tail static-compile enforcement for this task, when required. */
+	postStaticCompile?: {
+		required: boolean;
+		commands: string[];
+	};
 
 	/** Output schema expected from the worker; worker personas use task_report. */
 	outputSchema: OutputSchema;
@@ -74,6 +80,8 @@ export interface TaskInputs {
 	artifacts: string[];
 	/** Constraint statements the worker must honor. */
 	constraints: string[];
+	/** Project-level static compile commands selected for this run. */
+	staticCompileCommands?: string[];
 }
 
 export interface TaskPathPolicy {

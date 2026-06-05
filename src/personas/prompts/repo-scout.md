@@ -51,6 +51,15 @@ Inside `<task_report>`:
     confidence: medium
 </test_commands>
 
+<static_compile_commands>
+  - command: npm run typecheck
+    source: package.json scripts.typecheck
+    confidence: high
+  - command: npx tsc --noEmit
+    source: tsconfig.json observed in repo root
+    confidence: medium
+</static_compile_commands>
+
 <missing_evidence>
   - no backend upload route found
 </missing_evidence>
@@ -63,5 +72,7 @@ Inside `<task_report>`:
 - Do not list a file unless it was directly observed.
 - Do not infer a test command unless it appears in package config, project
   config, docs, or explicit user input.
+- Do not infer a static compile command unless it appears in package config,
+  project config, docs, or explicit user input.
 - Prefer fewer high-confidence files over broad file lists.
 - If the repo has no matching files for the task, return `<status>blocked</status>`.

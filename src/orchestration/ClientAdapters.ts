@@ -350,6 +350,16 @@ export function createWorkerExecutor(
 			if (contract.inputs.constraints.length > 0) {
 				lines.push(`\n# Constraints\n${contract.inputs.constraints.map((c) => `- ${c}`).join("\n")}`);
 			}
+			if (contract.inputs.staticCompileCommands?.length) {
+				lines.push(
+					`\n# Static Compile Commands\n${contract.inputs.staticCompileCommands.map((command) => `- ${command}`).join("\n")}`,
+				);
+			}
+			if (contract.postStaticCompile?.required) {
+				lines.push(
+					"\n# Tail Static Compile Requirement\nAfter your main task work, run the static compile command(s) above and do not return a successful final <task_report> until they pass.",
+				);
+			}
 			lines.push(
 				"\nComplete the task. Your final response must consist only of the required XML blocks from the system prompt, with no prose before or after them.",
 			);

@@ -149,6 +149,7 @@ const LAUNCH_ARTIFACTS = new Set<LaunchArtifact>([
 	"relevant_files",
 	"tech_stack",
 	"test_commands",
+	"static_compile_commands",
 	"visual_summary",
 ]);
 
@@ -265,6 +266,8 @@ function assembleContract(
 	if (persona.readOnly === false && task.needsRefine && entry && !entry.blockedCondition) {
 		error = mergeError(error, `task ${task.id} needs_refine write contract requires explicit blockedCondition`);
 	}
+	const staticCompileCommands = opts.inputs.staticCompileCommands ?? [];
+	const requiresPostStaticCompile = task.personaId === "test_runner" || persona.readOnly === false;
 
 	const contract: TaskContract = {
 		taskId: task.id,
@@ -287,6 +290,12 @@ function assembleContract(
 		nonGoals,
 		blockedCondition,
 		...(entry?.launchRequirements && { launchRequirements: entry.launchRequirements }),
+		...(requiresPostStaticCompile && {
+			postStaticCompile: {
+				required: true,
+				commands: staticCompileCommands,
+			},
+		}),
 		outputSchema: persona.outputSchema,
 		parallelGroup: task.parallelGroup,
 		dependsOn: task.dependsOn,

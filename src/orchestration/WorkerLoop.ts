@@ -130,11 +130,13 @@ export function selectPersonaTools(
 	allTools: ToolDefinition[],
 	persona: Persona,
 	grantedMcpTools: string[],
+	contract?: TaskContract,
 ): ToolDefinition[] {
 	const granted = new Set(grantedMcpTools);
 	return allTools.filter(
 		(t) =>
 			checkTool(t.name, persona).ok ||
+			(allowPostStaticCompileShell(t.name, persona, contract) ?? false) ||
 			(granted.has(t.name) && !persona.toolDenylist.includes(t.name)),
 	);
 }
@@ -173,6 +175,12 @@ export class WorkerLoop {
 			allTools,
 			input.persona,
 			input.contract.grantedMcpTools ?? [],
+			input.contract,
+		);
+		const pendingStaticCompileCommands = new Set(
+			input.contract.postStaticCompile?.required
+				? input.contract.postStaticCompile.commands
+				: [],
 		);
 
 		// Per-task snapshot scope. Each runTask gets its own SnapshotManager so
@@ -225,6 +233,18 @@ export class WorkerLoop {
 			});
 
 			if (turn.toolCalls.length === 0) {
+				if (pendingStaticCompileCommands.size > 0) {
+					messages.push({
+						role: "user",
+						content: [
+							"Static compile is still required before you may finish this task.",
+							`Run and pass these command(s): ${[...pendingStaticCompileCommands].join("; ")}`,
+							"Do not finalize yet. Continue the task until those commands pass, then re-emit the final <task_report>.",
+						].join("\n"),
+					});
+					finalContent = turn.content;
+					continue;
+				}
 				// No more tool calls → model has produced its final answer.
 				finalContent = turn.content;
 				hitStepLimit = false;
@@ -244,6 +264,7 @@ export class WorkerLoop {
 					input.signal,
 					snapshots,
 					emit,
+					pendingStaticCompileCommands,
 				);
 				usage.toolCalls += 1;
 
@@ -288,6 +309,16 @@ export class WorkerLoop {
 				.find((m) => m.role === "assistant");
 			finalContent =
 				typeof lastAssistant?.content === "string" ? lastAssistant.content : "";
+		}
+		if (pendingStaticCompileCommands.size > 0) {
+			finalContent = [
+				"<task_report>",
+				"  <status>failed</status>",
+				`  <summary>Static compile did not pass before task completion. Pending commands: ${[...pendingStaticCompileCommands].join("; ")}</summary>`,
+				"</task_report>",
+			].join("\n");
+			hitStepLimit = false;
+			finishReason = "final";
 		}
 
 		if (hitStepLimit) {
@@ -411,17 +442,28 @@ export class WorkerLoop {
 		signal: AbortSignal | undefined,
 		snapshots: SnapshotManager,
 		emit: (e: WorkerEvent) => void,
+		pendingStaticCompileCommands: Set<string>,
 	): Promise<ExecuteOutcome> {
 		const name = call.function.name;
 
 		// Defense-in-depth: the model can hallucinate a tool name that isn't in
 		// its prompt. Deny before we ever reach the tool host.
 		const tool = checkTool(name, persona);
-		if (!tool.ok) {
+		const allowStaticCompileShell = allowPostStaticCompileShell(name, persona, contract);
+		if (!tool.ok && !allowStaticCompileShell) {
 			return { kind: "denied", reason: tool.reason };
 		}
 
 		const args = safeParseArgs(call);
+		if (allowStaticCompileShell) {
+			const command = typeof args.command === "string" ? args.command.trim() : "";
+			if (!command || !pendingStaticCompileCommands.has(command)) {
+				return {
+					kind: "denied",
+					reason: `exec_shell is restricted to configured static compile commands: ${(contract.postStaticCompile?.commands ?? []).join("; ")}`,
+				};
+			}
+		}
 		const isWrite = WRITE_TOOL_NAMES.has(name);
 		const targetPath =
 			isWrite && typeof args.path === "string" ? args.path : "";
@@ -548,6 +590,13 @@ export class WorkerLoop {
 				});
 			}
 		}
+		if (
+			allowStaticCompileShell &&
+			!executed.isError &&
+			typeof args.command === "string"
+		) {
+			pendingStaticCompileCommands.delete(args.command.trim());
+		}
 
 		return {
 			kind: "executed",
@@ -605,4 +654,16 @@ function safeParseArgs(call: ToolCall): Record<string, unknown> {
 	} catch {
 		return {};
 	}
+}
+
+function allowPostStaticCompileShell(
+	toolName: string,
+	persona: Persona,
+	contract: TaskContract | undefined,
+): boolean {
+	return (
+		toolName === "exec_shell" &&
+		persona.pathPolicy.canWrite &&
+		contract?.postStaticCompile?.required === true
+	);
 }

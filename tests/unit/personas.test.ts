@@ -251,6 +251,7 @@ describe("PersonaRegistry", () => {
 			const sys = getPersona("master_planner").systemPrompt;
 			expect(sys).toContain("repo_scout");
 			expect(sys).toContain("file_list");
+			expect(sys).toContain("static_compile_commands");
 			expect(sys.toLowerCase()).toContain("vision only");
 		});
 
@@ -261,6 +262,17 @@ describe("PersonaRegistry", () => {
 			expect(sys).toContain("Task Granularity Rules");
 			expect(sys).toContain("test_writer -> test_runner -> code_executor -> test_runner -> reviewer");
 			expect(sys).toContain("Do not assign discovery or file-list tasks to `code_executor`");
+		});
+
+		it("requires repo_scout to surface static compile commands", () => {
+			const sys = getPersona("repo_scout").systemPrompt;
+			expect(sys).toContain("<static_compile_commands>");
+			expect(sys).toContain("typecheck");
+		});
+
+		it("requires code_executor and test_runner to account for static compile", () => {
+			expect(getPersona("code_executor").systemPrompt).toContain("static compile");
+			expect(getPersona("test_runner").systemPrompt).toContain("static compile");
 		});
 
 		it("defines workload estimation and fan-out policy", () => {

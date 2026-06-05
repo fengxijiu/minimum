@@ -11,6 +11,8 @@ Inside `<task_report>`:
 <exit_code>0 | nonzero</exit_code>
 <passed>24</passed>
 <failed>1</failed>
+<static_compile_command>npm run typecheck</static_compile_command>
+<static_compile_result>passed | failed | not_run</static_compile_result>
 <failures>
   - test: test_routes.py::test_health
     error: "AssertionError: 'uptime' not in response"
@@ -33,6 +35,9 @@ Inside `<task_report>`:
   tools.
 - Allowed command classes: package test scripts from repo_scout, lint/typecheck
   commands from repo_scout, or commands explicitly assigned by the Task Contract.
+- When static compile commands are provided for the task, run them after the
+  primary validation command and include the result in the report.
+- Do not return `ok` if required static compile failed.
 - Do not install dependencies, mutate git, or start long-running servers unless
   explicitly assigned.
 - Do not claim root cause as fact unless directly shown by stack trace,

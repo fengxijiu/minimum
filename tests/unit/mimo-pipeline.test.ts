@@ -20,6 +20,13 @@ const OK = `<task_report><status>ok</status>done</task_report>`;
 const OK_WITH_FILE_LIST = `<task_report><status>ok</status><file_list>
 - src/upload.ts
 </file_list>done</task_report>`;
+const OK_WITH_FILE_LIST_AND_STATIC_COMPILE = `<task_report><status>ok</status><file_list>
+- src/upload.ts
+</file_list><static_compile_commands>
+- command: npm run typecheck
+  source: package.json scripts.typecheck
+  confidence: high
+</static_compile_commands>done</task_report>`;
 const BLOCKED_CONTEXT = `<task_report><status>blocked</status>missing T0-1.file_list</task_report>`;
 
 class ScriptedChoiceGate implements ConfirmationGate {
@@ -98,6 +105,11 @@ describe("runPipeline", () => {
 	let dir: string;
 	beforeEach(() => {
 		dir = fs.mkdtempSync(path.join(os.tmpdir(), "mimo-pipe-"));
+		fs.writeFileSync(
+			path.join(dir, "package.json"),
+			JSON.stringify({ scripts: { typecheck: "tsc --noEmit" } }, null, 2),
+			"utf-8",
+		);
 	});
 	afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
@@ -982,6 +994,99 @@ describe("extractFinalBrief", () => {
 	});
 });
 
+describe("static compile command resolution", () => {
+	let dir: string;
+	beforeEach(() => {
+		dir = fs.mkdtempSync(path.join(os.tmpdir(), "mimo-static-compile-"));
+	});
+	afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+	it("auto-detects static compile commands when repo_scout does not emit them", async () => {
+		fs.writeFileSync(
+			path.join(dir, "package.json"),
+			JSON.stringify({ scripts: { typecheck: "tsc --noEmit" } }, null, 2),
+			"utf-8",
+		);
+		const seen: TaskContract[] = [];
+		const executor: WorkerExecutor = {
+			run: async (contract) => {
+				seen.push(contract);
+				return contract.taskId === "T0-1" ? OK_WITH_FILE_LIST : OK;
+			},
+		};
+
+		const result = await runPipeline("image upload backend", {
+			projectRoot: dir,
+			planner: stubPlanner(),
+			executor,
+			choiceGate: continueGate(),
+		});
+
+		expect(result.ok).toBe(true);
+		const impl = seen.find((contract) => contract.taskId === "T2-1");
+		expect(impl?.inputs.staticCompileCommands).toEqual(["npm run typecheck"]);
+		expect(impl?.postStaticCompile).toEqual({
+			required: true,
+			commands: ["npm run typecheck"],
+		});
+	});
+
+	it("defers write tasks when no static compile commands can be resolved", async () => {
+		const events: PipelineEvent[] = [];
+		const ran: string[] = [];
+		const executor: WorkerExecutor = {
+			run: async (contract) => {
+				ran.push(contract.taskId);
+				return contract.taskId === "T0-1" ? OK_WITH_FILE_LIST : OK;
+			},
+		};
+
+		const result = await runPipeline("image upload backend", {
+			projectRoot: dir,
+			planner: stubPlanner(),
+			executor,
+			onEvent: (e) => events.push(e),
+			choiceGate: continueGate(),
+		});
+
+		expect(result.ok).toBe(true);
+		expect(ran).toEqual(["T0-1"]);
+		expect(events.some((e) => e.type === "task_deferred" && (e as any).taskId === "T2-1")).toBe(true);
+	});
+
+	it("prefers repo_scout static compile commands over auto-detected defaults", async () => {
+		fs.writeFileSync(
+			path.join(dir, "package.json"),
+			JSON.stringify({ scripts: { typecheck: "tsc --noEmit" } }, null, 2),
+			"utf-8",
+		);
+		const seen: TaskContract[] = [];
+		const executor: WorkerExecutor = {
+			run: async (contract) => {
+				seen.push(contract);
+				return contract.taskId === "T0-1"
+					? `<task_report><status>ok</status><static_compile_commands>
+- command: npx tsc --noEmit
+  source: repo scout observed tsconfig
+  confidence: high
+</static_compile_commands>done</task_report>`
+					: OK;
+			},
+		};
+
+		const result = await runPipeline("image upload backend", {
+			projectRoot: dir,
+			planner: stubPlanner(),
+			executor,
+			choiceGate: continueGate(),
+		});
+
+		expect(result.ok).toBe(true);
+		const impl = seen.find((contract) => contract.taskId === "T2-1");
+		expect(impl?.inputs.staticCompileCommands).toEqual(["npx tsc --noEmit"]);
+	});
+});
+
 describe("leafTaskIdsOf", () => {
 	it("returns task ids that nothing depends on", () => {
 		const mk = (taskId: string, dependsOn: string[]): TaskContract =>
@@ -996,8 +1101,14 @@ describe("W4 delivery", () => {
 		const events: PipelineEvent[] = [];
 		const deliver = vi.fn(async () => `<final_brief># Result\n\nRecommend adding p95 latency + error-rate metrics.</final_brief>`);
 		const synthesize = vi.fn(async () => `<conclusion>legacy fallback should stay unused</conclusion>`);
+		const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mimo-w4-"));
+		fs.writeFileSync(
+			path.join(projectRoot, "package.json"),
+			JSON.stringify({ scripts: { typecheck: "tsc --noEmit" } }, null, 2),
+			"utf-8",
+		);
 		const result = await runPipeline("explore what metrics to add", {
-			projectRoot: fs.mkdtempSync(path.join(os.tmpdir(), "mimo-w4-")),
+			projectRoot,
 			planner: stubPlanner({ deliver, synthesize }),
 			executor: okExecutor(),
 			onEvent: (e) => events.push(e),
@@ -1024,8 +1135,14 @@ describe("W4 delivery", () => {
 
 	it("still completes when deliver throws (finalBrief omitted)", async () => {
 		const events: PipelineEvent[] = [];
+		const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mimo-w4b-"));
+		fs.writeFileSync(
+			path.join(projectRoot, "package.json"),
+			JSON.stringify({ scripts: { typecheck: "tsc --noEmit" } }, null, 2),
+			"utf-8",
+		);
 		const result = await runPipeline("explore what metrics to add", {
-			projectRoot: fs.mkdtempSync(path.join(os.tmpdir(), "mimo-w4b-")),
+			projectRoot,
 			planner: stubPlanner({
 				deliver: async () => {
 					throw new Error("delivery model unavailable");
@@ -1060,8 +1177,14 @@ describe("master capability grants (W0.5 → worker)", () => {
 
 	it("carries a catalog-valid grant onto the launched contract", async () => {
 		const seen: string[] = [];
+		const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mimo-grant-"));
+		fs.writeFileSync(
+			path.join(projectRoot, "package.json"),
+			JSON.stringify({ scripts: { typecheck: "tsc --noEmit" } }, null, 2),
+			"utf-8",
+		);
 		const result = await runPipeline("build an upload endpoint", {
-			projectRoot: fs.mkdtempSync(path.join(os.tmpdir(), "mimo-grant-")),
+			projectRoot,
 			planner: grantingPlanner(["mcp__gh__create_issue"]),
 			executor: capturingExecutor(seen),
 			onEvent: () => {},
@@ -1074,8 +1197,14 @@ describe("master capability grants (W0.5 → worker)", () => {
 
 	it("strips a grant that is not in the catalog before launch", async () => {
 		const seen: string[] = [];
+		const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mimo-grant2-"));
+		fs.writeFileSync(
+			path.join(projectRoot, "package.json"),
+			JSON.stringify({ scripts: { typecheck: "tsc --noEmit" } }, null, 2),
+			"utf-8",
+		);
 		const result = await runPipeline("build an upload endpoint", {
-			projectRoot: fs.mkdtempSync(path.join(os.tmpdir(), "mimo-grant2-")),
+			projectRoot,
 			planner: grantingPlanner(["mcp__gh__nope"]),
 			executor: capturingExecutor(seen),
 			onEvent: () => {},

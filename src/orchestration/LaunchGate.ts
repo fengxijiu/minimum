@@ -19,6 +19,7 @@ const ARTIFACT_TAGS: LaunchArtifact[] = [
 	"relevant_files",
 	"tech_stack",
 	"test_commands",
+	"static_compile_commands",
 	"visual_summary",
 ];
 
@@ -41,6 +42,17 @@ export function evaluateLaunchGate(
 	artifacts: ArtifactMap,
 ): GateDecision {
 	const issues: GateIssue[] = [];
+	if (contract.postStaticCompile?.required && contract.postStaticCompile.commands.length === 0) {
+		issues.push({
+			taskId: contract.taskId,
+			requirement: {
+				sourceTaskId: contract.dependsOn[0] ?? contract.taskId,
+				artifact: "static_compile_commands",
+				required: true,
+			},
+			reason: "static compile command is unavailable or incomplete",
+		});
+	}
 	const byTask = new Map(results.map((r) => [r.taskId, r]));
 	for (const requirement of contract.launchRequirements ?? []) {
 		if (!requirement.required) continue;

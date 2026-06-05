@@ -95,6 +95,13 @@ describe("compileRefinement", () => {
 		expect(r.ok).toBe(false);
 		if (!r.ok) expect(r.error).toContain("launchRequirements");
 	});
+
+	it("accepts static_compile_commands in launchRequirements", () => {
+		const r = compileRefinement(
+			`<refine>{"tasks":[{"taskId":"T2-1","allowedGlobs":["a.ts"],"launchRequirements":[{"sourceTaskId":"T0-1","artifact":"static_compile_commands","required":true}]}]}</refine>`,
+		);
+		expect(r.ok).toBe(true);
+	});
 });
 
 describe("refineDag", () => {
@@ -201,12 +208,47 @@ describe("refineDag", () => {
 
 	it("merges refinement constraints onto base constraints", () => {
 		const { contracts } = refineDag(mkDag(), {
-			inputs: baseInputs,
+			inputs: { ...baseInputs, staticCompileCommands: ["npm run typecheck"] },
 			refinement: refinement([
 				{ taskId: "T2-1", allowedGlobs: ["src/upload.ts"], constraints: ["use zod"] },
 			]),
 		});
 		expect(contracts[0]!.inputs.constraints).toEqual(["no new runtime deps", "use zod"]);
+		expect(contracts[0]!.inputs.staticCompileCommands).toEqual(["npm run typecheck"]);
+		expect(contracts[0]!.postStaticCompile).toEqual({
+			required: true,
+			commands: ["npm run typecheck"],
+		});
+	});
+
+	it("enables postStaticCompile for test_runner contracts", () => {
+		const dag = mkDag({
+			phases: [
+				{
+					id: "P2",
+					name: "validation",
+					tasks: [
+						{
+							id: "T2-2",
+							personaId: "test_runner",
+							objective: "run upload validation",
+							parallelGroup: "validation",
+							dependsOn: ["T2-1"],
+							needsRefine: false,
+						},
+					],
+				},
+			],
+		});
+		const { contracts, errors } = refineDag(dag, {
+			inputs: { ...baseInputs, staticCompileCommands: ["npm run typecheck"] },
+			refinement: refinement([]),
+		});
+		expect(errors).toEqual([]);
+		expect(contracts[0]!.postStaticCompile).toEqual({
+			required: true,
+			commands: ["npm run typecheck"],
+		});
 	});
 
 	it("passes persisted contextPack paths into task inputs", () => {
