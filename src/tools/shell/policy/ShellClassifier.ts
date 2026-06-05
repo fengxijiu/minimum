@@ -152,7 +152,7 @@ function classifySegment(
 
 	let touchesSensitive = false;
 	try {
-		touchesSensitive = hasSensitivePathArgs(argv);
+		touchesSensitive = hasSensitivePathArgs(argv, opts.cwd);
 	} catch {
 		// best-effort
 	}

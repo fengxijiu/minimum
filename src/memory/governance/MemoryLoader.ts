@@ -14,7 +14,7 @@ import type { Manifest } from "./types.js";
  * stays bounded even if a project accumulates large canonical files.
  */
 
-export type TaskType = "frontend" | "backend" | "debugging" | "mixed";
+export type TaskType = "frontend" | "backend" | "debugging" | "mixed" | "general";
 
 const DEFAULT_MAX_TOKENS = 8_000;
 

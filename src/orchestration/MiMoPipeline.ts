@@ -602,12 +602,19 @@ async function runScanOnly(
 
 	const scoutContract: TaskContract = {
 		taskId: "scan-1",
+		phase: "P1",
+		epicId: "scan-only",
 		personaId: "repo_scout",
-		systemPrompt: getPersona("repo_scout").systemPrompt,
-		userPrompt: userRequest,
-		allowedGlobs: [],
-		acceptance: [],
+		objective: userRequest,
 		inputs: baseInputs,
+		pathPolicy: { allowedGlobs: [], forbiddenGlobs: [] },
+		acceptance: [],
+		outputSchema: getPersona("repo_scout").outputSchema,
+		parallelGroup: "P1-scan",
+		dependsOn: [],
+		grantedSkills: [],
+		grantedMcpTools: [],
+		abortOnConflict: false,
 	};
 
 	try {
@@ -665,13 +672,16 @@ async function runDirectEdit(
 		phases: [{
 			id: "P1",
 			name: "perception",
-			tasks: [{
-				taskId: "scout-1",
-				personaId: "repo_scout",
-				dependsOn: [],
-				allowedGlobs: [],
-				acceptance: [],
-			}],
+		tasks: [{
+			id: "scout-1",
+			personaId: "repo_scout",
+			objective: userRequest,
+			parallelGroup: "P1-scout",
+			dependsOn: [],
+			needsRefine: false,
+			allowedGlobs: [],
+			acceptance: [],
+		}],
 		}],
 	};
 	const { contracts: perceptionContracts } = refineDag(perceptionDag, {
@@ -690,12 +700,19 @@ async function runDirectEdit(
 	emit({ type: "phase_start", phase: "W2/3", label: stageName("W2/3") });
 	const editContract: TaskContract = {
 		taskId: "edit-1",
+		phase: "P2",
+		epicId: "direct-edit",
 		personaId: "code_executor",
-		systemPrompt: getPersona("code_executor").systemPrompt,
-		userPrompt: userRequest,
-		allowedGlobs: ["**"],
-		acceptance: [],
+		objective: userRequest,
 		inputs: baseInputs,
+		pathPolicy: { allowedGlobs: ["**"], forbiddenGlobs: [] },
+		acceptance: [],
+		outputSchema: getPersona("code_executor").outputSchema,
+		parallelGroup: "P2-edit",
+		dependsOn: ["scout-1"],
+		grantedSkills: [],
+		grantedMcpTools: [],
+		abortOnConflict: false,
 	};
 	try {
 		const results = await runWaves([editContract], opts, emit, refreshScheduler);
