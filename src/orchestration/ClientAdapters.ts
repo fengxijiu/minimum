@@ -1,6 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+	availableCanonicalMemoryTargets,
+	defaultMemorySectionForCandidate,
+	defaultMemoryTargetForCandidate,
+} from "../memory/governance/index.js";
+import type { MemoryCandidate } from "../memory/governance/types.js";
 import type {
 	IApprovalManager,
 	IStreamingClient,
@@ -191,9 +197,18 @@ export function createPlannerBridge(
 					await sys(),
 					{
 						role: "user",
-						content: `# Task Reports\n${renderResults(results)}\n\n# Memory Candidates\n${candidates
-							.map((c) => `- ${c.sourceTask}.${c.persona} [${c.confidence}] ${c.scope}`)
-							.join("\n")}\n\n# Current Canonical Memory\n${canonicalText}\n\nFinalize now. Output a single <finalize> block.`,
+						content: [
+							`# Task Reports\n${renderResults(results)}`,
+							`## Memory Candidates\n${renderFinalizeCandidates(candidates)}`,
+							`## Canonical Target Choices\n${availableCanonicalMemoryTargets().map((target) => `- ${target}`).join("\n")}`,
+							`## Current Canonical Memory\n${canonicalText}`,
+							[
+								"Finalize now. Output a single <finalize> block.",
+								"Prefer merge or update when the candidate contains durable, evidence-backed project knowledge.",
+								"Use archive or reject only when you are intentionally discarding or superseding a candidate.",
+								"Every merge or update decision must choose one target from the canonical target choices and should include a section.",
+							].join(" "),
+						].join("\n\n"),
 					},
 				],
 				max,
@@ -241,6 +256,25 @@ export function createPlannerBridge(
 				max,
 			),
 	};
+}
+
+function renderFinalizeCandidates(candidates: MemoryCandidate[]): string {
+	if (candidates.length === 0) return "(none)";
+	return candidates.map((candidate) =>
+		JSON.stringify(
+			{
+				candidateId: `${candidate.sourceTask}.${candidate.persona}`,
+				scope: candidate.scope,
+				confidence: candidate.confidence,
+				relatedFiles: candidate.relatedFiles,
+				suggestedTarget: defaultMemoryTargetForCandidate(candidate),
+				suggestedSection: defaultMemorySectionForCandidate(candidate),
+				body: candidate.body,
+			},
+			null,
+			2,
+		),
+	).join("\n\n");
 }
 
 /**

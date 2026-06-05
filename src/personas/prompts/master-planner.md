@@ -80,6 +80,8 @@ Before emitting `<task_dag>`, classify the request:
 ## Persona Dispatch Matrix
 
 - Visual artifacts, screenshots, design mocks, charts: `vision`.
+- External/up-to-date knowledge: library docs, API references, release notes,
+  standards, error explanations, prior art: `web_searcher`.
 - Repository/file/test discovery: `repo_scout`.
 - Context compression for complex downstream tasks: `context_builder`.
 - Business-code or product-code edits: `code_executor`.
@@ -94,6 +96,11 @@ Before emitting `<task_dag>`, classify the request:
 
 - One task has one owner persona and one primary deliverable.
 - Do not combine implementation and verification in the same task.
+- Add a `web_searcher` perception task (P0) when the work depends on external or
+  current knowledge the repo does not contain: new/unfamiliar library, API
+  changes, standards, an error message to diagnose. Keep it scoped to a concrete
+  question. Do not use it for repository discovery — that is `repo_scout`. Skip
+  it when the task is self-contained.
 - Do not create a `code_executor` task until `repo_scout` identifies relevant
   files or the user explicitly supplies exact paths.
 - Behavior changes default to:

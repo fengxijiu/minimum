@@ -157,11 +157,16 @@ describe("createPlannerBridge", () => {
 		expect(userMessage).toContain("Decision: APPROVED_TO_W4");
 	});
 
+<<<<<<< HEAD
 	it("uses master planner deliver input for the final brief", async () => {
+=======
+	it("passes structured memory candidate evidence and target hints to finalize", async () => {
+>>>>>>> 936136802deda67312072e6f66cbb3da77b6ee28
 		const calls: any[] = [];
 		const client: CompletionClient = {
 			async *streamChat(options) {
 				calls.push(options);
+<<<<<<< HEAD
 				yield { type: "content", content: FINAL_BRIEF };
 			},
 		};
@@ -188,6 +193,35 @@ describe("createPlannerBridge", () => {
 		expect(userMessage).toContain("missing screenshots");
 		expect(userMessage).toContain("## Finalize Governance Report");
 		expect(userMessage).toContain("<final_brief>");
+=======
+				yield { type: "content", content: FINALIZE };
+			},
+		};
+		const planner = createPlannerBridge(client);
+		await planner.finalize(
+			[{ taskId: "T2-1", personaId: "code_executor", status: "ok", report: "done", memoryCandidateBody: undefined, errors: [], durationMs: 1 }],
+			[{
+				sourceTask: "T2-1",
+				persona: "code_executor",
+				scope: "backend/upload",
+				confidence: "high",
+				relatedFiles: ["src/upload.ts"],
+				body: "## Finding\nUse multer.\n",
+			}],
+			"CANONICAL MEMORY",
+		);
+		const userMessage = calls[0]!.messages.find((m: any) => m.role === "user")!.content;
+		expect(userMessage).toContain("## Memory Candidates");
+		expect(userMessage).toContain('"candidateId": "T2-1.code_executor"');
+		expect(userMessage).toContain('"relatedFiles": [');
+		expect(userMessage).toContain("Use multer.");
+		expect(userMessage).toContain('"suggestedTarget": "backend.md"');
+		expect(userMessage).toContain('"suggestedSection": "Backend"');
+		expect(userMessage).toContain("## Canonical Target Choices");
+		expect(userMessage).toContain("architecture.md");
+		expect(userMessage).toContain("backend.md");
+		expect(userMessage).toContain("Finalize now.");
+>>>>>>> 936136802deda67312072e6f66cbb3da77b6ee28
 	});
 });
 
