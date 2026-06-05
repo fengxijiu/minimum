@@ -9,7 +9,7 @@ import type {
 import type { BillingMode } from "../clients/MiMoPricing.js";
 import type { ICodeValidator } from "../types/validator.js";
 import { getPersona } from "../personas/PersonaRegistry.js";
-import { loadProjectSkillPrompt } from "../personas/PersonaSkillMap.js";
+import { loadProjectSkillPrompt, loadGrantedSkillPrompt } from "../personas/PersonaSkillMap.js";
 import type { ChatMessage } from "../types/common.js";
 import type { MissionCheckInput } from "./MissionChecker.js";
 import type { CoarseDag } from "./TaskContract.js";
@@ -194,8 +194,37 @@ export function createPlannerBridge(
 				],
 				max,
 			),
+		synthesize: async (userRequest, results) =>
+			collectText(
+				client,
+				[
+					{ role: "system", content: SYNTHESIS_SYS },
+					{
+						role: "user",
+						content: `# Original Goal\n${userRequest}\n\n# Task Reports\n${renderResults(
+							results,
+						)}\n\nWrite the conclusion now. Output a single <conclusion> block.`,
+					},
+				],
+				max,
+			),
 	};
 }
+
+/**
+ * System prompt for the post-W4 synthesis call. Kept separate from the master
+ * planner persona so it is free of the planner's strict XML-block constraints —
+ * its only job is to read the task reports and tell the user, in plain Markdown,
+ * what the run actually produced relative to their goal.
+ */
+const SYNTHESIS_SYS = [
+	"You summarize the outcome of a completed multi-agent run for the user who set the goal.",
+	"You are given the original goal and each task's final report.",
+	"Write a concise conclusion that answers the goal directly: what was accomplished, the key findings, and the concrete deliverables or recommendations.",
+	"Lead with the answer, not a play-by-play of which task did what. Prefer a short paragraph plus a tight bullet list of concrete results.",
+	"Ground every claim in the task reports — never invent results that are not present.",
+	"Output exactly one <conclusion> block containing Markdown, with no prose before or after it.",
+].join(" ");
 
 export interface WorkerExecutorOptions {
 	maxTokens?: number;
@@ -267,7 +296,12 @@ export function createWorkerExecutor(
 					objective: contract.objective,
 				})
 				: "";
-			const systemPrompt = projectSkills ? `${persona.systemPrompt}\n\n${projectSkills}` : persona.systemPrompt;
+			const grantedSkills = opts.projectRoot
+				? await loadGrantedSkillPrompt(opts.projectRoot, contract.grantedSkills ?? [])
+				: "";
+			const systemPrompt = [persona.systemPrompt, projectSkills, grantedSkills]
+				.filter((s) => s && s.trim())
+				.join("\n\n");
 			const lines = [
 				`# Objective\n${contract.objective}`,
 				`\n# Acceptance\n${contract.acceptance.map((a) => `- ${a}`).join("\n")}`,

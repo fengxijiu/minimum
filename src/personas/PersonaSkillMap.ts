@@ -100,6 +100,22 @@ export async function loadProjectSkillPrompt(input: {
 	return parts.join("\n");
 }
 
+/**
+ * Full-body prompt for master-granted skills, independent of the
+ * persona-skill-map. These come from the "invisible pool" the master grants per
+ * task; the framing is neutral so the worker sees only the capability, not the
+ * grant mechanism.
+ */
+export async function loadGrantedSkillPrompt(projectRoot: string, skillIds: string[]): Promise<string> {
+	if (!skillIds.length) return "";
+	const bodies: string[] = [];
+	for (const id of skillIds) {
+		const body = await readLearnedSkillBody(projectRoot, id);
+		if (body) bodies.push(`<!-- granted-skill:${id} -->\n${body}`);
+	}
+	return bodies.length ? `# Granted Skills\n\n${bodies.join("\n\n")}` : "";
+}
+
 async function readLearnedSkillBrief(projectRoot: string, skillId: string): Promise<string> {
 	const file = path.join(projectRoot, ".minimum", "skills", "learned", skillId, "SKILL.md");
 	try {
