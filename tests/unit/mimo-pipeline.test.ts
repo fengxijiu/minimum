@@ -3,10 +3,13 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+	extractConclusion,
+	leafTaskIdsOf,
 	runPipeline,
 	type PipelineEvent,
 	type PlannerBridge,
 } from "../../src/orchestration/index.js";
+import type { TaskContract } from "../../src/orchestration/index.js";
 import type { CoarseDag } from "../../src/orchestration/index.js";
 import type { TaskResult, WorkerExecutor } from "../../src/orchestration/index.js";
 import { listCandidates } from "../../src/memory/governance/index.js";
@@ -84,6 +87,7 @@ Reason:
 - Ready.
 `,
 		finalize: async () => `<finalize>{"memory_decisions":[]}</finalize>`,
+		synthesize: async () => `<conclusion>Done.</conclusion>`,
 		...over,
 	};
 }
@@ -303,7 +307,7 @@ describe("runPipeline", () => {
 
 		expect(result.ok).toBe(true);
 		expect(refine).toHaveBeenCalledTimes(2);
-		expect(refine.mock.calls[1]![3]).toContain("rerun_refine");
+		expect(refine.mock.calls[1]![4]).toContain("rerun_refine");
 		expect(gate.payloads).toHaveLength(2);
 		expect(fs.existsSync(path.join(dir, ".minimum", "tasks", "image_upload", "confirmations", "initial-refine-retry.md"))).toBe(true);
 	});
@@ -627,7 +631,7 @@ Reason:
 		const refineFeedbacks: Array<string | undefined> = [];
 		let refineCalls = 0;
 		const planner = stubPlanner({
-			refine: async (_dag, _perception, _memory, feedback) => {
+			refine: async (_dag, _perception, _memory, _catalog, feedback) => {
 				refineFeedbacks.push(feedback);
 				refineCalls++;
 				if (refineCalls === 1) return `<refine>{"tasks":[]}</refine>`;
@@ -924,6 +928,7 @@ describe("MiMoPipeline W0 compile retry", () => {
 			refine: vi.fn(async () => `<refine>{"tasks":[]}</refine>`),
 			checkMission: vi.fn(async () => "Decision: APPROVED_TO_W4"),
 			finalize: vi.fn(async () => `<finalize>{"memory_decisions":[]}</finalize>`),
+			synthesize: vi.fn(async () => `<conclusion>Done.</conclusion>`),
 		};
 	}
 
@@ -952,5 +957,112 @@ describe("MiMoPipeline W0 compile retry", () => {
 			expect(errEvent.error).toMatch(/retry:/);
 		}
 		expect(result.ok).toBe(false);
+	});
+});
+
+describe("extractConclusion", () => {
+	it("pulls the body out of a <conclusion> block", () => {
+		expect(extractConclusion("noise <conclusion>\n  the answer\n</conclusion> tail")).toBe("the answer");
+	});
+	it("returns undefined when absent or empty", () => {
+		expect(extractConclusion("<finalize>{}</finalize>")).toBeUndefined();
+		expect(extractConclusion("<conclusion>   </conclusion>")).toBeUndefined();
+	});
+});
+
+describe("leafTaskIdsOf", () => {
+	it("returns task ids that nothing depends on", () => {
+		const mk = (taskId: string, dependsOn: string[]): TaskContract =>
+			({ taskId, dependsOn }) as unknown as TaskContract;
+		const leaves = leafTaskIdsOf([mk("T0-1", []), mk("T1-1", ["T0-1"]), mk("T2-1", ["T1-1"])]);
+		expect(leaves).toEqual(["T2-1"]);
+	});
+});
+
+describe("W4 synthesis", () => {
+	it("calls synthesize and emits pipeline_complete with goal, conclusion, and leaf ids", async () => {
+		const events: PipelineEvent[] = [];
+		const synthesize = vi.fn(async () => `<conclusion>Recommend adding p95 latency + error-rate metrics.</conclusion>`);
+		const result = await runPipeline("explore what metrics to add", {
+			projectRoot: fs.mkdtempSync(path.join(os.tmpdir(), "mimo-w4-")),
+			planner: stubPlanner({ synthesize }),
+			executor: okExecutor(),
+			onEvent: (e) => events.push(e),
+			choiceGate: continueGate(),
+		});
+		expect(result.ok).toBe(true);
+		expect(synthesize).toHaveBeenCalledOnce();
+		const complete = events.find((e) => e.type === "pipeline_complete");
+		expect(complete?.type).toBe("pipeline_complete");
+		if (complete?.type === "pipeline_complete") {
+			expect(complete.goal).toBe("explore what metrics to add");
+			expect(complete.conclusion).toBe("Recommend adding p95 latency + error-rate metrics.");
+			expect(complete.leafTaskIds).toContain("T2-1");
+			expect(complete.artifacts?.some((a) => a.endsWith("dag.json"))).toBe(true);
+		}
+	});
+
+	it("still completes when synthesize throws (conclusion omitted)", async () => {
+		const events: PipelineEvent[] = [];
+		const result = await runPipeline("explore what metrics to add", {
+			projectRoot: fs.mkdtempSync(path.join(os.tmpdir(), "mimo-w4b-")),
+			planner: stubPlanner({
+				synthesize: async () => {
+					throw new Error("synthesis model unavailable");
+				},
+			}),
+			executor: okExecutor(),
+			onEvent: (e) => events.push(e),
+			choiceGate: continueGate(),
+		});
+		expect(result.ok).toBe(true);
+		const complete = events.find((e) => e.type === "pipeline_complete");
+		if (complete?.type === "pipeline_complete") {
+			expect(complete.conclusion).toBeUndefined();
+			expect(complete.goal).toBe("explore what metrics to add");
+		}
+	});
+});
+
+describe("master capability grants (W0.5 → worker)", () => {
+	const CATALOG = { skills: [], mcpTools: [{ name: "mcp__gh__create_issue", description: "open issue" }] };
+
+	function grantingPlanner(grantedMcpTools: string[]): PlannerBridge {
+		return stubPlanner({
+			refine: async () =>
+				`<refine>{"tasks":[{"taskId":"T2-1","allowedGlobs":["src/upload.ts"],"acceptance":["returns 201"],"blockedCondition":"blocked if T0-1.file_list is unavailable or incomplete","grantedMcpTools":${JSON.stringify(grantedMcpTools)}}]}</refine>`,
+		});
+	}
+
+	function capturingExecutor(sink: string[]): WorkerExecutor {
+		return { async run(contract) { sink.push(...contract.grantedMcpTools); return OK; } };
+	}
+
+	it("carries a catalog-valid grant onto the launched contract", async () => {
+		const seen: string[] = [];
+		const result = await runPipeline("build an upload endpoint", {
+			projectRoot: fs.mkdtempSync(path.join(os.tmpdir(), "mimo-grant-")),
+			planner: grantingPlanner(["mcp__gh__create_issue"]),
+			executor: capturingExecutor(seen),
+			onEvent: () => {},
+			choiceGate: continueGate(),
+			grantableCatalog: CATALOG,
+		});
+		expect(result.ok).toBe(true);
+		expect(seen).toContain("mcp__gh__create_issue");
+	});
+
+	it("strips a grant that is not in the catalog before launch", async () => {
+		const seen: string[] = [];
+		const result = await runPipeline("build an upload endpoint", {
+			projectRoot: fs.mkdtempSync(path.join(os.tmpdir(), "mimo-grant2-")),
+			planner: grantingPlanner(["mcp__gh__nope"]),
+			executor: capturingExecutor(seen),
+			onEvent: () => {},
+			choiceGate: continueGate(),
+			grantableCatalog: CATALOG,
+		});
+		expect(result.ok).toBe(true);
+		expect(seen).not.toContain("mcp__gh__nope");
 	});
 });

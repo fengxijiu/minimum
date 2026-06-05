@@ -16,6 +16,7 @@ import { compileCoarse, classifyTaskType } from "./TaskCompiler.js";
 import { buildWaves } from "./TaskGraph.js";
 import type { CoarseDag, TaskContract, TaskInputs } from "./TaskContract.js";
 import { compileRefinement, refineDag, type RefinementEntry } from "./Refiner.js";
+import { validateGrants, type GrantableCatalog } from "./CapabilityCatalog.js";
 import { buildArtifactMap, evaluateLaunchGate, isContextGapBlocked } from "./LaunchGate.js";
 import {
 	compileMissionCheck,
@@ -76,7 +77,18 @@ export type PipelineEvent =
 	| { type: "gate_retry"; phase: "W2/3"; taskId: string; attempt: 1; reason: string }
 	| { type: "task_deferred"; phase: "W2/3"; taskId: string; reason: string; blockedCondition?: string }
 	| { type: "finalize_done"; report: FinalizeReport }
-	| { type: "pipeline_complete"; results: TaskResult[] }
+	| {
+			type: "pipeline_complete";
+			results: TaskResult[];
+			/** Original user goal, echoed so the summary can restate it. */
+			goal?: string;
+			/** W4 human-readable conclusion answering the goal (from synthesize). */
+			conclusion?: string;
+			/** Terminal task ids (nothing depends on them) — the actual deliverables. */
+			leafTaskIds?: string[];
+			/** Persisted artifact file paths produced by the run. */
+			artifacts?: string[];
+	  }
 	| { type: "pipeline_error"; phase: PipelinePhase; error: string };
 
 /** Planner/checker LLM touchpoints used by the pipeline. */
@@ -89,7 +101,13 @@ export interface PlannerBridge {
 	 */
 	compile(userRequest: string, memoryPrefix: string, feedback?: string): Promise<string>;
 	/** W0.5: returns master output containing a <refine> block. */
-	refine(dag: CoarseDag, perception: TaskResult[], memoryPrefix: string, feedback?: string): Promise<string>;
+	refine(
+		dag: CoarseDag,
+		perception: TaskResult[],
+		memoryPrefix: string,
+		catalog?: GrantableCatalog,
+		feedback?: string,
+	): Promise<string>;
 	/** W3.5: returns a mission checker Markdown report. */
 	checkMission(input: MissionCheckInput, feedback?: string): Promise<string>;
 	/** W4: returns master output containing a <finalize> block. */
@@ -98,6 +116,26 @@ export interface PlannerBridge {
 		candidates: MemoryCandidate[],
 		canonicalText: string,
 	): Promise<string>;
+	/**
+	 * Post-W4: compose a concise, human-readable conclusion answering the
+	 * original goal from the task reports. Returns text containing a single
+	 * <conclusion> block (Markdown body). Best-effort — the pipeline tolerates
+	 * an empty or malformed result and simply omits the conclusion.
+	 */
+	synthesize(userRequest: string, results: TaskResult[]): Promise<string>;
+}
+
+/** Pull the Markdown body out of a <conclusion> block, or undefined if absent/empty. */
+export function extractConclusion(text: string): string | undefined {
+	const m = /<conclusion>([\s\S]*?)<\/conclusion>/i.exec(text);
+	const body = (m?.[1] ?? "").trim();
+	return body || undefined;
+}
+
+/** Task ids that no other contract depends on — the terminal deliverables of the DAG. */
+export function leafTaskIdsOf(contracts: TaskContract[]): string[] {
+	const referenced = new Set(contracts.flatMap((c) => c.dependsOn));
+	return contracts.map((c) => c.taskId).filter((id) => !referenced.has(id));
 }
 
 /**
@@ -117,6 +155,8 @@ export interface PipelineOptions {
 	/** Automatic repair loops before the cap gate. Defaults to {@link DEFAULT_MAX_MISSION_REPAIR_LOOPS}. */
 	maxMissionRepairLoops?: number;
 	choiceGate?: ConfirmationGate;
+	/** Catalog of grantable skills + MCP tools, injected into W0.5 refine. */
+	grantableCatalog?: GrantableCatalog;
 }
 
 export interface PipelineResult {
@@ -386,7 +426,28 @@ export async function runPipeline(
 		return fail(emit, "W4", e, allResults);
 	}
 
-	emit({ type: "pipeline_complete", results: allResults });
+	// Best-effort synthesis: compose a readable conclusion answering the goal.
+	// A failure here must never sink an otherwise-complete pipeline.
+	let conclusion: string | undefined;
+	try {
+		conclusion = extractConclusion(await opts.planner.synthesize(userRequest, allResults));
+	} catch {
+		conclusion = undefined;
+	}
+
+	const leafTaskIds = leafTaskIdsOf(resolvedContracts);
+	const artifacts = [artifactPaths.dag, ...artifactPaths.contracts, ...artifactPaths.confirmations].filter(
+		(p): p is string => Boolean(p),
+	);
+
+	emit({
+		type: "pipeline_complete",
+		results: allResults,
+		goal: userRequest,
+		...(conclusion && { conclusion }),
+		...(leafTaskIds.length && { leafTaskIds }),
+		...(artifacts.length && { artifacts }),
+	});
 	return { ok: true, results: allResults, statusReason, ...(finalizeReport && { finalize: finalizeReport }) };
 }
 
@@ -458,7 +519,7 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 		let refinement: Map<string, RefinementEntry> = new Map();
 		let refinementParsed = false;
 		try {
-			const refineText = await opts.planner.refine(dag, allResults, memoryText, refineFeedback);
+			const refineText = await opts.planner.refine(dag, allResults, memoryText, opts.grantableCatalog, refineFeedback);
 			const parsed = compileRefinement(refineText);
 			if (parsed.ok) {
 				refinement = parsed.entries;
@@ -500,6 +561,21 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 		});
 		allContracts = refined.contracts;
 		refineErrors = refined.errors;
+		// Validate master grants against the catalog: record an error AND strip the
+		// offending grant so an unknown/denied capability can never reach a worker.
+		if (opts.grantableCatalog) {
+			const cat = opts.grantableCatalog;
+			const skillIds = new Set(cat.skills.map((s) => s.id));
+			const toolNames = new Set(cat.mcpTools.map((t) => t.name));
+			for (const c of allContracts) {
+				const grantErrors = validateGrants(c, cat);
+				if (grantErrors.length) {
+					refineErrors.push({ taskId: c.taskId, errors: grantErrors });
+					c.grantedSkills = c.grantedSkills.filter((id) => skillIds.has(id));
+					c.grantedMcpTools = c.grantedMcpTools.filter((n) => toolNames.has(n));
+				}
+			}
+		}
 		const missingRefinementTaskIds = getMissingRefinementTaskIds(refineErrors);
 		if (missingRefinementTaskIds.length > 0 && !autoRefineRetryUsed) {
 			autoRefineRetryUsed = true;

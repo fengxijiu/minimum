@@ -10,6 +10,7 @@ import type { BillingMode } from "../clients/MiMoPricing.js";
 import type { ICodeValidator } from "../types/validator.js";
 import { getPersona } from "../personas/PersonaRegistry.js";
 import { loadProjectSkillPrompt, loadGrantedSkillPrompt } from "../personas/PersonaSkillMap.js";
+import { renderGrantableCatalog, type GrantableCatalog } from "./CapabilityCatalog.js";
 import type { ChatMessage } from "../types/common.js";
 import type { MissionCheckInput } from "./MissionChecker.js";
 import type { CoarseDag } from "./TaskContract.js";
@@ -110,7 +111,7 @@ export function createPlannerBridge(
 			}
 			return collectText(client, messages, max);
 		},
-		refine: async (dag: CoarseDag, perception: TaskResult[], memoryPrefix: string, feedback?: string) => {
+		refine: async (dag: CoarseDag, perception: TaskResult[], memoryPrefix: string, catalog?: GrantableCatalog, feedback?: string) => {
 			const requiredRefinementTaskIds = dag.phases.flatMap((phase) =>
 				phase.tasks.filter((task) => task.needsRefine).map((task) => task.id),
 			);
@@ -128,6 +129,9 @@ export function createPlannerBridge(
 					"Output a single <refine> block. Each task may include an optional string field named contextPack.",
 				].join(" "),
 			];
+			if (catalog) {
+				userContent.push(renderGrantableCatalog(catalog));
+			}
 			if (feedback) {
 				userContent.push(
 					`# Refine Feedback\n${feedback}\n\nRe-emit the ENTIRE <refine> block, preserving task ids and correcting launchRequirements / blockedCondition as needed.`,
