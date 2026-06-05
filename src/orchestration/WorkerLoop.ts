@@ -120,6 +120,25 @@ export interface WorkerRunResult {
 
 const WRITE_TOOL_NAMES = new Set(["write_file", "edit_file", "apply_patch"]);
 
+/**
+ * Tools a persona may invoke for a task: its static allowlist, plus the MCP
+ * tools the master granted this task — minus anything in the persona's denylist
+ * (a grant never overrides a denylist). Pure, so tool selection is unit-testable
+ * without driving a full worker loop.
+ */
+export function selectPersonaTools(
+	allTools: ToolDefinition[],
+	persona: Persona,
+	grantedMcpTools: string[],
+): ToolDefinition[] {
+	const granted = new Set(grantedMcpTools);
+	return allTools.filter(
+		(t) =>
+			checkTool(t.name, persona).ok ||
+			(granted.has(t.name) && !persona.toolDenylist.includes(t.name)),
+	);
+}
+
 export class WorkerLoop {
 	private readonly client: IStreamingClient;
 	private readonly tools: IToolHost;
@@ -146,11 +165,14 @@ export class WorkerLoop {
 		const maxTokens = input.maxTokens ?? input.persona.maxTokens;
 		const emit = input.onEvent ?? (() => {});
 
-		// Filter the host's tool catalog down to what this persona may invoke.
-		// Model never even sees the denied/non-allowlisted tools.
+		// Filter the host's tool catalog down to what this persona may invoke,
+		// plus any MCP tools the master granted this task. The model never even
+		// sees a tool it cannot invoke.
 		const allTools = this.tools.getDefinitions();
-		const personaTools = allTools.filter((t) =>
-			checkTool(t.name, input.persona).ok,
+		const personaTools = selectPersonaTools(
+			allTools,
+			input.persona,
+			input.contract.grantedMcpTools ?? [],
 		);
 
 		// Per-task snapshot scope. Each runTask gets its own SnapshotManager so

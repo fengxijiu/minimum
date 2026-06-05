@@ -569,3 +569,39 @@ describe("WorkerLoop", () => {
 		fs.rmSync(dir, { recursive: true, force: true });
 	});
 });
+
+import { selectPersonaTools } from "../../src/orchestration/WorkerLoop.js";
+import { getPersona } from "../../src/personas/PersonaRegistry.js";
+import type { ToolDefinition } from "../../src/types/common.js";
+
+function defs(...names: string[]): ToolDefinition[] {
+	return names.map((name) => ({ name, description: "", parameters: { type: "object", properties: {} } }));
+}
+
+describe("selectPersonaTools (master-granted MCP)", () => {
+	const repoScout = getPersona("repo_scout");
+
+	it("exposes a granted MCP tool the persona allowlist lacks", () => {
+		const names = selectPersonaTools(
+			defs("read_file", "mcp__gh__create_issue"),
+			repoScout,
+			["mcp__gh__create_issue"],
+		).map((t) => t.name);
+		expect(names).toContain("read_file");
+		expect(names).toContain("mcp__gh__create_issue");
+	});
+
+	it("does not expose an ungranted MCP tool", () => {
+		const names = selectPersonaTools(
+			defs("read_file", "mcp__gh__create_issue"),
+			repoScout,
+			[],
+		).map((t) => t.name);
+		expect(names).not.toContain("mcp__gh__create_issue");
+	});
+
+	it("never exposes a granted tool that is in the persona denylist", () => {
+		const names = selectPersonaTools(defs("read_file", "exec_shell"), repoScout, ["exec_shell"]).map((t) => t.name);
+		expect(names).not.toContain("exec_shell");
+	});
+});
