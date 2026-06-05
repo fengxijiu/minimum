@@ -1,7 +1,11 @@
 import type { Tool } from "../tools/ToolRegistry.js";
 import { McpManager } from "./McpManager.js";
 import { McpToolAdapter } from "./McpToolAdapter.js";
-import type { McpServerConfig } from "./types.js";
+import type {
+	McpFailedServerDetails,
+	McpServerConfig,
+	McpServerDetails,
+} from "./types.js";
 
 export interface ConnectMcpOptions {
 	/** Manager to own the connections (caller keeps it for later disconnectAll). */
@@ -19,6 +23,8 @@ export interface ConnectMcpOptions {
 export interface ConnectMcpResult {
 	connected: string[];
 	failed: Array<{ name: string; error: string }>;
+	serverDetails: McpServerDetails[];
+	failedDetails: McpFailedServerDetails[];
 	toolCount: number;
 }
 
@@ -43,7 +49,13 @@ export async function connectMcpServers(opts: ConnectMcpOptions): Promise<Connec
 	const { manager, register, servers } = opts;
 	const total = servers.length;
 	const timeout = opts.connectTimeoutMs ?? 10_000;
-	const result: ConnectMcpResult = { connected: [], failed: [], toolCount: 0 };
+	const result: ConnectMcpResult = {
+		connected: [],
+		failed: [],
+		serverDetails: [],
+		failedDetails: [],
+		toolCount: 0,
+	};
 	if (total === 0) return result;
 
 	let done = 0;
@@ -52,7 +64,17 @@ export async function connectMcpServers(opts: ConnectMcpOptions): Promise<Connec
 			await withTimeout(manager.addServer(server), timeout, server.name);
 			result.connected.push(server.name);
 		} catch (e) {
-			result.failed.push({ name: server.name, error: String((e as Error)?.message ?? e) });
+			const error = String((e as Error)?.message ?? e);
+			result.failed.push({ name: server.name, error });
+			result.failedDetails.push({
+				name: server.name,
+				transport: server.transport,
+				...(server.url ? { url: server.url } : {}),
+				headerKeys: Object.keys(server.headers ?? {}),
+				...(server.tools?.length ? { allowedTools: [...server.tools] } : {}),
+				...(server.denyTools?.length ? { deniedTools: [...server.denyTools] } : {}),
+				error,
+			});
 		}
 		done++;
 		opts.onProgress?.(result.connected.length, total);
@@ -63,6 +85,7 @@ export async function connectMcpServers(opts: ConnectMcpOptions): Promise<Connec
 		register(new McpToolAdapter(manager, tool.server, tool));
 		result.toolCount++;
 	}
+	result.serverDetails = manager.getServerDetails();
 
 	return result;
 }

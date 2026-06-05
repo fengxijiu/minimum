@@ -29,6 +29,8 @@ export {
 } from "./StageDisplay.js";
 export {
 	DEFAULT_MAX_MISSION_REPAIR_LOOPS,
+	extractConclusion,
+	leafTaskIdsOf,
 	PERCEPTION_PERSONAS,
 	runPipeline,
 	type PipelineEvent,

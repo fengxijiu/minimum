@@ -14,8 +14,9 @@ import {
   runCommand, type CommandOutcome, type CommandContext,
 } from './commands.js';
 import { LearnCommandService } from '../../dist/learn/LearnCommandService.js';
+import { PlanCommandService } from '../../dist/plans/PlanCommandService.js';
 import { loadLearnedSkillsSync } from '../../dist/skills/LearnedSkillLoader.js';
-import { mockRunner, uiEventToMessages, summarizeTool, summarizeToolResult, describePermissionArgs, buildErrorLines, PermissionQueue, type Runner, type EngineInfo, type UiEvent, type UiPlanStatus, type TuiConfirmationGate } from './engine.js';
+import { mockRunner, uiEventToMessages, summarizeTool, summarizeToolResult, describePermissionArgs, buildErrorLines, PermissionQueue, type Runner, type EngineInfo, type McpOverviewInfo, type UiEvent, type UiPlanStatus, type TuiConfirmationGate } from './engine.js';
 import { scanFiles, readBranch, touch } from './files.js';
 import { getContextUsageK } from './context-usage.js';
 import {
@@ -53,6 +54,79 @@ function extractFileArg(args: string): string | null {
 }
 
 const DEFAULT_ENGINE_INFO: EngineInfo = { mode: 'mock', reason: 'not-built' };
+
+function formatPlanDraftSummary(draft: { id: string; title: string; status: string; steps: Array<{ label: string; status: string }> }): string {
+  const active = draft.steps.find(step => step.status === 'now');
+  return [
+    `[${draft.status}] ${draft.title}`,
+    `  id: ${draft.id}`,
+    `  steps: ${draft.steps.length}${active ? ` • active: ${active.label}` : ''}`,
+  ].join('\n');
+}
+
+function formatMcpOverview(overview: McpOverviewInfo): string {
+  const lines = [
+    `MCP: ${overview.connected.length} connected, ${overview.failed.length} failed`,
+    `Totals: ${overview.totalTools} tools • ${overview.totalResources} resources • ${overview.totalPrompts} prompts`,
+  ];
+  if (overview.connected.length > 0) {
+    lines.push('', 'Connected:');
+    for (const server of overview.connected) {
+      lines.push(
+        `  ${server.name} (${server.transport}) — ${server.toolCount} tools, ${server.resourceCount} resources, ${server.promptCount} prompts`,
+      );
+      if (server.url) lines.push(`    url: ${server.url}`);
+      if (server.allowedTools?.length) lines.push(`    allowlist: ${server.allowedTools.join(', ')}`);
+      if (server.deniedTools?.length) lines.push(`    denylist: ${server.deniedTools.join(', ')}`);
+      if (server.toolNames.length) lines.push(`    tools: ${server.toolNames.slice(0, 12).join(', ')}${server.toolNames.length > 12 ? ' ...' : ''}`);
+      if (server.headerKeys.length) lines.push(`    headers: ${server.headerKeys.join(', ')}`);
+    }
+  }
+  if (overview.failed.length > 0) {
+    lines.push('', 'Failed:');
+    for (const server of overview.failed) {
+      lines.push(`  ${server.name} (${server.transport}) — ${server.error}`);
+      if (server.url) lines.push(`    url: ${server.url}`);
+      if (server.allowedTools?.length) lines.push(`    allowlist: ${server.allowedTools.join(', ')}`);
+      if (server.deniedTools?.length) lines.push(`    denylist: ${server.deniedTools.join(', ')}`);
+      if (server.headerKeys.length) lines.push(`    headers: ${server.headerKeys.join(', ')}`);
+    }
+  }
+  if (overview.connected.length === 0 && overview.failed.length === 0) {
+    lines.push('', 'No MCP servers connected. Built-in Minimum resources are still available via `/mcp resources`.');
+  }
+  return lines.join('\n');
+}
+
+function formatMcpResourceList(resources: Array<{ server: string; uri: string; description?: string }>): string {
+  if (resources.length === 0) return 'No MCP resources available.';
+  return [
+    `MCP resources (${resources.length}):`,
+    ...resources.map((resource) => `  [${resource.server}] ${resource.uri}${resource.description ? ` — ${resource.description}` : ''}`),
+  ].join('\n');
+}
+
+function formatMcpPromptList(prompts: Array<{ server: string; name: string; description?: string }>): string {
+  if (prompts.length === 0) return 'No MCP prompts available.';
+  return [
+    `MCP prompts (${prompts.length}):`,
+    ...prompts.map((prompt) => `  [${prompt.server}] ${prompt.name}${prompt.description ? ` — ${prompt.description}` : ''}`),
+  ].join('\n');
+}
+
+function formatUnknownPayload(value: unknown): string {
+  if (typeof value === 'string') return value;
+  return JSON.stringify(value, null, 2);
+}
+
+function parseJsonArgs(argsText: string | undefined): Record<string, unknown> | undefined {
+  if (!argsText) return undefined;
+  const parsed = JSON.parse(argsText) as unknown;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('prompt args must be a JSON object');
+  }
+  return parsed as Record<string, unknown>;
+}
 
 // ── Loop-guard tunables ───────────────────────────────────────────────
 /** Abort turn when the same tool+args fires this many times in a row. */
@@ -424,6 +498,60 @@ export function App({
         });
         return;
       }
+      case 'plan.drafts': {
+        const service = new PlanCommandService({ projectRoot: stateRef.current.path });
+        void service.status().then(result => {
+          if (result.drafts.length === 0) {
+            dispatch({ type: 'system.push', text: 'No task plan drafts found under `.minimum/plans/drafts`.', tone: 'info' });
+            return;
+          }
+          dispatch({
+            type: 'system.push',
+            text: [
+              `Task plan drafts (${result.drafts.length}):`,
+              ...result.drafts.map((draft) => formatPlanDraftSummary(draft)),
+            ].join('\n'),
+            tone: 'info',
+          });
+        }).catch(err => {
+          dispatch({ type: 'system.push', text: `Failed to list plan drafts: ${String(err?.message ?? err)}`, tone: 'warn' });
+        });
+        return;
+      }
+      case 'plan.preview': {
+        const service = new PlanCommandService({ projectRoot: stateRef.current.path });
+        void service.preview(o.draftId).then(result => {
+          dispatch({ type: 'system.push', text: result.markdown, tone: result.draft.status === 'invalid' ? 'warn' : 'info' });
+        }).catch(err => {
+          dispatch({ type: 'system.push', text: `Failed to preview plan draft: ${String(err?.message ?? err)}`, tone: 'warn' });
+        });
+        return;
+      }
+      case 'plan.import': {
+        const service = new PlanCommandService({ projectRoot: stateRef.current.path });
+        void service.import(o.draftId).then(result => {
+          dispatch({ type: 'plan.set', title: result.title, steps: result.steps });
+          dispatch({ type: 'planmode.set', enabled: true });
+          runner.setPlanMode?.(true);
+          dispatch({
+            type: 'system.push',
+            text: `Imported plan draft: ${result.draft.id}\nPlan "${result.title}" is now loaded into the TUI plan strip.`,
+            tone: 'ok',
+          });
+        }).catch(err => {
+          dispatch({ type: 'system.push', text: `Failed to import plan draft: ${String(err?.message ?? err)}`, tone: 'warn' });
+        });
+        return;
+      }
+      case 'plan.reject': {
+        const service = new PlanCommandService({ projectRoot: stateRef.current.path });
+        void service.reject(o.draftId).then(result => {
+          dispatch({ type: 'system.push', text: `Rejected plan draft: ${result.id}`, tone: 'ok' });
+        }).catch(err => {
+          dispatch({ type: 'system.push', text: `Failed to reject plan draft: ${String(err?.message ?? err)}`, tone: 'warn' });
+        });
+        return;
+      }
       case 'learn.create': {
         const s = stateRef.current;
         const service = new LearnCommandService({
@@ -525,6 +653,61 @@ export function App({
           }
         }).catch(err => {
           dispatch({ type: 'system.push', text: `Failed to read learn status: ${String(err?.message ?? err)}`, tone: 'warn' });
+        });
+        return;
+      }
+      case 'mcp.status': {
+        void (runner.getMcpOverview?.() ?? Promise.resolve({ connected: [], failed: [], totalTools: 0, totalResources: 0, totalPrompts: 0 })).then((overview) => {
+          dispatch({ type: 'system.push', text: formatMcpOverview(overview), tone: overview.failed.length > 0 ? 'warn' : 'info' });
+        }).catch(err => {
+          dispatch({ type: 'system.push', text: `Failed to inspect MCP status: ${String(err?.message ?? err)}`, tone: 'warn' });
+        });
+        return;
+      }
+      case 'mcp.resources': {
+        void (runner.listMcpResources?.() ?? Promise.resolve([])).then((resources) => {
+          dispatch({ type: 'system.push', text: formatMcpResourceList(resources), tone: 'info' });
+        }).catch(err => {
+          dispatch({ type: 'system.push', text: `Failed to list MCP resources: ${String(err?.message ?? err)}`, tone: 'warn' });
+        });
+        return;
+      }
+      case 'mcp.read': {
+        if (!runner.readMcpResource) {
+          dispatch({ type: 'system.push', text: 'MCP resource reader unavailable in the current runner.', tone: 'warn' });
+          return;
+        }
+        void runner.readMcpResource(o.ref).then((payload) => {
+          dispatch({ type: 'system.push', text: formatUnknownPayload(payload), tone: 'info' });
+        }).catch(err => {
+          dispatch({ type: 'system.push', text: `Failed to read MCP resource: ${String(err?.message ?? err)}`, tone: 'warn' });
+        });
+        return;
+      }
+      case 'mcp.prompts': {
+        void (runner.listMcpPrompts?.() ?? Promise.resolve([])).then((prompts) => {
+          dispatch({ type: 'system.push', text: formatMcpPromptList(prompts), tone: 'info' });
+        }).catch(err => {
+          dispatch({ type: 'system.push', text: `Failed to list MCP prompts: ${String(err?.message ?? err)}`, tone: 'warn' });
+        });
+        return;
+      }
+      case 'mcp.prompt': {
+        if (!runner.getMcpPrompt) {
+          dispatch({ type: 'system.push', text: 'MCP prompt reader unavailable in the current runner.', tone: 'warn' });
+          return;
+        }
+        let parsedArgs: Record<string, unknown> | undefined;
+        try {
+          parsedArgs = parseJsonArgs(o.argsText);
+        } catch (err) {
+          dispatch({ type: 'system.push', text: `Invalid prompt args JSON: ${String((err as Error)?.message ?? err)}`, tone: 'warn' });
+          return;
+        }
+        void runner.getMcpPrompt(o.name, parsedArgs).then((payload) => {
+          dispatch({ type: 'system.push', text: formatUnknownPayload(payload), tone: 'info' });
+        }).catch(err => {
+          dispatch({ type: 'system.push', text: `Failed to read MCP prompt: ${String(err?.message ?? err)}`, tone: 'warn' });
         });
         return;
       }
@@ -1083,15 +1266,16 @@ export function App({
     const planRows = sPlanSteps.length === 0 ? 0
       : sPlanSteps.length > 4 ? 1    // compact single-line strip
       : 2;                            // title row + steps row
-    // Fixed hybrid panel height: header + horizontal overview (may wrap once on
-    // narrow terminals) + the "Now:" detail line. No longer scales with phase count.
-    const pipelineRows = sPipeline ? 4 : 0;
-    // SubagentBrief: 1 header row + N visible rows (capped at MAX_VISIBLE=4)
-    // + 1 if more than that many hidden behind a "…N more" footer.
+    // Bordered panel: round border (2 rows) + header + stage rail (may wrap once
+    // on narrow terminals) + active-stage detail line. No longer scales with
+    // phase count.
+    const pipelineRows = sPipeline ? 6 : 0;
+    // SubagentBrief bordered panel: round border (2 rows) + header + N visible
+    // rows (capped at MAX_VISIBLE=4) + 1 if more are hidden behind a "…N more".
     const subagentVisible = Math.min(sSubagents.length, 4);
     const subagentRows = sSubagents.length === 0
       ? 0
-      : 1 + subagentVisible + (sSubagents.length > 4 ? 1 : 0);
+      : 2 + 1 + subagentVisible + (sSubagents.length > 4 ? 1 : 0);
     const toastRows = sToasts.length;
     return CHROME + planRows + pipelineRows + subagentRows + toastRows;
   }, [sPlanSteps, sPipeline, sSubagents, sToasts]);
@@ -1193,16 +1377,24 @@ export function App({
 // ── /init handler ─────────────────────────────────────────────────────
 async function runInit(cwd: string, dispatch: Dispatch, args?: string[]) {
   const fs = await import('node:fs/promises');
+  const os = await import('node:os');
   const path = await import('node:path');
   const isReset = args?.includes('--reset') ?? false;
 
   const configDir = path.join(cwd, '.minimum');
   const configPath = path.join(configDir, 'config.json');
+  const globalConfigDir = path.join(os.homedir(), '.minimum');
+  const globalConfigPath = path.join(globalConfigDir, 'config.json');
+  let projectConfigExists = false;
+  let globalConfigExists = false;
+  try { await fs.access(globalConfigPath); globalConfigExists = true; } catch { /* global config missing */ }
 
   if (!isReset) {
     try {
       await fs.access(configPath);
-      dispatch({ type: 'toast.show', text: '.minimum/config.json already exists. Use /init --reset to reinitialize.', tone: 'warn', ttlMs: 5000 });
+      projectConfigExists = true;
+      if (!globalConfigExists) throw new Error('global config missing');
+      dispatch({ type: 'toast.show', text: 'config already exists. Use /init --reset to reinitialize project + global config.', tone: 'warn', ttlMs: 5000 });
       return;
     } catch { /* doesn't exist yet — proceed */ }
   }
@@ -1255,12 +1447,25 @@ async function runInit(cwd: string, dispatch: Dispatch, args?: string[]) {
     completeness: { enabled: true },
   };
 
-  await fs.mkdir(configDir, { recursive: true });
-  await fs.writeFile(configPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
+  const projectConfig = { ...config, apiKey: undefined, baseUrl: undefined };
+  if (isReset || !projectConfigExists) {
+    await fs.mkdir(configDir, { recursive: true });
+    await fs.writeFile(configPath, JSON.stringify(projectConfig, null, 2) + '\n', 'utf-8');
+  }
+  if (isReset || !globalConfigExists) {
+    await fs.mkdir(globalConfigDir, { recursive: true });
+    await fs.writeFile(globalConfigPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
+    try { await fs.chmod(globalConfigPath, 0o600); } catch { /* Windows / non-POSIX filesystems */ }
+  }
+  const created = [
+    isReset || !projectConfigExists ? '.minimum/config.json' : null,
+    isReset || !globalConfigExists ? '~/.minimum/config.json' : null,
+  ].filter(Boolean).join(' + ');
 
-  dispatch({ type: 'toast.show', text: '/init complete — .minimum/config.json created', tone: 'ok', ttlMs: 5000 });
+  dispatch({ type: 'toast.show', text: `/init complete - ${created} ready`, tone: 'ok', ttlMs: 5000 });
   dispatch({ type: 'system.push', text: `Project type: ${projectType}`, tone: 'info' });
   dispatch({ type: 'system.push', text: `API: ${isTokenPlan ? 'Token Plan' : 'Pay-as-you-go'} · ${baseUrl}`, tone: 'info' });
   dispatch({ type: 'system.push', text: `Model: mimo-v2.5-pro · 1M ctx · 131k out`, tone: 'info' });
-  dispatch({ type: 'system.push', text: `Config: ${configPath}`, tone: 'info' });
+  dispatch({ type: 'system.push', text: `Project config: ${configPath} (no apiKey)`, tone: 'info' });
+  dispatch({ type: 'system.push', text: `Global config: ${globalConfigPath} (contains apiKey)`, tone: 'info' });
 }

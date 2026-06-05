@@ -1,0 +1,23 @@
+{
+  "mcpServers": [
+    {
+      "name": "remote-github",
+      "transport": "http",
+      "url": "https://example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${GITHUB_TOKEN}"
+      },
+      "tools": [
+        "github_auth_status",
+        "github_repo_info",
+        "github_pr_view",
+        "github_ci_status"
+      ],
+      "denyTools": [
+        "github_create_pr_draft",
+        "github_comment_pr"
+      ],
+      "cacheTtlMs": 5000
+    }
+  ]
+}

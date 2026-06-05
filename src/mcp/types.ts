@@ -1,10 +1,14 @@
 export interface McpServerConfig {
 	name: string;
-	command: string;
+	command?: string;
 	args?: string[];
 	env?: Record<string, string>;
 	transport: "stdio" | "sse" | "http";
 	url?: string;
+	headers?: Record<string, string>;
+	tools?: string[];
+	denyTools?: string[];
+	cacheTtlMs?: number;
 }
 
 export interface McpTool {
@@ -28,6 +32,37 @@ export interface McpPrompt {
 		description?: string;
 		required?: boolean;
 	}>;
+}
+
+export interface McpListedResource extends McpResource {
+	server: string;
+}
+
+export interface McpListedPrompt extends McpPrompt {
+	server: string;
+}
+
+export interface McpServerDetails {
+	name: string;
+	transport: "stdio" | "sse" | "http";
+	url?: string;
+	headerKeys: string[];
+	allowedTools?: string[];
+	deniedTools?: string[];
+	toolNames: string[];
+	toolCount: number;
+	resourceCount: number;
+	promptCount: number;
+}
+
+export interface McpFailedServerDetails {
+	name: string;
+	transport: "stdio" | "sse" | "http";
+	url?: string;
+	headerKeys: string[];
+	allowedTools?: string[];
+	deniedTools?: string[];
+	error: string;
 }
 
 export interface McpRequest {

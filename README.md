@@ -459,6 +459,19 @@ TUI 当前支持三种主模式：
 
 ---
 
+## MCP
+
+Minimum supports MCP as both a client and a local stdio server.
+
+- Run the built-in server with `minimum-mcp-server`.
+- Inspect connected servers with `/mcp`.
+- List and read resources with `/mcp resources` and `/mcp read minimum://project_state`.
+- Review health, audit, and trusted registry context with `/mcp health`, `/mcp audit`, and `/mcp registry`.
+- Use examples under `examples/mcp/` for stdio, HTTP, SSE, GitHub, and write-gated configs.
+- See `docs/MCP_USAGE.md` for setup, safety controls, and command examples.
+
+MCP calls are audited to `.minimum/mcp/audit.log` with secret redaction. GitHub write tools are disabled unless `MINIMUM_MCP_GITHUB_ALLOW_WRITES=true` is set.
+
 ## 架构设计
 
 ### 仓库结构

@@ -34,6 +34,36 @@ export const SKILL_CATALOG: SkillEntry[] = [
     tags: ['docs', 'documentation', 'generation'],
     prompt: 'Generate clear and concise documentation for the public API of this project. Include function/method signatures, parameter and return type descriptions, thrown errors, and a usage example for each exported symbol.',
   },
+  {
+    name: 'github-pr-review',
+    description: 'Review a GitHub PR using gh-backed read-only MCP context',
+    tags: ['github', 'pr', 'review'],
+    prompt: 'Review the current GitHub PR. First check gh auth status, then read repository and PR details through available GitHub MCP tools or gh commands. Produce findings ordered by severity with file/line references where available. Do not perform writes.',
+  },
+  {
+    name: 'github-fix-ci',
+    description: 'Diagnose failing GitHub CI and propose a repair plan',
+    tags: ['github', 'ci', 'debugging'],
+    prompt: 'Diagnose failing GitHub CI. First check gh auth status, repository info, PR context, and CI status. Summarize the failing checks, likely root cause, and a concrete local verification plan before editing code.',
+  },
+  {
+    name: 'github-address-comments',
+    description: 'Address actionable GitHub PR review comments',
+    tags: ['github', 'comments', 'review'],
+    prompt: 'Inspect unresolved GitHub PR review comments and plan responses. Start with read-only GitHub context, group comments by required code change, then implement only changes that are clearly actionable.',
+  },
+  {
+    name: 'github-create-pr',
+    description: 'Prepare a GitHub pull request draft',
+    tags: ['github', 'pull-request', 'workflow'],
+    prompt: 'Prepare a GitHub PR draft from the current branch. Check gh auth status and repo info, inspect local git status/diff, then produce a PR title, body, test evidence, and draft creation command. Do not create the PR unless write access is explicitly enabled and approved.',
+  },
+  {
+    name: 'github-release-notes',
+    description: 'Draft release notes from GitHub repository state',
+    tags: ['github', 'release', 'notes'],
+    prompt: 'Draft release notes from GitHub repository context. Use read-only PR, issue, and CI information where available. Group changes by user-facing impact, fixes, internal changes, and verification.',
+  },
 ];
 
 export interface CommandContext {
@@ -76,16 +106,16 @@ export const COMMANDS: TuiCommand[] = [
   // view
   { name: 'copy',   desc: 'Copy last reply to clipboard',   category: 'view' },
   { name: 'diff',   desc: 'Toggle inline diff blocks',      category: 'view' },
-  { name: 'plan',   desc: 'Plan a task or toggle plan mode', category: 'view', usage: '/plan [<task> | on | off]' },
+  { name: 'plan',   desc: 'Plan a task or manage drafts', category: 'view', usage: '/plan [task | on | off | drafts | preview <id> | import <id> | reject <id>]' },
   { name: 'mode',   desc: 'Switch mode: agent / chat / orchestrate', category: 'view', usage: '/mode <agent|chat|orchestrate>' },
-  { name: 'orchestrate', desc: 'Run a request through the Plan→Scan→Refine→Build→Accept→Finalize pipeline', category: 'view', usage: '/orchestrate <request>', aliases: ['pipeline', 'orch'] },
+  { name: 'orchestrate', desc: 'Run the multi-persona pipeline', category: 'view', usage: '/orchestrate <request>', aliases: ['pipeline', 'orch'] },
   { name: 'pet',    desc: 'Toggle liliMiMO mascot',         category: 'view' },
   { name: 'clear',  desc: 'Clear the chat stream',          category: 'view', aliases: ['cls'] },
   { name: 'verbose', desc: 'Toggle verbose mode',           category: 'view', aliases: ['v'] },
   // system
   { name: 'permission', desc: 'Set permission mode: read-only | auto-edit | full-auto', category: 'system', usage: '/permission <mode>', aliases: ['approval', 'appr', 'perm'] },
   { name: 'run',    desc: 'Run a shell command (asks first)', category: 'system', usage: '/run <cmd>' },
-  { name: 'mcp',    desc: 'Show MCP server status',         category: 'system' },
+  { name: 'mcp',    desc: 'Inspect MCP status, resources, prompts, health, and audit logs', category: 'system', usage: '/mcp [health | audit | registry | resources | read <uri> | prompts | prompt <name> [json]]' },
   { name: 'status', desc: 'Show session status',            category: 'system' },
   { name: 'tools',  desc: 'List available tools',           category: 'system' },
   { name: 'model',  desc: 'Show the active model',          category: 'system' },
@@ -209,11 +239,20 @@ export type CommandOutcome =
   | { kind: 'session.list' }
   | { kind: 'session.load.request'; name: string }
   | { kind: 'plan.start'; task: string }
+  | { kind: 'plan.drafts' }
+  | { kind: 'plan.preview'; draftId: string }
+  | { kind: 'plan.import'; draftId: string }
+  | { kind: 'plan.reject'; draftId: string }
   | { kind: 'learn.create'; preferredName?: string; dryRun?: boolean }
   | { kind: 'learn.preview'; draftId: string }
   | { kind: 'learn.apply'; draftId: string; load?: boolean; confirmRouting?: boolean }
   | { kind: 'learn.reject'; draftId: string }
-  | { kind: 'learn.status' };
+  | { kind: 'learn.status' }
+  | { kind: 'mcp.status' }
+  | { kind: 'mcp.resources' }
+  | { kind: 'mcp.read'; ref: string }
+  | { kind: 'mcp.prompts' }
+  | { kind: 'mcp.prompt'; name: string; argsText?: string };
 
 export type LearnCommandMode = 'create' | 'preview' | 'apply' | 'reject' | 'status';
 
@@ -293,6 +332,24 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
       }
       if (sub === 'off') {
         return { kind: 'event', event: { type: 'planmode.set', enabled: false } };
+      }
+      if (sub === 'drafts') {
+        return { kind: 'plan.drafts' };
+      }
+      if (sub === 'preview') {
+        return args[1]
+          ? { kind: 'plan.preview', draftId: args[1] }
+          : { kind: 'note', note: 'Usage: /plan preview <draft-id>', tone: 'warn' };
+      }
+      if (sub === 'import') {
+        return args[1]
+          ? { kind: 'plan.import', draftId: args[1] }
+          : { kind: 'note', note: 'Usage: /plan import <draft-id>', tone: 'warn' };
+      }
+      if (sub === 'reject') {
+        return args[1]
+          ? { kind: 'plan.reject', draftId: args[1] }
+          : { kind: 'note', note: 'Usage: /plan reject <draft-id>', tone: 'warn' };
       }
       const task = args.join(' ').trim();
       if (task) {
@@ -477,14 +534,27 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
       if (state.mcpLoading) {
         return { kind: 'note', note: `MCP: loading ${state.mcpLoading.ready}/${state.mcpLoading.total} servers` };
       }
-      const servers = ctx.mcpServers ?? [];
-      if (servers.length) {
-        return {
-          kind: 'note',
-          note: `MCP: ${servers.length} server(s) connected — ${servers.join(', ')} (${ctx.mcpToolCount ?? 0} tools)`,
-        };
+      const sub = args[0]?.toLowerCase();
+      if (!sub) return { kind: 'mcp.status' };
+      if (sub === 'health') return { kind: 'mcp.read', ref: 'minimum://mcp_health' };
+      if (sub === 'audit') return { kind: 'mcp.read', ref: 'minimum://mcp_audit' };
+      if (sub === 'registry') return { kind: 'mcp.read', ref: 'minimum://mcp_registry' };
+      if (sub === 'resources') return { kind: 'mcp.resources' };
+      if (sub === 'read') {
+        const ref = args.slice(1).join(' ').trim();
+        return ref
+          ? { kind: 'mcp.read', ref }
+          : { kind: 'note', note: 'Usage: /mcp read <uri>', tone: 'warn' };
       }
-      return { kind: 'note', note: 'MCP: no servers configured. Add `mcpServers` to .minimum/config.json' };
+      if (sub === 'prompts') return { kind: 'mcp.prompts' };
+      if (sub === 'prompt') {
+        const name = args[1];
+        const argsText = args.slice(2).join(' ').trim();
+        return name
+          ? { kind: 'mcp.prompt', name, ...(argsText ? { argsText } : {}) }
+          : { kind: 'note', note: 'Usage: /mcp prompt <name> [jsonArgs]', tone: 'warn' };
+      }
+      return { kind: 'note', note: 'Usage: /mcp [health | audit | registry | resources | read <uri> | prompts | prompt <name> [jsonArgs]]', tone: 'warn' };
     }
 
     case 'init':

@@ -1,0 +1,25 @@
+{
+  "mcpServers": [
+    {
+      "name": "minimum",
+      "transport": "stdio",
+      "command": "minimum-mcp-server",
+      "env": {
+        "MINIMUM_PROJECT_ROOT": "${PWD}"
+      },
+      "tools": [
+        "read_project_state",
+        "write_task_plan_draft",
+        "query_persona",
+        "list_skills",
+        "validate_plan_draft",
+        "suggest_mcp_server_config"
+      ],
+      "denyTools": [
+        "github_create_pr_draft",
+        "github_comment_pr"
+      ],
+      "cacheTtlMs": 2000
+    }
+  ]
+}

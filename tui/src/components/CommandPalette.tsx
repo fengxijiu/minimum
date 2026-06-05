@@ -7,8 +7,8 @@ import type { CmdMatch, CommandCategory } from '../commands.js';
 const CAT_LABEL: Record<CommandCategory, string> = {
   session: 'SESSION',
   context: 'CONTEXT',
-  view:    'VIEW',
-  system:  'SYSTEM',
+  view: 'VIEW',
+  system: 'SYSTEM',
 };
 
 const MAX_ROWS = 8;
@@ -22,24 +22,29 @@ export const CommandPalette = React.memo(function CommandPalette({ items, select
     Math.max(0, items.length - MAX_ROWS),
   );
   const visible = items.slice(start, start + MAX_ROWS);
+  const padded = [...visible, ...Array.from({ length: Math.max(0, MAX_ROWS - visible.length) }, () => null)];
   const empty = items.length === 0;
   const hasScroll = items.length > MAX_ROWS;
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={empty ? theme.line : theme.accent} paddingX={1}>
-      {/* header row */}
       <Box justifyContent="space-between">
         <Text color={empty ? theme.muted : theme.accent} bold>/ commands</Text>
         <Text color={theme.muted}>
           {empty
-            ? 'no matches · esc close · ⇥ fill'
-            : `${selected + 1}/${items.length}  ↑↓ select · ⏎ run · ⇥ fill`}
+            ? 'no matches • esc close • tab fill'
+            : `${selected + 1}/${items.length}  ↑↓ select • enter run • tab fill`}
         </Text>
       </Box>
 
       {empty ? (
-        <Text color={theme.muted}>  Type to filter commands</Text>
-      ) : visible.map((item, i) => {
+        <>
+          <Text color={theme.muted}>  Type to filter commands</Text>
+          {Array.from({ length: MAX_ROWS - 1 }).map((_, index) => <Text key={`empty-${index}`}> </Text>)}
+        </>
+      ) : padded.map((item, i) => {
+        if (!item) return <Text key={`pad-${i}`}> </Text>;
+
         const { cmd, nameMatches, descMatches } = item;
         const idx = start + i;
         const active = idx === selected;
@@ -50,7 +55,7 @@ export const CommandPalette = React.memo(function CommandPalette({ items, select
           <Box key={cmd.name} justifyContent="space-between">
             <Box flexShrink={1}>
               <Text color={active ? theme.accent : theme.muted} bold={active}>
-                {active ? ' ❯ ' : '   '}
+                {active ? ' > ' : '   '}
               </Text>
               <Text color={commandFg} backgroundColor={commandBg} bold={active}>/</Text>
               <HighlightText
@@ -60,19 +65,13 @@ export const CommandPalette = React.memo(function CommandPalette({ items, select
                 matchColor={active ? theme.bg : theme.warn}
                 backgroundColor={commandBg}
               />
-              {cmd.aliases && cmd.aliases.length > 0 && (
-                <Text color={active ? theme.inkSoft : theme.muted}>  {cmd.aliases.map(a => `/${a}`).join(' ')}</Text>
-              )}
-              <Text color={theme.muted}>  —  </Text>
+              <Text color={theme.muted}>  - </Text>
               <HighlightText
                 text={cmd.desc}
                 positions={active ? [] : descMatches}
                 color={active ? theme.ink : theme.muted}
                 matchColor={theme.inkSoft}
               />
-              {active && cmd.usage && (
-                <Text color={theme.inkSoft}>  {cmd.usage}</Text>
-              )}
             </Box>
             <Text color={active ? theme.accent : theme.muted} bold={active}>
               {'  '}{CAT_LABEL[cmd.category]}
@@ -81,14 +80,12 @@ export const CommandPalette = React.memo(function CommandPalette({ items, select
         );
       })}
 
-      {hasScroll ? (
-        <Box justifyContent="center">
-          <Text color={theme.muted}>
-            {start > 0 ? '↑ ' : '  '}
-            {start + MAX_ROWS < items.length ? '↓' : ' '}
-          </Text>
-        </Box>
-      ) : null}
+      <Box justifyContent="center">
+        <Text color={theme.muted}>
+          {hasScroll && start > 0 ? '^' : ' '}
+          {hasScroll && start + MAX_ROWS < items.length ? 'v' : ' '}
+        </Text>
+      </Box>
     </Box>
   );
 });

@@ -93,8 +93,17 @@ describe("/skill command", () => {
 		}
 	});
 
-	it("SKILL_CATALOG has 4 entries", () => {
-		expect(SKILL_CATALOG).toHaveLength(4);
+	it("SKILL_CATALOG includes built-in and GitHub workflow skills", () => {
+		expect(SKILL_CATALOG.length).toBeGreaterThanOrEqual(9);
+		expect(SKILL_CATALOG.map((s) => s.name)).toEqual(expect.arrayContaining([
+			"code-review",
+			"documentation",
+			"github-pr-review",
+			"github-fix-ci",
+			"github-address-comments",
+			"github-create-pr",
+			"github-release-notes",
+		]));
 		for (const s of SKILL_CATALOG) {
 			expect(s.name).toBeTruthy();
 			expect(s.description).toBeTruthy();

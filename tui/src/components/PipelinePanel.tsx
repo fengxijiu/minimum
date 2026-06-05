@@ -56,21 +56,26 @@ function durationOf(stage: StageView, now: number): string {
   return '';
 }
 
-/** One short-name cell in the horizontal stage overview — no internal phase code. */
-const StageCell = React.memo(function StageCell({
-  stage, tick, now, showDuration,
+/**
+ * One node on the horizontal pipeline rail: a leading connector (rendered for
+ * every node but the first) plus the stage glyph and short name. The connector
+ * is what turns a row of格子 into a left-to-right flow. Per-stage durations are
+ * deliberately omitted here — they only cluttered the rail; the overall elapsed
+ * lives in the header and the active stage's own duration in the detail line.
+ */
+const StageNode = React.memo(function StageNode({
+  stage, tick, first, compact,
 }: {
   stage: StageView;
   tick: number;
-  now: number;
-  showDuration: boolean;
+  first: boolean;
+  compact: boolean;
 }) {
-  const dur = showDuration ? durationOf(stage, now) : '';
   return (
-    <Box flexDirection="row" marginRight={2}>
+    <Box flexDirection="row">
+      {first ? null : <Text color={theme.line}>{compact ? ' · ' : ' ── '}</Text>}
       <Text color={stageColor(stage.status)}>{glyph(stage.status, tick)} </Text>
       <Text color={labelColor(stage.status)} bold={stage.status === 'active'}>{stage.name}</Text>
-      {dur ? <Text color={theme.muted}> {dur}</Text> : null}
     </Box>
   );
 });
@@ -116,33 +121,43 @@ export const PipelinePanel = React.memo(function PipelinePanel({ phases }: {
   const active = stages.find(s => s.status === 'active');
   const allDone = doneCount === stages.length;
 
+  // Overall elapsed: earliest stage start → latest end (or now while running).
+  const startTimes = stages.filter(s => s.startedAt).map(s => s.startedAt!);
+  const endTimes = stages.filter(s => s.endedAt).map(s => s.endedAt!);
+  const overallStart = startTimes.length ? Math.min(...startTimes) : undefined;
+  const overallEnd = allDone && endTimes.length ? Math.max(...endTimes) : now;
+  const totalDur = overallStart ? formatMs(overallEnd - overallStart) : '';
+
+  const progress = allDone
+    ? '✓ done'
+    : `${doneCount}/${stages.length}${totalDur ? ` · ${totalDur}` : ''}`;
+  const activeDur = active ? durationOf(active, now) : '';
+
   return (
-    <Box flexDirection="column" paddingX={1}>
-      {/* line 1 — header */}
+    <Box flexDirection="column" borderStyle="round" borderColor={theme.line} paddingX={1}>
+      {/* header — label left, overall progress right */}
       <Box justifyContent="space-between">
         <Box>
           <Text color={theme.muted}>PIPELINE · </Text>
           <Text color={theme.accent2} bold>orchestrator</Text>
         </Box>
-        <Text color={allDone ? theme.plus : theme.muted}>
-          {allDone ? '✓ done' : `${doneCount}/${stages.length}`}
-        </Text>
+        <Text color={allDone ? theme.plus : theme.muted}>{progress}</Text>
       </Box>
 
-      {/* line 2 — horizontal short-name overview */}
+      {/* rail — connected stage flow */}
       <Box flexDirection="row" flexWrap="wrap">
-        {stages.map((s) => (
-          <StageCell key={s.code} stage={s} tick={tick} now={now} showDuration={!compact} />
+        {stages.map((s, i) => (
+          <StageNode key={s.code} stage={s} tick={tick} first={i === 0} compact={compact} />
         ))}
       </Box>
 
-      {/* line 3 — current stage detail */}
+      {/* active stage detail — glyph + name + description + its own duration */}
       {active ? (
         <Box flexDirection="row">
-          <Text color={theme.muted}>Now: </Text>
+          <Text color={theme.accent}>{glyph(active.status, tick)} </Text>
           <Text color={theme.accent} bold>{active.name}</Text>
-          {durationOf(active, now) ? <Text color={theme.muted}> · {durationOf(active, now)}</Text> : null}
           {active.description ? <Text color={theme.muted}> · {active.description}</Text> : null}
+          {activeDur ? <Text color={theme.muted}> · {activeDur}</Text> : null}
         </Box>
       ) : (
         <Text color={theme.muted}>{allDone ? 'Pipeline complete' : 'Pipeline idle'}</Text>

@@ -1,0 +1,18 @@
+{
+  "mcpServers": [
+    {
+      "name": "legacy-sse",
+      "transport": "sse",
+      "url": "http://127.0.0.1:7331/sse",
+      "headers": {
+        "Authorization": "Bearer ${MCP_TOKEN}"
+      },
+      "tools": [
+        "read_project_state",
+        "write_task_plan_draft"
+      ],
+      "denyTools": [],
+      "cacheTtlMs": 5000
+    }
+  ]
+}

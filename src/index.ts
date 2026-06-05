@@ -161,19 +161,48 @@ export {
 	type LearnStatusResult,
 } from "./learn/index.js";
 
+export {
+	PlanCommandService,
+	PlanDraftStore,
+	normalizePlanDraft,
+	renderPlanDraftMarkdown,
+	assertSafeDraftId,
+} from "./plans/index.js";
+export type {
+	PlanDraft,
+	PlanDraftStatus,
+	PlanDraftStep,
+	PlanDraftStepStatus,
+	PlanImportResult,
+	PlanPreviewResult,
+	PlanStatusResult,
+} from "./plans/index.js";
+
 // Mocks — test-only, not exported in production build
 
 // MCP (Model Context Protocol) support
 export {
 	McpClient,
+	McpAuditLogger,
+	McpCommandService,
+	MinimumMcpServer,
 	McpManager,
 	McpToolAdapter,
 	mcpToolName,
+	readRecentAuditEvents,
+	redactSecrets,
+	summarizeArgs,
+	startMinimumMcpServer,
 	connectMcpServers,
 	type ConnectMcpOptions,
 	type ConnectMcpResult,
+	type MinimumMcpServerOptions,
 } from "./mcp/index.js";
 export type {
+	McpFailedServerDetails,
+	McpListedPrompt,
+	McpListedResource,
+	McpServerDetails,
 	McpServerConfig,
 	McpTool,
 	McpResource,
