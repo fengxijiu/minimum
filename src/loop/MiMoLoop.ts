@@ -33,6 +33,7 @@ import { healMessages } from "./healing.js";
 import { buildAssistantMessage, buildSyntheticAssistantMessage } from "./messages.js";
 import { ReadTracker, isEditTool, isReadTool } from "./ReadTracker.js";
 import { SnapshotManager } from "./SnapshotManager.js";
+import type { ConfirmationGate, ChoicePayload } from "../tools/choice/ConfirmationGate.js";
 
 /** Minimal interface for session persistence — avoids importing SessionManager directly. */
 export interface ISessionPersister {
@@ -176,6 +177,11 @@ export interface MiMoLoopConfig {
 	skillsSystemContent?: (userInput: string) => Promise<string>;
 	/** Static system prompt prepended to every conversation. Re-injected after loadHistory. */
 	systemPrompt?: string;
+	/** When set, long-running tool executions trigger a confirmation prompt
+	 *  so the user can choose to continue waiting or abort. */
+	confirmationGate?: ConfirmationGate;
+	/** Per-tool-call timeout in milliseconds before prompting. Default 0 (disabled). */
+	toolTimeoutMs?: number;
 }
 
 export interface LoopState {
@@ -614,9 +620,9 @@ export class MiMoLoop {
 							);
 						}
 
-						// 执行工具
+						// 执行工具（支持超时询问）
 						this.state.toolCalls++;
-						const result = await this.executeToolWithRetry(toolCall);
+						const result = await this.executeToolWithTimeout(toolCall);
 
 						// PostToolUse hook
 						const postHook = await this.runHooks("PostToolUse", {
@@ -1312,6 +1318,90 @@ export class MiMoLoop {
 			}
 		}
 		return { ...last, content: `[重试 2 次后仍失败] ${last.content}` };
+	}
+
+	/**
+	 * Execute a single tool call with an optional timeout.
+	 *
+	 * When toolTimeoutMs is set and confirmationGate is wired:
+	 *   1. Start a timer for toolTimeoutMs
+	 *   2. If the tool completes first → return the result
+	 *   3. If the timer fires first → ask the user via ask_choice:
+	 *      "继续等待" = reset timer and keep waiting
+	 *      "关闭工具" = abort the tool, return error result
+	 *
+	 * Falls back to normal execution when toolTimeoutMs is 0 or gate is missing.
+	 *
+	 * Idempotent-tool guard: tools named ask_choice / todo_write / todo_read
+	 * never trigger a timeout prompt (they are intentionally blocking / quick).
+	 */
+	private async executeToolWithTimeout(
+		toolCall: ToolCall,
+	): Promise<{ content: string; isError?: boolean }> {
+		const timeoutMs = this.config.toolTimeoutMs ?? 0;
+		const gate = this.config.confirmationGate;
+		const toolName = toolCall.function.name;
+
+		// Skip timeout for choice/todo tools — they are intentionally blocking or quick.
+		const SKIP_TIMEOUT = new Set(["ask_choice", "todo_write", "todo_read"]);
+		if (timeoutMs <= 0 || !gate || SKIP_TIMEOUT.has(toolName)) {
+			return this.executeToolWithRetry(toolCall);
+		}
+
+		const TOOL_TIMEOUT_OPTIONS: ChoicePayload = {
+			question: `${toolName} 已运行超过 ${Math.round(timeoutMs / 1000)}s，是否继续？`,
+			options: [
+				{ id: "continue_wait", title: "继续等待" },
+				{ id: "abort_tool", title: "关闭工具" },
+			],
+			allowCustom: false,
+		};
+
+		let remainingMs = timeoutMs;
+
+		while (true) {
+			const abortPromise = new Promise<"timeout">((resolve) => {
+				setTimeout(() => resolve("timeout"), remainingMs);
+			});
+
+			const executionPromise = this.executeToolWithRetry(toolCall).then(
+				(result) => ({ tag: "done" as const, result }),
+				(err) => ({ tag: "error" as const, err }),
+			);
+
+			const winner = await Promise.race([
+				abortPromise.then(() => "timeout" as const),
+				executionPromise.then((v) => v),
+			]);
+
+			if (winner !== "timeout") {
+				if (winner.tag === "done") return winner.result;
+				return {
+					content: `工具 "${toolCall.function.name}" 抛异常: ${String(winner.err?.message ?? winner.err)}`,
+					isError: true,
+				};
+			}
+
+			// Timeout fired — ask the user.
+			const verdict = await gate.ask(TOOL_TIMEOUT_OPTIONS);
+
+			if (verdict.type === "pick" && verdict.optionId === "abort_tool") {
+				return {
+					content: `用户关闭了长时间运行的 "${toolCall.function.name}" 调用（超过 ${Math.round(timeoutMs / 1000)}s）。`,
+					isError: true,
+				};
+			}
+
+			if (verdict.type === "cancel") {
+				return {
+					content: `用户取消了长时间运行的 "${toolCall.function.name}" 调用。`,
+					isError: true,
+				};
+			}
+
+			// "continue_wait" or custom text: keep waiting, reset timer.
+			remainingMs = timeoutMs;
+		}
 	}
 
 	/**

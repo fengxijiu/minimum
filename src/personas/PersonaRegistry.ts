@@ -167,7 +167,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		maxSteps: 100,
 		maxTokens: 64_000,
 		outputSchema: "task_report",
-		parallelism: { soloPerWave: false, maxConcurrent: 2 },
+		parallelism: { soloPerWave: false, maxConcurrent: 3 },
 	});
 
 	out.set("web_searcher", {
@@ -289,7 +289,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		maxSteps: 100,
 		maxTokens: 64_000,
 		outputSchema: "task_report",
-		parallelism: { soloPerWave: false, maxConcurrent: 2 },
+		parallelism: { soloPerWave: false, maxConcurrent: 3 },
 	});
 
 	out.set("runtime_debug", {
@@ -364,7 +364,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		maxSteps: 100,	
 		maxTokens: 64_000,
 		outputSchema: "task_report",
-		parallelism: { soloPerWave: false, maxConcurrent: 1 },
+		parallelism: { soloPerWave: false, maxConcurrent: 2 },
 	});
 
 	return out;

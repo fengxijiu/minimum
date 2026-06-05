@@ -217,26 +217,10 @@ export function createPlannerBridge(
 			collectText(
 				client,
 				[
-					await sys(input.userRequest),
+					{ role: "system", content: DELIVER_SYS },
 					{
 						role: "user",
-						content: [
-							"# W4 Final Delivery Input",
-							`## Original User Request\n${input.userRequest}`,
-							`## Status Reason\n${input.statusReason}`,
-							`## Leaf Deliverable Task IDs\n${renderLeafTaskIds(input.leafTaskIds)}`,
-							`## Task Reports\n${renderResults(input.results)}`,
-							`## Actual Written Business Files\n${renderWrittenFilesByTask(input.writtenFilesByTask)}`,
-							`## Known Issues\n${renderKnownIssues(input.knownIssues)}`,
-							`## Finalize Governance Report\n${renderFinalizeReport(input.finalizeReport)}`,
-							[
-								"Author the primary user-facing delivery for this run.",
-								"Ground every claim only in the task reports, actual written business files, known issues, or finalize governance results above.",
-								"Do not expose .minimum/** process artifacts or internal trace files by default.",
-								"If blocked, errored, or override states matter, surface them under a clear warnings section.",
-								"Output exactly one <final_brief> block containing Markdown, with no prose before or after it.",
-							].join(" "),
-						].join("\n\n"),
+						content: buildStructuredSummary(input),
 					},
 				],
 				max,
@@ -291,6 +275,52 @@ const SYNTHESIS_SYS = [
 	"Ground every claim in the task reports — never invent results that are not present.",
 	"Output exactly one <conclusion> block containing Markdown, with no prose before or after it.",
 ].join(" ");
+
+const DELIVER_SYS = [
+	"You compose the user-facing delivery brief for a completed multi-agent pipeline run.",
+	"You receive a pre-structured summary containing the original request, task outcomes, written files, and known issues.",
+	"Write a clear, concise <final_brief> in Markdown that answers the user's request directly.",
+	"Lead with what was accomplished, then list concrete changes made (files written, key findings).",
+	"If any tasks were blocked, errored, or produced warnings, surface them under a short warnings section.",
+	"Do not expose internal pipeline mechanics, .minimum/** artifacts, or agent-internal details.",
+	"Ground every claim in the provided summary — never invent results.",
+	"Output exactly one <final_brief> block containing Markdown, with no prose before or after it.",
+].join(" ");
+
+function buildStructuredSummary(input: FinalDeliveryInput): string {
+	const sections: string[] = ["# W4 Delivery Summary"];
+
+	sections.push(`## Original Request\n${input.userRequest}`);
+	sections.push(`## Status\n${input.statusReason}`);
+
+	const taskSummaries = input.results.map((r) => {
+		const firstLine = r.report.split("\n").find((l) => l.trim().length > 0)?.trim() ?? "";
+		const summary = firstLine.length > 300 ? firstLine.slice(0, 297) + "..." : firstLine;
+		return `- **${r.taskId}** (${r.personaId}): ${r.status}${summary ? ` — ${summary}` : ""}${r.errors.length ? ` [errors: ${r.errors.join("; ")}]` : ""}`;
+	}).join("\n");
+	sections.push(`## Task Outcomes\n${taskSummaries || "(none)"}`);
+
+	if (input.writtenFilesByTask?.length) {
+		const files = input.writtenFilesByTask
+			.flatMap((entry) => entry.files)
+			.filter((f, i, arr) => arr.indexOf(f) === i);
+		sections.push(`## Written Files (${files.length})\n${files.map((f) => `- ${f}`).join("\n")}`);
+	}
+
+	if (input.knownIssues.length > 0) {
+		const deduped = [...new Set(input.knownIssues)];
+		sections.push(`## Known Issues\n${deduped.map((i) => `- ${i}`).join("\n")}`);
+	}
+
+	if (input.finalizeReport) {
+		const applied = input.finalizeReport.applied.length;
+		const errors = input.finalizeReport.errors.length;
+		sections.push(`## Memory Governance\n${applied} decisions applied, ${errors} errors`);
+	}
+
+	sections.push("Author the user-facing delivery brief now. Output exactly one <final_brief> block.");
+	return sections.join("\n\n");
+}
 
 export interface WorkerExecutorOptions {
 	maxTokens?: number;

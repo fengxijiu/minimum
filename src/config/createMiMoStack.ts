@@ -199,6 +199,8 @@ export function createMiMoStack(
 		workingDirectory,
 		sessionPersister: sessionManager,
 		memoryManager,
+		confirmationGate: deps.confirmationGate,
+		toolTimeoutMs: cfg.toolTimeoutMs,
 	});
 
 	return {

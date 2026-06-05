@@ -107,6 +107,8 @@ export interface MiMoConfig {
 	enableReadGuard?: boolean;
 	/** plan mode：只读规划，禁止变异工具（默认 false） */
 	planMode?: boolean;
+	/** 单步工具调用超时阈值（毫秒）。超时后弹出 ask_choice 询问用户是否继续/关闭。0 禁用（默认 0）。 */
+	toolTimeoutMs?: number;
 	/**
 	 * 三档审批模式（对标 Codex）:
 	 *   read-only  — 仅读工具，写操作全拦
@@ -160,6 +162,7 @@ export const DEFAULT_MIMO_CONFIG: Required<MiMoConfig> = {
 	budgetUsd: 0,
 	enableReadGuard: true,
 	planMode: false,
+	toolTimeoutMs: 0,
 	approvalMode: "suggest",
 	context: {
 		foldThreshold: 0.7,
@@ -229,6 +232,7 @@ export function mergeConfig(user: MiMoConfig = {}): Required<MiMoConfig> {
 		enableReadGuard:
 			user.enableReadGuard ?? DEFAULT_MIMO_CONFIG.enableReadGuard,
 		planMode: user.planMode ?? DEFAULT_MIMO_CONFIG.planMode,
+		toolTimeoutMs: user.toolTimeoutMs ?? DEFAULT_MIMO_CONFIG.toolTimeoutMs,
 		approvalMode: user.approvalMode ?? DEFAULT_MIMO_CONFIG.approvalMode,
 		context: { ...DEFAULT_MIMO_CONFIG.context, ...user.context },
 		capacity: { ...DEFAULT_MIMO_CONFIG.capacity, ...user.capacity },

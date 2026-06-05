@@ -231,6 +231,7 @@ async function executeTask(
 	return runTask(contract, {
 		projectRoot: options.projectRoot,
 		executor: options.executor,
+		refreshScheduler: options.refreshScheduler,
 	});
 }
 

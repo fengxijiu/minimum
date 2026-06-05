@@ -52,6 +52,19 @@ export {
 	type MissionLoopBackTask,
 } from "./MissionChecker.js";
 export {
+	decideMissionCheckMode,
+	type MissionCheckMode,
+} from "./MissionCheckMode.js";
+export {
+	resolveExecutionBudget,
+	type ExecutionDepth,
+} from "./ExecutionBudget.js";
+export {
+	classifyOrchestrationMode,
+	type OrchestrationMode,
+} from "./OrchestrationClassifier.js";
+export { PipelineCache } from "./PipelineCache.js";
+export {
 	artifactPath,
 	emptyArtifactPaths,
 	writeContracts,

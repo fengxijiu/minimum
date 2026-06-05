@@ -268,6 +268,10 @@ Anti-patterns:
 - Do not create duplicate repo_scout tasks over the same files.
 - Do not place parallel write-capable tasks together when their file scopes are
   likely to overlap; serialize them with `dependsOn`.
+- Only add `dependsOn` when the downstream task requires concrete output
+  from the upstream task (file content, test results, analysis report).
+  Do not add dependencies for conceptual ordering.
+  Prefer parallel tasks when they touch independent files.
 
 One code_executor task should not own more than 3-5 files unless the change is mechanical. One test_writer task should not cover more than 3 acceptance criteria. One repo_scout task should not cover unrelated domains.
 

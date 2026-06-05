@@ -11,6 +11,7 @@ import {
 	type Currency,
 } from "../clients/MiMoPricing.js";
 import type { Persona } from "../personas/Persona.js";
+import { resolveExecutionBudget, type ExecutionDepth } from "./ExecutionBudget.js";
 import { checkWrite } from "../tools/policy/PathPolicyEnforcer.js";
 import { checkTool } from "../tools/policy/ToolAllowlistEnforcer.js";
 import {
@@ -116,6 +117,7 @@ export interface WorkerRunInput {
 	contract: TaskContract;
 	maxSteps?: number;
 	maxTokens?: number;
+	executionDepth?: ExecutionDepth;
 	signal?: AbortSignal;
 	onEvent?: (event: WorkerEvent) => void;
 }
@@ -177,8 +179,9 @@ export class WorkerLoop {
 	}
 
 	async runTask(input: WorkerRunInput): Promise<WorkerRunResult> {
-		const maxSteps = input.maxSteps ?? input.persona.maxSteps ?? 20;
-		const maxTokens = input.maxTokens ?? input.persona.maxTokens;
+		const budget = resolveExecutionBudget(input.persona.id, input.executionDepth);
+		const maxSteps = input.maxSteps ?? budget.maxSteps;
+		const maxTokens = input.maxTokens ?? budget.maxTokens;
 		const emit = input.onEvent ?? (() => {});
 
 		// Filter the host's tool catalog down to what this persona may invoke,

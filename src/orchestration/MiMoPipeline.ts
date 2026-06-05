@@ -9,15 +9,19 @@ import {
 	listCandidates,
 	loadCanonicalMemory,
 	memoryIndexPath,
-	refreshMemoryIndex,
+	MemoryIndexRefreshScheduler,
 	type FinalizeReport,
 } from "../memory/governance/index.js";
 import type { MemoryCandidate, MergeDecision } from "../memory/governance/types.js";
 import type { PersonaId } from "../personas/Persona.js";
+import { getPersona } from "../personas/PersonaRegistry.js";
 import { compileCoarse, classifyTaskType } from "./TaskCompiler.js";
 import { buildWaves } from "./TaskGraph.js";
 import type { CoarseDag, TaskContract, TaskInputs } from "./TaskContract.js";
 import { WaveHarness } from "./WaveHarness.js";
+import { decideMissionCheckMode } from "./MissionCheckMode.js";
+import { classifyOrchestrationMode, type OrchestrationMode } from "./OrchestrationClassifier.js";
+import type { PipelineCache } from "./PipelineCache.js";
 import { compileRefinement, refineDag, type RefinementEntry } from "./Refiner.js";
 import { validateGrants, type GrantableCatalog } from "./CapabilityCatalog.js";
 import { buildArtifactMap, evaluateLaunchGate, isContextGapBlocked } from "./LaunchGate.js";
@@ -192,6 +196,12 @@ export interface PipelineOptions {
 	getDeliveryWrites?: () => Array<{ taskId: string; files: string[] }>;
 	/** Harness mode: "wave" (default) or "dynamic" (real-time dependency unlocking). */
 	harnessMode?: "wave" | "dynamic";
+	/** Force full W3.5 mission check even when a lighter mode would suffice. */
+	forceMissionCheck?: boolean;
+	/** Override the automatic orchestration mode classification. */
+	orchestrationMode?: OrchestrationMode;
+	/** In-run cache for file reads and command results to avoid redundant I/O. */
+	cache?: PipelineCache;
 }
 
 export interface PipelineResult {
@@ -210,6 +220,15 @@ export async function runPipeline(
 	opts: PipelineOptions,
 ): Promise<PipelineResult> {
 	const emit = opts.onEvent ?? (() => {});
+	const orchestrationMode = opts.orchestrationMode ?? classifyOrchestrationMode(userRequest);
+
+	if (orchestrationMode === "scan_only") {
+		return runScanOnly(userRequest, opts, emit);
+	}
+	if (orchestrationMode === "direct_edit") {
+		return runDirectEdit(userRequest, opts, emit);
+	}
+
 	const taskType = classifyTaskType(userRequest);
 	const allResults: TaskResult[] = [];
 	const resolvedContracts: TaskContract[] = [];
@@ -218,6 +237,7 @@ export async function runPipeline(
 	const gateRetryKeys = new Set<string>();
 	const artifactPaths = emptyArtifactPaths();
 	artifactPaths.memoryIndex = memoryIndexPath(opts.projectRoot);
+	const refreshScheduler = new MemoryIndexRefreshScheduler();
 	let maxMissionRepairLoops = opts.maxMissionRepairLoops ?? DEFAULT_MAX_MISSION_REPAIR_LOOPS;
 	let statusReason: PipelineStatusReason = "complete";
 
@@ -258,7 +278,7 @@ export async function runPipeline(
 	const taskCount = dag.phases.reduce((n, p) => n + p.tasks.length, 0);
 	try {
 		artifactPaths.dag = await writeDag(opts.projectRoot, dag.epicId, dag);
-		await refreshMemoryIndex(opts.projectRoot);
+		refreshScheduler.markDirty("W0:writeDag");
 	} catch (e) {
 		return fail(emit, "W0", e);
 	}
@@ -280,8 +300,35 @@ export async function runPipeline(
 		passId: "initial",
 		artifactPaths,
 		gateRetryKeys,
+		refreshScheduler,
 	});
 	if (!initialPass.ok) return initialPass.result;
+
+	const deliveryWrites = opts.getDeliveryWrites?.();
+	const writtenByTask = normalizeWrittenFilesByTask(deliveryWrites);
+	const preCheckChangedFiles = collectChangedFiles(writtenByTask);
+	const hasFileChanges = deliveryWrites === undefined ? true : preCheckChangedFiles.length > 0;
+	const allPersonasReadOnly = dag.phases.every((phase) =>
+		phase.tasks.every((task) => {
+			try { return !getPersona(task.personaId).pathPolicy.canWrite; }
+			catch { return true; }
+		}),
+	);
+	const testsPassed = allResults.some(
+		(r) => r.personaId === "test_runner" && r.status === "ok",
+	);
+	const missionMode = decideMissionCheckMode({
+		hasFileChanges,
+		isReadOnlyTask: allPersonasReadOnly,
+		changedFiles: preCheckChangedFiles,
+		testsPassed,
+		userRequestedFullCheck: opts.forceMissionCheck ?? false,
+	});
+
+	if (missionMode === "skip") {
+		emit({ type: "phase_start", phase: "W3.5", label: stageName("W3.5") });
+		emit({ type: "phase_skip" as any, phase: "W3.5", reason: preCheckChangedFiles.length === 0 ? "no file changes" : "read-only task" });
+	} else {
 
 	let missionLoopIndex = 0;
 	while (true) {
@@ -363,7 +410,7 @@ export async function runPipeline(
 				mission.report,
 			);
 			artifactPaths.missionChecks.push(written.markdownPath, written.jsonPath);
-			await refreshMemoryIndex(opts.projectRoot);
+			refreshScheduler.markDirty("W3.5:missionCheck");
 		} catch (e) {
 			return fail(emit, "W3.5", e, allResults);
 		}
@@ -440,7 +487,7 @@ export async function runPipeline(
 				repairDag,
 			);
 			artifactPaths.repairDags.push(repairDagPath);
-			await refreshMemoryIndex(opts.projectRoot);
+			refreshScheduler.markDirty("W3.5:repairDag");
 		} catch (e) {
 			return fail(emit, "W3.5", e, allResults);
 		}
@@ -459,11 +506,15 @@ export async function runPipeline(
 			passId: `repair-${missionLoopIndex}`,
 			artifactPaths,
 			gateRetryKeys,
+			refreshScheduler,
 		});
 		if (!repairPass.ok) return repairPass.result;
 	}
 
+	} // end missionMode !== "skip"
+
 	// ── W4: finalize + memory governance ──────────────────────────────────────
+	await refreshScheduler.flushIfDirty(opts.projectRoot);
 	emit({ type: "phase_start", phase: "W4", label: stageName("W4") });
 	const candidates = await listCandidates(opts.projectRoot);
 	let finalizeReport: FinalizeReport | undefined;
@@ -515,6 +566,8 @@ export async function runPipeline(
 		finalBrief = undefined;
 	}
 
+	await refreshScheduler.flushIfDirty(opts.projectRoot);
+
 	emit({
 		type: "pipeline_complete",
 		results: allResults,
@@ -531,6 +584,160 @@ export async function runPipeline(
 		...(finalizeReport && { finalize: finalizeReport }),
 		...(finalBrief && { finalBrief }),
 		...(leafTaskIds.length && { leafTaskIds }),
+		...(changedFiles.length && { changedFiles }),
+	};
+}
+
+async function runScanOnly(
+	userRequest: string,
+	opts: PipelineOptions,
+	emit: (e: PipelineEvent) => void,
+): Promise<PipelineResult> {
+	const allResults: TaskResult[] = [];
+	const artifactPaths = emptyArtifactPaths();
+
+	emit({ type: "phase_start", phase: "W1", label: stageName("W1") });
+	const memory = await loadCanonicalMemory(opts.projectRoot, "general");
+	const baseInputs: TaskInputs = { userGoal: userRequest, artifacts: [], constraints: [] };
+
+	const scoutContract: TaskContract = {
+		taskId: "scan-1",
+		personaId: "repo_scout",
+		systemPrompt: getPersona("repo_scout").systemPrompt,
+		userPrompt: userRequest,
+		allowedGlobs: [],
+		acceptance: [],
+		inputs: baseInputs,
+	};
+
+	try {
+		const results = await runWaves([scoutContract], opts, emit);
+		allResults.push(...results);
+	} catch (e) {
+		return fail(emit, "W1", e, allResults);
+	}
+
+	let finalBrief: string | undefined;
+	try {
+		finalBrief = extractFinalBrief(
+			await opts.planner.deliver({
+				userRequest,
+				statusReason: "complete",
+				results: allResults,
+				leafTaskIds: ["scan-1"],
+				knownIssues: [],
+			}),
+		);
+	} catch {
+		finalBrief = undefined;
+	}
+
+	emit({
+		type: "pipeline_complete",
+		results: allResults,
+		goal: userRequest,
+		...(finalBrief && { finalBrief }),
+		leafTaskIds: ["scan-1"],
+	});
+	return {
+		ok: true,
+		results: allResults,
+		statusReason: "complete",
+		...(finalBrief && { finalBrief }),
+		leafTaskIds: ["scan-1"],
+	};
+}
+
+async function runDirectEdit(
+	userRequest: string,
+	opts: PipelineOptions,
+	emit: (e: PipelineEvent) => void,
+): Promise<PipelineResult> {
+	const allResults: TaskResult[] = [];
+	const refreshScheduler = new MemoryIndexRefreshScheduler();
+
+	emit({ type: "phase_start", phase: "W1", label: stageName("W1") });
+	const memory = await loadCanonicalMemory(opts.projectRoot, "general");
+	const baseInputs: TaskInputs = { userGoal: userRequest, artifacts: [], constraints: [] };
+
+	const perceptionDag: CoarseDag = {
+		epicId: "direct-edit",
+		phases: [{
+			id: "P1",
+			name: "perception",
+			tasks: [{
+				taskId: "scout-1",
+				personaId: "repo_scout",
+				dependsOn: [],
+				allowedGlobs: [],
+				acceptance: [],
+			}],
+		}],
+	};
+	const { contracts: perceptionContracts } = refineDag(perceptionDag, {
+		inputs: baseInputs,
+		refinement: new Map(),
+	});
+	if (perceptionContracts.length > 0) {
+		try {
+			const results = await runWaves(perceptionContracts, opts, emit);
+			allResults.push(...results);
+		} catch (e) {
+			return fail(emit, "W1", e, allResults);
+		}
+	}
+
+	emit({ type: "phase_start", phase: "W2/3", label: stageName("W2/3") });
+	const editContract: TaskContract = {
+		taskId: "edit-1",
+		personaId: "code_executor",
+		systemPrompt: getPersona("code_executor").systemPrompt,
+		userPrompt: userRequest,
+		allowedGlobs: ["**"],
+		acceptance: [],
+		inputs: baseInputs,
+	};
+	try {
+		const results = await runWaves([editContract], opts, emit, refreshScheduler);
+		allResults.push(...results);
+	} catch (e) {
+		return fail(emit, "W2/3", e, allResults);
+	}
+
+	await refreshScheduler.flushIfDirty(opts.projectRoot);
+
+	let finalBrief: string | undefined;
+	try {
+		finalBrief = extractFinalBrief(
+			await opts.planner.deliver({
+				userRequest,
+				statusReason: "complete",
+				results: allResults,
+				leafTaskIds: ["edit-1"],
+				knownIssues: [],
+			}),
+		);
+	} catch {
+		finalBrief = undefined;
+	}
+
+	const writtenFilesByTask = normalizeWrittenFilesByTask(opts.getDeliveryWrites?.());
+	const changedFiles = collectChangedFiles(writtenFilesByTask);
+
+	emit({
+		type: "pipeline_complete",
+		results: allResults,
+		goal: userRequest,
+		...(finalBrief && { finalBrief }),
+		leafTaskIds: ["edit-1"],
+		...(changedFiles.length && { changedFiles }),
+	});
+	return {
+		ok: true,
+		results: allResults,
+		statusReason: "complete",
+		...(finalBrief && { finalBrief }),
+		leafTaskIds: ["edit-1"],
 		...(changedFiles.length && { changedFiles }),
 	};
 }
@@ -567,6 +774,7 @@ interface DagPassOptions {
 	passId: string;
 	artifactPaths: ArtifactPaths;
 	gateRetryKeys: Set<string>;
+	refreshScheduler: MemoryIndexRefreshScheduler;
 }
 
 type DagPassResult = { ok: true } | { ok: false; result: PipelineResult };
@@ -597,7 +805,7 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 	});
 	if (perceptionContracts.length > 0) {
 		try {
-			const perceptionResults = await runWaves(perceptionContracts, opts, emit);
+			const perceptionResults = await runWaves(perceptionContracts, opts, emit, args.refreshScheduler);
 			allResults.push(...perceptionResults);
 		} catch (e) {
 			return { ok: false, result: fail(emit, "W1", e, allResults) };
@@ -631,7 +839,7 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 			if (parsed.ok) {
 				refinement = parsed.entries;
 				refinementParsed = true;
-				await writeInlineContextPacks(opts.projectRoot, dag.epicId, refinement);
+				await writeInlineContextPacks(opts.projectRoot, dag.epicId, refinement, args.refreshScheduler);
 				refinements.push(...refinement.values());
 			} else {
 				knownIssues.push(`W0.5 refine parse failed for ${dag.epicId}: ${parsed.error}`);
@@ -643,7 +851,7 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 					parsed.error,
 				);
 				artifactPaths.refinements.push(refinementPath);
-				await refreshMemoryIndex(opts.projectRoot);
+				args.refreshScheduler.markDirty("W0.5:failedRefine");
 			}
 		} catch (e) {
 			return { ok: false, result: fail(emit, "W0.5", e, allResults) };
@@ -657,7 +865,7 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 					refinement.values(),
 				);
 				artifactPaths.refinements.push(refinementPath);
-				await refreshMemoryIndex(opts.projectRoot);
+				args.refreshScheduler.markDirty("W0.5:refine");
 			} catch (e) {
 				return { ok: false, result: fail(emit, "W0.5", e, allResults) };
 			}
@@ -714,7 +922,7 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 			});
 			const confirmationPath = await writeDagConfirmation(opts.projectRoot, dag.epicId, currentPassId, confirmation.markdown);
 			artifactPaths.confirmations.push(confirmationPath);
-			await refreshMemoryIndex(opts.projectRoot);
+			await args.refreshScheduler.flushIfDirty(opts.projectRoot);
 			emit({ type: "refine_done", contractCount: allContracts.length, errorCount: refineErrors.length });
 			emit({
 				type: "dag_confirmation_requested",
@@ -767,7 +975,7 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 				emit,
 				gateRetryKeys,
 			});
-			const implResults = await runWaves(stripPerceptionDeps(runnable), opts, emit);
+			const implResults = await runWaves(stripPerceptionDeps(runnable), opts, emit, args.refreshScheduler);
 			allResults.push(...implResults);
 			const retryResults = await retryBlockedContextGaps({
 				results: implResults,
@@ -776,6 +984,7 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 				emit,
 				knownIssues,
 				gateRetryKeys,
+				refreshScheduler: args.refreshScheduler,
 			});
 			allResults.push(...retryResults);
 		} catch (e) {
@@ -1131,6 +1340,7 @@ async function retryBlockedContextGaps(args: {
 	emit: (e: PipelineEvent) => void;
 	knownIssues: string[];
 	gateRetryKeys: Set<string>;
+	refreshScheduler: MemoryIndexRefreshScheduler;
 }): Promise<TaskResult[]> {
 	const { results, contracts, opts, emit, knownIssues, gateRetryKeys } = args;
 	const byId = new Map(contracts.map((c) => [c.taskId, c]));
@@ -1154,7 +1364,7 @@ async function retryBlockedContextGaps(args: {
 	}
 
 	if (retryContracts.length === 0) return [];
-	const retryResults = await runWaves(stripPerceptionDeps(retryContracts), opts, emit);
+	const retryResults = await runWaves(stripPerceptionDeps(retryContracts), opts, emit, args.refreshScheduler);
 	for (const result of retryResults) {
 		if (!isContextGapBlocked(result)) continue;
 		const contract = byId.get(result.taskId);
@@ -1169,6 +1379,7 @@ async function runWaves(
 	contracts: TaskContract[],
 	opts: PipelineOptions,
 	emit: (e: PipelineEvent) => void,
+	refreshScheduler?: MemoryIndexRefreshScheduler,
 ): Promise<TaskResult[]> {
 	// Phase 5: harnessMode — choose WaveHarness (default) or DynamicHarness.
 	const isDynamic = opts.harnessMode === "dynamic";
@@ -1178,6 +1389,7 @@ async function runWaves(
 		return harness.runToCompletion(contracts, {
 			projectRoot: opts.projectRoot,
 			executor: opts.executor,
+			refreshScheduler,
 			onEvent: (event) => {
 				if (event.type === "task_started") {
 					emit({ type: "wave", event: { type: "task_start", waveIndex: 0, taskId: event.taskId } });
@@ -1208,6 +1420,7 @@ async function runWaves(
 	return harness.runToCompletion(contracts, {
 		projectRoot: opts.projectRoot,
 		executor: opts.executor,
+		refreshScheduler,
 		onEvent: (event) => {
 			// Translate HarnessEvent → PipelineEvent for backwards compatibility.
 			if (event.type === "wave_start" || event.type === "wave_complete") {
@@ -1241,6 +1454,7 @@ async function writeInlineContextPacks(
 	projectRoot: string,
 	epicId: string,
 	refinement: Map<string, RefinementEntry>,
+	refreshScheduler: MemoryIndexRefreshScheduler,
 ): Promise<void> {
 	for (const entry of refinement.values()) {
 		const text = entry.contextPack?.trim();
@@ -1251,7 +1465,7 @@ async function writeInlineContextPacks(
 		await fs.writeFile(filePath, text.endsWith("\n") ? text : `${text}\n`, "utf-8");
 		entry.contextPackPath = filePath;
 	}
-	await refreshMemoryIndex(projectRoot);
+	refreshScheduler.markDirty("W0.5:contextPacks");
 }
 
 function buildRepairDag(

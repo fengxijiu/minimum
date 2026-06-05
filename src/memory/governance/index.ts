@@ -52,6 +52,7 @@ export {
 	type MemoryIndexEntry,
 	type MemoryIndexKind,
 } from "./MemoryIndex.js";
+export { MemoryIndexRefreshScheduler } from "./RefreshScheduler.js";
 export {
 	canonicalPath,
 	defaultManifest,

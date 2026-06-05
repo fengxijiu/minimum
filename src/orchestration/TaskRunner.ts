@@ -1,4 +1,4 @@
-import { refreshMemoryIndex } from "../memory/governance/MemoryIndex.js";
+import type { MemoryIndexRefreshScheduler } from "../memory/governance/RefreshScheduler.js";
 import { writeCandidate } from "../memory/governance/MemoryStaging.js";
 import type { MemoryCandidate, MemoryConfidence } from "../memory/governance/types.js";
 import type { PersonaId } from "../personas/Persona.js";
@@ -55,6 +55,7 @@ export interface WorkerExecutor {
 export interface TaskRunnerOptions {
 	projectRoot: string;
 	executor: WorkerExecutor;
+	refreshScheduler?: MemoryIndexRefreshScheduler;
 }
 
 /**
@@ -156,7 +157,7 @@ export async function runTask(
 		const candidate = parseMemoryCandidate(memBlock, contract);
 		try {
 			await writeCandidate(opts.projectRoot, candidate);
-			await refreshMemoryIndex(opts.projectRoot);
+			opts.refreshScheduler?.markDirty("task:memoryCandidate");
 		} catch (err) {
 			stagingError = err instanceof Error ? err.message : String(err);
 		}

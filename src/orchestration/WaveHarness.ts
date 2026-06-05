@@ -96,6 +96,7 @@ export class WaveHarness implements DagHarness {
 			const results = await schedule(waves, {
 				projectRoot: options?.projectRoot ?? process.cwd(),
 				executor: options!.executor,
+				refreshScheduler: options?.refreshScheduler,
 				onEvent: waveEventAdapter,
 			});
 			allResults.push(...results);
