@@ -82,6 +82,12 @@ export type PipelineEvent =
 			results: TaskResult[];
 			/** Original user goal, echoed so the summary can restate it. */
 			goal?: string;
+			/** W4 master_planner-authored final delivery brief. */
+			finalBrief?: string;
+			/** Business files changed by the run, excluding internal process artifacts. */
+			changedFiles?: string[];
+			/** Internal process artifacts for debug/trace surfaces only. */
+			traceArtifacts?: string[];
 			/** W4 human-readable conclusion answering the goal (from synthesize). */
 			conclusion?: string;
 			/** Terminal task ids (nothing depends on them) — the actual deliverables. */
@@ -90,6 +96,18 @@ export type PipelineEvent =
 			artifacts?: string[];
 	  }
 	| { type: "pipeline_error"; phase: PipelinePhase; error: string };
+
+export type PipelineStatusReason = "human_confirmation" | "user_override" | "complete" | "error";
+
+export interface FinalDeliveryInput {
+	userRequest: string;
+	statusReason: PipelineStatusReason;
+	results: TaskResult[];
+	leafTaskIds: string[];
+	knownIssues: string[];
+	finalizeReport?: FinalizeReport;
+	writtenFilesByTask?: Array<{ taskId: string; files: string[] }>;
+}
 
 /** Planner/checker LLM touchpoints used by the pipeline. */
 export interface PlannerBridge {
@@ -116,6 +134,8 @@ export interface PlannerBridge {
 		candidates: MemoryCandidate[],
 		canonicalText: string,
 	): Promise<string>;
+	/** Post-W4: master_planner-authored final delivery brief. */
+	deliver(input: FinalDeliveryInput): Promise<string>;
 	/**
 	 * Post-W4: compose a concise, human-readable conclusion answering the
 	 * original goal from the task reports. Returns text containing a single
@@ -128,6 +148,13 @@ export interface PlannerBridge {
 /** Pull the Markdown body out of a <conclusion> block, or undefined if absent/empty. */
 export function extractConclusion(text: string): string | undefined {
 	const m = /<conclusion>([\s\S]*?)<\/conclusion>/i.exec(text);
+	const body = (m?.[1] ?? "").trim();
+	return body || undefined;
+}
+
+/** Pull the Markdown body out of a <final_brief> block, or undefined if absent/empty. */
+export function extractFinalBrief(text: string): string | undefined {
+	const m = /<final_brief>([\s\S]*?)<\/final_brief>/i.exec(text);
 	const body = (m?.[1] ?? "").trim();
 	return body || undefined;
 }
@@ -157,6 +184,8 @@ export interface PipelineOptions {
 	choiceGate?: ConfirmationGate;
 	/** Catalog of grantable skills + MCP tools, injected into W0.5 refine. */
 	grantableCatalog?: GrantableCatalog;
+	/** Business-file writes observed by the caller and forwarded into W4 delivery. */
+	getDeliveryWrites?: () => Array<{ taskId: string; files: string[] }>;
 }
 
 export interface PipelineResult {
@@ -164,7 +193,10 @@ export interface PipelineResult {
 	results: TaskResult[];
 	finalize?: FinalizeReport;
 	error?: string;
-	statusReason?: "human_confirmation" | "user_override" | "complete" | "error";
+	statusReason?: PipelineStatusReason;
+	finalBrief?: string;
+	leafTaskIds?: string[];
+	changedFiles?: string[];
 }
 
 export async function runPipeline(
@@ -181,7 +213,7 @@ export async function runPipeline(
 	const artifactPaths = emptyArtifactPaths();
 	artifactPaths.memoryIndex = memoryIndexPath(opts.projectRoot);
 	let maxMissionRepairLoops = opts.maxMissionRepairLoops ?? DEFAULT_MAX_MISSION_REPAIR_LOOPS;
-	let statusReason: PipelineResult["statusReason"] = "complete";
+	let statusReason: PipelineStatusReason = "complete";
 
 	// ── W0: load memory, compile coarse DAG ──────────────────────────────────
 	emit({ type: "phase_start", phase: "W0", label: stageName("W0") });
@@ -426,29 +458,51 @@ export async function runPipeline(
 		return fail(emit, "W4", e, allResults);
 	}
 
-	// Best-effort synthesis: compose a readable conclusion answering the goal.
-	// A failure here must never sink an otherwise-complete pipeline.
-	let conclusion: string | undefined;
-	try {
-		conclusion = extractConclusion(await opts.planner.synthesize(userRequest, allResults));
-	} catch {
-		conclusion = undefined;
-	}
-
 	const leafTaskIds = leafTaskIdsOf(resolvedContracts);
-	const artifacts = [artifactPaths.dag, ...artifactPaths.contracts, ...artifactPaths.confirmations].filter(
+	const traceArtifacts = [artifactPaths.dag, ...artifactPaths.contracts, ...artifactPaths.confirmations].filter(
 		(p): p is string => Boolean(p),
 	);
+	const writtenFilesByTask = normalizeWrittenFilesByTask(opts.getDeliveryWrites?.());
+	const changedFiles = collectChangedFiles(writtenFilesByTask);
+
+	// Best-effort final delivery: compose the user-facing brief without exposing
+	// internal process artifacts by default. Delivery failures must never sink
+	// an otherwise-complete pipeline.
+	let finalBrief: string | undefined;
+	try {
+		finalBrief = extractFinalBrief(
+			await opts.planner.deliver({
+				userRequest,
+				statusReason,
+				results: allResults,
+				leafTaskIds,
+				knownIssues,
+				...(finalizeReport && { finalizeReport }),
+				...(writtenFilesByTask.length && { writtenFilesByTask }),
+			}),
+		);
+	} catch {
+		finalBrief = undefined;
+	}
 
 	emit({
 		type: "pipeline_complete",
 		results: allResults,
 		goal: userRequest,
-		...(conclusion && { conclusion }),
+		...(finalBrief && { finalBrief }),
 		...(leafTaskIds.length && { leafTaskIds }),
-		...(artifacts.length && { artifacts }),
+		...(changedFiles.length && { changedFiles }),
+		...(traceArtifacts.length && { traceArtifacts }),
 	});
-	return { ok: true, results: allResults, statusReason, ...(finalizeReport && { finalize: finalizeReport }) };
+	return {
+		ok: true,
+		results: allResults,
+		statusReason,
+		...(finalizeReport && { finalize: finalizeReport }),
+		...(finalBrief && { finalBrief }),
+		...(leafTaskIds.length && { leafTaskIds }),
+		...(changedFiles.length && { changedFiles }),
+	};
 }
 
 interface DagPassOptions {
@@ -956,4 +1010,34 @@ function fail(
 	const error = e instanceof Error ? e.message : String(e);
 	emit({ type: "pipeline_error", phase, error });
 	return { ok: false, results, error, statusReason: "error" };
+}
+
+function normalizeWrittenFilesByTask(
+	items: Array<{ taskId: string; files: string[] }> | undefined,
+): Array<{ taskId: string; files: string[] }> {
+	if (!items?.length) return [];
+	return items
+		.map(({ taskId, files }) => ({
+			taskId,
+			files: [...new Set(files.filter((file) => file && !isInternalProcessFile(file)))],
+		}))
+		.filter((entry) => entry.files.length > 0);
+}
+
+function collectChangedFiles(items: Array<{ taskId: string; files: string[] }>): string[] {
+	const seen = new Set<string>();
+	const changed: string[] = [];
+	for (const entry of items) {
+		for (const file of entry.files) {
+			if (seen.has(file)) continue;
+			seen.add(file);
+			changed.push(file);
+		}
+	}
+	return changed;
+}
+
+function isInternalProcessFile(file: string): boolean {
+	const normalized = file.replace(/\\/g, "/");
+	return /(^|\/)\.minimum(\/|$)/.test(normalized);
 }

@@ -363,6 +363,13 @@ export function App({
   useEffect(() => {
     if (!choiceGate) return;
     choiceGate.onShow = (payload) => {
+      // Push question + context into static scrollback so they don't live inside
+      // the Ink live-region frame (which gets erased/redrawn every tick). Only
+      // the compact option list stays in the live area, keeping ChoiceBar height
+      // bounded and preventing flicker / vertical jumping on long text.
+      const lines: string[] = [`Choice: ${payload.question}`];
+      if (payload.context) lines.push(payload.context);
+      dispatch({ type: 'system.push', text: lines.join('\n') });
       setActiveChoice({ question: payload.question, options: payload.options, allowCustom: payload.allowCustom, context: payload.context });
       dispatch({ type: 'pending.set', value: 'choice' });
     };
@@ -1277,8 +1284,13 @@ export function App({
       ? 0
       : 2 + 1 + subagentVisible + (sSubagents.length > 4 ? 1 : 0);
     const toastRows = sToasts.length;
-    return CHROME + planRows + pipelineRows + subagentRows + toastRows;
-  }, [sPlanSteps, sPipeline, sSubagents, sToasts]);
+    // ChoiceBar: round border (2) + one row per option (truncated to single line) + footer (1).
+    // Question/context are committed to scrollback so they don't add live-region height.
+    const choiceRows = sPending === 'choice' && activeChoice
+      ? 2 + activeChoice.options.length + 1
+      : 0;
+    return CHROME + planRows + pipelineRows + subagentRows + toastRows + choiceRows;
+  }, [sPlanSteps, sPipeline, sSubagents, sToasts, sPending, activeChoice]);
 
   const titleMode =
     sPending === 'permission' ? 'agent · paused'

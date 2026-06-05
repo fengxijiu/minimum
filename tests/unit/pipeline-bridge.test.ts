@@ -8,7 +8,7 @@ import {
 	createWorkerExecutor,
 	type CompletionClient,
 } from "../../src/orchestration/index.js";
-import { PipelineBridge, summarizePipelineComplete, translatePipelineEvent } from "../../src/bridge/index.js";
+import { PipelineBridge, summarizePipelineBrief, summarizePipelineComplete, translatePipelineEvent } from "../../src/bridge/index.js";
 import type { UiEvent } from "../../src/bridge/index.js";
 import type { ChoicePayload, ChoiceVerdict, ConfirmationGate } from "../../src/tools/choice/ConfirmationGate.js";
 
@@ -41,6 +41,7 @@ Reason:
 - Ready.
 `;
 const FINALIZE = `<finalize>{"memory_decisions":[]}</finalize>`;
+const FINAL_BRIEF = `<final_brief># Result\n\nThe final output is a concise task brief.</final_brief>`;
 
 class ScriptedChoiceGate implements ConfirmationGate {
 	payloads: ChoicePayload[] = [];
@@ -154,6 +155,39 @@ describe("createPlannerBridge", () => {
 		expect(userMessage).toContain(".minimum/tasks/e/dag.json");
 		expect(userMessage).toContain(".minimum/index.json");
 		expect(userMessage).toContain("Decision: APPROVED_TO_W4");
+	});
+
+	it("uses master planner deliver input for the final brief", async () => {
+		const calls: any[] = [];
+		const client: CompletionClient = {
+			async *streamChat(options) {
+				calls.push(options);
+				yield { type: "content", content: FINAL_BRIEF };
+			},
+		};
+		const planner = createPlannerBridge(client);
+		await planner.deliver({
+			userRequest: "build upload",
+			statusReason: "complete",
+			results: [{ taskId: "T2-1", personaId: "code_executor", status: "ok", report: "implemented upload", memoryCandidateBody: undefined, errors: [], durationMs: 1 }],
+			leafTaskIds: ["T2-1"],
+			knownIssues: ["missing screenshots"],
+			writtenFilesByTask: [{ taskId: "T2-1", files: ["src/upload.ts"] }],
+			finalizeReport: { applied: [], errors: [], stagingCleared: true },
+		});
+		const systemMessage = calls[0]!.messages.find((m: any) => m.role === "system")!.content;
+		const userMessage = calls[0]!.messages.find((m: any) => m.role === "user")!.content;
+		expect(systemMessage).not.toContain("You summarize the outcome of a completed multi-agent run");
+		expect(userMessage).toContain("# W4 Final Delivery Input");
+		expect(userMessage).toContain("## Original User Request");
+		expect(userMessage).toContain("## Status Reason");
+		expect(userMessage).toContain("## Leaf Deliverable Task IDs");
+		expect(userMessage).toContain("## Actual Written Business Files");
+		expect(userMessage).toContain("src/upload.ts");
+		expect(userMessage).toContain("## Known Issues");
+		expect(userMessage).toContain("missing screenshots");
+		expect(userMessage).toContain("## Finalize Governance Report");
+		expect(userMessage).toContain("<final_brief>");
 	});
 });
 
@@ -275,7 +309,7 @@ describe("translatePipelineEvent", () => {
 		expect((out[0] as any).text).toContain("blockedCondition must be at least 8 characters");
 	});
 
-	it("renders a clean W4 summary that lists each task's output", () => {
+	it("renders the finalBrief for pipeline_complete by default", () => {
 		const mk = (taskId: string, personaId: string, report: string) => ({
 			taskId,
 			personaId,
@@ -291,38 +325,74 @@ describe("translatePipelineEvent", () => {
 				mk("T2-1", "code_executor", "implemented POST /upload with a 5MB guard"),
 				mk("T2-2", "test_runner", "ran vitest upload suite, 12 passed"),
 			],
+			finalBrief: "# Result\n\nThe final output is a concise task brief.",
+			changedFiles: ["src/upload.ts"],
 		});
 		expect(out[0]).toMatchObject({ kind: "notice", tone: "ok" });
 		const text = (out[0] as any).text as string;
-		expect(text).toContain("Pipeline complete (W4)");
-		expect(text).toContain("2 task(s): 2 ok, 0 blocked, 0 error");
-		expect(text).toContain("by persona —");
-		expect(text).toContain("outputs:");
-		expect(text).toContain("- T2-1 (code_executor) ok · 1.2s");
-		expect(text).toContain("implemented POST /upload with a 5MB guard");
-		expect(text).toContain("ran vitest upload suite, 12 passed");
+		expect(text).toContain("# Result");
+		expect(text).toContain("concise task brief");
+		expect(text).not.toContain("outputs:");
+		expect(text).not.toContain("artifacts:");
 	});
 
-	it("warns and surfaces output plus details for tasks that did not pass cleanly", () => {
+	it("shows an explicit placeholder when finalBrief is missing", () => {
 		const out = translatePipelineEvent({
 			type: "pipeline_complete",
 			results: [
 				{ taskId: "T2-1", personaId: "code_executor", status: "ok", report: "added 413 path", memoryCandidateBody: "candidate body", errors: [], durationMs: 800 },
-				{ taskId: "T2-2", personaId: "test_runner", status: "blocked", report: "missing T2-1.relevant_files", memoryCandidateBody: undefined, errors: [], durationMs: 100 },
-				{ taskId: "T3-1", personaId: "reviewer", status: "contract_invalid", report: "", memoryCandidateBody: undefined, errors: ["acceptance must be a non-empty array"], hitStepLimit: true, durationMs: 50 },
 			],
 		});
-		expect(out[0]).toMatchObject({ kind: "notice", tone: "warn" });
+		expect(out[0]).toMatchObject({ kind: "notice", tone: "ok" });
 		const text = (out[0] as any).text as string;
-		expect(text).toContain("3 task(s): 1 ok, 1 blocked, 1 error");
-		expect(text).toContain("outputs:");
-		expect(text).toContain("- T2-1 (code_executor) ok · 0.8s");
-		expect(text).toContain("details: memory candidate");
-		expect(text).toContain("- T2-2 (test_runner) blocked · 0.1s");
-		expect(text).toContain("missing T2-1.relevant_files");
-		expect(text).toContain("- T3-1 (reviewer) contract_invalid · 0.1s");
-		expect(text).toContain("acceptance must be a non-empty array");
-		expect(text).toContain("details: hit step limit");
+		expect(text).toContain("Task completed, but no final brief was produced.");
+		expect(text).not.toContain("outputs:");
+		expect(text).not.toContain("artifacts:");
+	});
+});
+
+describe("summarizePipelineBrief", () => {
+	const okResult = (taskId: string, personaId: string, report: string) => ({
+		taskId,
+		personaId,
+		status: "ok" as const,
+		report,
+		memoryCandidateBody: undefined,
+		errors: [] as string[],
+		durationMs: 500,
+	});
+
+	it("returns the finalBrief directly when present", () => {
+		const summary = summarizePipelineBrief([okResult("T2-1", "code_executor", "implemented upload")], {
+			finalBrief: "# Result\n\nShipped `src/upload.ts`.",
+			changedFiles: ["src/upload.ts"],
+		});
+		expect(summary.tone).toBe("ok");
+		expect(summary.text).toContain("# Result");
+		expect(summary.text).toContain("Shipped `src/upload.ts`.");
+		expect(summary.text).not.toContain(".minimum/");
+	});
+
+	it("uses an explicit placeholder when finalBrief is missing", () => {
+		const summary = summarizePipelineBrief([okResult("T2-1", "code_executor", "implemented upload")]);
+		expect(summary.tone).toBe("ok");
+		expect(summary.text).toBe("Task completed, but no final brief was produced.");
+	});
+
+	it("keeps warn tone when blocked or error results exist", () => {
+		const summary = summarizePipelineBrief([
+			{
+				taskId: "T2-2",
+				personaId: "test_runner",
+				status: "blocked" as const,
+				report: "missing screenshots",
+				memoryCandidateBody: undefined,
+				errors: [],
+				durationMs: 100,
+			},
+		]);
+		expect(summary.tone).toBe("warn");
+		expect(summary.text).toBe("Task completed, but no final brief was produced.");
 	});
 });
 

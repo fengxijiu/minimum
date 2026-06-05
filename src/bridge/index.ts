@@ -1,4 +1,10 @@
 export { EngineBridge, mapLoopEvent } from "./EngineBridge.js";
 export type { UiEvent, UiPlanStep, UiPlanStatus, UiRisk, EngineLoop } from "./EngineBridge.js";
-export { PipelineBridge, summarizePipelineComplete, translatePipelineEvent, buildCatalogForBridge } from "./PipelineBridge.js";
-export type { PipelineBridgeOptions } from "./PipelineBridge.js";
+export {
+	PipelineBridge,
+	summarizePipelineBrief,
+	summarizePipelineComplete,
+	translatePipelineEvent,
+	buildCatalogForBridge,
+} from "./PipelineBridge.js";
+export type { CompletionMeta, PipelineBridgeOptions } from "./PipelineBridge.js";

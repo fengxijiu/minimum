@@ -47,26 +47,31 @@ function PermissionChoiceBar({ selected }: { selected: number }) {
   );
 }
 
+function truncateStr(s: string, max: number): string {
+  return s.length <= max ? s : s.slice(0, max - 1) + '…';
+}
+
+// Question and context are committed to static scrollback before this bar is shown,
+// so they never participate in Ink's live-region redraws. The bar only contains the
+// fixed-height option list, preventing flicker and vertical jumping on long text.
 function ChoiceBar({ request, selected }: { request: ChoiceRequest; selected: number }) {
+  const termCols = process.stdout.columns ?? 80;
+  // Leave room for border (2) + paddingX (2 each side = 4) + cursor prefix (2).
+  const titleMax = Math.max(20, termCols - 12);
+  const summaryMax = Math.max(10, Math.floor(termCols / 3));
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={theme.accent} paddingX={2} paddingY={0}>
-      <Text color={theme.accent} bold>{request.question}</Text>
-      {request.context ? (
-        <Box flexDirection="column" marginTop={0} marginBottom={0}>
-          <Text color={theme.muted}>{'─'.repeat(40)}</Text>
-          <Text color={theme.inkSoft} dimColor>{request.context}</Text>
-          <Text color={theme.muted}>{'─'.repeat(40)}</Text>
-        </Box>
-      ) : null}
       <Box flexDirection="column">
         {request.options.map((opt, i) => {
           const active = i === selected;
+          const title = truncateStr(opt.title, titleMax);
+          const summary = opt.summary ? truncateStr(opt.summary, summaryMax) : undefined;
           return (
             <Box key={opt.id}>
               <Text color={active ? theme.accent : theme.inkSoft} bold={active}>
-                {active ? '▶ ' : '  '}{opt.title}
+                {active ? '▶ ' : '  '}{title}
               </Text>
-              {opt.summary ? <Text color={theme.muted}> — {opt.summary}</Text> : null}
+              {summary ? <Text color={theme.muted}> — {summary}</Text> : null}
             </Box>
           );
         })}

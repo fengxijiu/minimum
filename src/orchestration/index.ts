@@ -30,6 +30,7 @@ export {
 export {
 	DEFAULT_MAX_MISSION_REPAIR_LOOPS,
 	extractConclusion,
+	extractFinalBrief,
 	leafTaskIdsOf,
 	PERCEPTION_PERSONAS,
 	runPipeline,
@@ -37,6 +38,7 @@ export {
 	type PipelineOptions,
 	type PipelinePhase,
 	type PipelineResult,
+	type FinalDeliveryInput,
 	type PlannerBridge,
 } from "./MiMoPipeline.js";
 export {

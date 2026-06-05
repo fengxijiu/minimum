@@ -175,10 +175,7 @@ export class PipelineBridge {
 		};
 		const push = (e: PipelineEvent) => {
 			if (e.type === "pipeline_complete") {
-				// Enrich the W4 summary with the per-task written-file list, which
-				// only the bridge has (accumulated from worker tool calls), plus the
-				// goal/conclusion/deliverable context carried on the event.
-				const { text, tone } = summarizePipelineComplete(e.results, writtenByTask, metaOf(e));
+				const { text, tone } = summarizePipelineBrief(e.results, metaOf(e));
 				queue.push({ kind: "notice", text, tone });
 			} else {
 				for (const ui of translatePipelineEvent(e)) queue.push(ui);
@@ -333,6 +330,13 @@ export class PipelineBridge {
 			executor,
 			onEvent: push,
 			choiceGate: this.opts.choiceGate,
+			getDeliveryWrites: () =>
+				[...writtenByTask.entries()]
+					.map(([taskId, files]) => ({
+						taskId,
+						files: [...files].filter((file) => !isInternalProcessFile(file)),
+					}))
+					.filter((entry) => entry.files.length > 0),
 			...(grantableCatalog && { grantableCatalog }),
 		})
 			.then((r) => {
@@ -545,7 +549,7 @@ export function translatePipelineEvent(e: PipelineEvent): UiEvent[] {
 			];
 		}
 		case "pipeline_complete": {
-			const { text, tone } = summarizePipelineComplete(e.results, undefined, metaOf(e));
+			const { text, tone } = summarizePipelineBrief(e.results, metaOf(e));
 			return [{ kind: "notice", text, tone }];
 		}
 		case "pipeline_error":
@@ -606,6 +610,9 @@ function translateWaveEvent(w: WaveEvent): UiEvent[] {
  */
 export interface CompletionMeta {
 	goal?: string;
+	finalBrief?: string;
+	changedFiles?: string[];
+	traceArtifacts?: string[];
 	conclusion?: string;
 	leafTaskIds?: string[];
 	artifacts?: string[];
@@ -615,9 +622,25 @@ export interface CompletionMeta {
 function metaOf(e: Extract<PipelineEvent, { type: "pipeline_complete" }>): CompletionMeta {
 	return {
 		...(e.goal !== undefined && { goal: e.goal }),
+		...(e.finalBrief !== undefined && { finalBrief: e.finalBrief }),
+		...(e.changedFiles !== undefined && { changedFiles: e.changedFiles }),
+		...(e.traceArtifacts !== undefined && { traceArtifacts: e.traceArtifacts }),
 		...(e.conclusion !== undefined && { conclusion: e.conclusion }),
 		...(e.leafTaskIds !== undefined && { leafTaskIds: e.leafTaskIds }),
 		...(e.artifacts !== undefined && { artifacts: e.artifacts }),
+	};
+}
+
+export function summarizePipelineBrief(
+	results: TaskResult[],
+	meta?: Pick<CompletionMeta, "finalBrief" | "conclusion" | "changedFiles">,
+): { text: string; tone: "ok" | "warn" } {
+	const blocked = results.filter((r) => r.status === "blocked");
+	const errored = results.filter((r) => r.status !== "ok" && r.status !== "blocked");
+	const brief = (meta?.finalBrief ?? meta?.conclusion ?? "").trim();
+	return {
+		text: brief || "Task completed, but no final brief was produced.",
+		tone: blocked.length || errored.length ? "warn" : "ok",
 	};
 }
 
@@ -748,6 +771,11 @@ function renderPipelineHistory(messages: import("../types/common.js").ChatMessag
 	return messages
 		.map((message) => `${message.role.toUpperCase()}: ${String(message.content ?? "").trim()}`)
 		.join("\n");
+}
+
+function isInternalProcessFile(file: string): boolean {
+	const normalized = file.replace(/\\/g, "/");
+	return /(^|\/)\.minimum(\/|$)/.test(normalized);
 }
 
 function summarizePipelineResult(result: PipelineResult): string {

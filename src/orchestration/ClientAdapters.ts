@@ -15,7 +15,7 @@ import type { ChatMessage } from "../types/common.js";
 import type { MissionCheckInput } from "./MissionChecker.js";
 import type { CoarseDag } from "./TaskContract.js";
 import type { TaskContract } from "./TaskContract.js";
-import type { PlannerBridge } from "./MiMoPipeline.js";
+import type { FinalDeliveryInput, PlannerBridge } from "./MiMoPipeline.js";
 import type {
 	SchemaRepairRequest,
 	TaskResult,
@@ -194,6 +194,34 @@ export function createPlannerBridge(
 						content: `# Task Reports\n${renderResults(results)}\n\n# Memory Candidates\n${candidates
 							.map((c) => `- ${c.sourceTask}.${c.persona} [${c.confidence}] ${c.scope}`)
 							.join("\n")}\n\n# Current Canonical Memory\n${canonicalText}\n\nFinalize now. Output a single <finalize> block.`,
+					},
+				],
+				max,
+			),
+		deliver: async (input: FinalDeliveryInput) =>
+			collectText(
+				client,
+				[
+					await sys(input.userRequest),
+					{
+						role: "user",
+						content: [
+							"# W4 Final Delivery Input",
+							`## Original User Request\n${input.userRequest}`,
+							`## Status Reason\n${input.statusReason}`,
+							`## Leaf Deliverable Task IDs\n${renderLeafTaskIds(input.leafTaskIds)}`,
+							`## Task Reports\n${renderResults(input.results)}`,
+							`## Actual Written Business Files\n${renderWrittenFilesByTask(input.writtenFilesByTask)}`,
+							`## Known Issues\n${renderKnownIssues(input.knownIssues)}`,
+							`## Finalize Governance Report\n${renderFinalizeReport(input.finalizeReport)}`,
+							[
+								"Author the primary user-facing delivery for this run.",
+								"Ground every claim only in the task reports, actual written business files, known issues, or finalize governance results above.",
+								"Do not expose .minimum/** process artifacts or internal trace files by default.",
+								"If blocked, errored, or override states matter, surface them under a clear warnings section.",
+								"Output exactly one <final_brief> block containing Markdown, with no prose before or after it.",
+							].join(" "),
+						].join("\n\n"),
 					},
 				],
 				max,
@@ -377,6 +405,23 @@ function renderResults(results: TaskResult[]): string {
 	return results
 		.map((r) => `## ${r.taskId} (${r.personaId}) — ${r.status}\n${r.report}`)
 		.join("\n\n");
+}
+
+function renderLeafTaskIds(taskIds: string[]): string {
+	if (taskIds.length === 0) return "(none)";
+	return taskIds.map((taskId) => `- ${taskId}`).join("\n");
+}
+
+function renderWrittenFilesByTask(items: FinalDeliveryInput["writtenFilesByTask"]): string {
+	if (!items?.length) return "(none)";
+	return items
+		.map((entry) => [`### ${entry.taskId}`, ...entry.files.map((file) => `- ${file}`)].join("\n"))
+		.join("\n\n");
+}
+
+function renderFinalizeReport(report: FinalDeliveryInput["finalizeReport"]): string {
+	if (!report) return "(none)";
+	return `\`\`\`json\n${JSON.stringify(report, null, 2)}\n\`\`\``;
 }
 
 function renderRefinements(refinements: MissionCheckInput["refinements"]): string {

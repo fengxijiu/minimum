@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	extractConclusion,
+	extractFinalBrief,
 	leafTaskIdsOf,
 	runPipeline,
 	type PipelineEvent,
@@ -87,6 +88,7 @@ Reason:
 - Ready.
 `,
 		finalize: async () => `<finalize>{"memory_decisions":[]}</finalize>`,
+		deliver: async () => `<final_brief># Result\n\nDone.</final_brief>`,
 		synthesize: async () => `<conclusion>Done.</conclusion>`,
 		...over,
 	};
@@ -970,6 +972,16 @@ describe("extractConclusion", () => {
 	});
 });
 
+describe("extractFinalBrief", () => {
+	it("pulls the body out of a <final_brief> block", () => {
+		expect(extractFinalBrief("noise <final_brief>\n  # Result\n</final_brief> tail")).toBe("# Result");
+	});
+	it("returns undefined when absent or empty", () => {
+		expect(extractFinalBrief("<finalize>{}</finalize>")).toBeUndefined();
+		expect(extractFinalBrief("<final_brief>   </final_brief>")).toBeUndefined();
+	});
+});
+
 describe("leafTaskIdsOf", () => {
 	it("returns task ids that nothing depends on", () => {
 		const mk = (taskId: string, dependsOn: string[]): TaskContract =>
@@ -979,36 +991,44 @@ describe("leafTaskIdsOf", () => {
 	});
 });
 
-describe("W4 synthesis", () => {
-	it("calls synthesize and emits pipeline_complete with goal, conclusion, and leaf ids", async () => {
+describe("W4 delivery", () => {
+	it("calls deliver and emits pipeline_complete with finalBrief, changedFiles, and traceArtifacts", async () => {
 		const events: PipelineEvent[] = [];
-		const synthesize = vi.fn(async () => `<conclusion>Recommend adding p95 latency + error-rate metrics.</conclusion>`);
+		const deliver = vi.fn(async () => `<final_brief># Result\n\nRecommend adding p95 latency + error-rate metrics.</final_brief>`);
+		const synthesize = vi.fn(async () => `<conclusion>legacy fallback should stay unused</conclusion>`);
 		const result = await runPipeline("explore what metrics to add", {
 			projectRoot: fs.mkdtempSync(path.join(os.tmpdir(), "mimo-w4-")),
-			planner: stubPlanner({ synthesize }),
+			planner: stubPlanner({ deliver, synthesize }),
 			executor: okExecutor(),
 			onEvent: (e) => events.push(e),
 			choiceGate: continueGate(),
+			getDeliveryWrites: () => [
+				{ taskId: "T2-1", files: ["docs/report.md", ".minimum/tasks/image_upload/dag.json"] },
+			],
 		});
 		expect(result.ok).toBe(true);
-		expect(synthesize).toHaveBeenCalledOnce();
+		expect(deliver).toHaveBeenCalledOnce();
+		expect(synthesize).not.toHaveBeenCalled();
 		const complete = events.find((e) => e.type === "pipeline_complete");
 		expect(complete?.type).toBe("pipeline_complete");
 		if (complete?.type === "pipeline_complete") {
 			expect(complete.goal).toBe("explore what metrics to add");
-			expect(complete.conclusion).toBe("Recommend adding p95 latency + error-rate metrics.");
+			expect(complete.finalBrief).toContain("Recommend adding p95 latency + error-rate metrics.");
 			expect(complete.leafTaskIds).toContain("T2-1");
-			expect(complete.artifacts?.some((a) => a.endsWith("dag.json"))).toBe(true);
+			expect(complete.changedFiles).toEqual(["docs/report.md"]);
+			expect(complete.traceArtifacts?.some((a) => a.endsWith("dag.json"))).toBe(true);
 		}
+		expect(result.finalBrief).toContain("Recommend adding p95 latency + error-rate metrics.");
+		expect(result.changedFiles).toEqual(["docs/report.md"]);
 	});
 
-	it("still completes when synthesize throws (conclusion omitted)", async () => {
+	it("still completes when deliver throws (finalBrief omitted)", async () => {
 		const events: PipelineEvent[] = [];
 		const result = await runPipeline("explore what metrics to add", {
 			projectRoot: fs.mkdtempSync(path.join(os.tmpdir(), "mimo-w4b-")),
 			planner: stubPlanner({
-				synthesize: async () => {
-					throw new Error("synthesis model unavailable");
+				deliver: async () => {
+					throw new Error("delivery model unavailable");
 				},
 			}),
 			executor: okExecutor(),
@@ -1018,7 +1038,7 @@ describe("W4 synthesis", () => {
 		expect(result.ok).toBe(true);
 		const complete = events.find((e) => e.type === "pipeline_complete");
 		if (complete?.type === "pipeline_complete") {
-			expect(complete.conclusion).toBeUndefined();
+			expect(complete.finalBrief).toBeUndefined();
 			expect(complete.goal).toBe("explore what metrics to add");
 		}
 	});
