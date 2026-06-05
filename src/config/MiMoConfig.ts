@@ -139,6 +139,15 @@ export interface MiMoConfig {
 	/** MCP (Model Context Protocol) 外部工具服务器列表(默认空)。
 	 *  每个 server 启动后,其工具以 `mcp__<server>__<tool>` 名称注册进工具表。*/
 	mcpServers?: McpServerConfig[];
+	/** master_planner 按任务额外授予的能力(skills + MCP)。 */
+	capabilityGrants?: {
+		/** 总开关;false 时不向 master 提供也不兑现任何授权。默认 true。 */
+		enabled?: boolean;
+		/** 永不可授予的 skill id。 */
+		denylistSkills?: string[];
+		/** 永不可授予的 MCP 工具名(mcp__server__tool)。 */
+		denylistMcpTools?: string[];
+	};
 }
 
 /** 所有优化分析得来的默认值 */
@@ -200,6 +209,11 @@ export const DEFAULT_MIMO_CONFIG: Required<MiMoConfig> = {
 		extraAllowed: [],
 	},
 	mcpServers: [],
+	capabilityGrants: {
+		enabled: true,
+		denylistSkills: [],
+		denylistMcpTools: [],
+	},
 };
 
 /** 深合并用户配置与默认配置 */
@@ -247,5 +261,6 @@ export function mergeConfig(user: MiMoConfig = {}): Required<MiMoConfig> {
 						: user.rateLimit,
 		shell: { ...DEFAULT_MIMO_CONFIG.shell, ...user.shell },
 		mcpServers: user.mcpServers ?? DEFAULT_MIMO_CONFIG.mcpServers,
+		capabilityGrants: { ...DEFAULT_MIMO_CONFIG.capabilityGrants, ...user.capabilityGrants },
 	};
 }
