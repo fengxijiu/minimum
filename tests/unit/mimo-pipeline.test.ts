@@ -105,8 +105,18 @@ describe("runPipeline", () => {
 			choiceGate: continueGate(),
 		});
 		expect(result.ok).toBe(true);
-		const phases = events.filter((e) => e.type === "phase_start").map((e) => (e as any).phase);
-		expect(phases).toEqual(["W0", "W1", "W0.5", "W2/3", "W3.5", "W4"]);
+		const phaseEvents = events.filter((e) => e.type === "phase_start");
+		// Internal phase codes are unchanged (events/parser compatibility).
+		expect(phaseEvents.map((e) => (e as any).phase)).toEqual(["W0", "W1", "W0.5", "W2/3", "W3.5", "W4"]);
+		// User-facing labels use the short stage names.
+		expect(phaseEvents.map((e) => (e as any).label)).toEqual([
+			"Plan",
+			"Scan",
+			"Refine",
+			"Build",
+			"Accept",
+			"Finalize",
+		]);
 		expect(fs.existsSync(path.join(dir, ".minimum", "tasks", "image_upload", "dag.json"))).toBe(true);
 		expect(fs.existsSync(path.join(dir, ".minimum", "tasks", "image_upload", "refinements", "initial.json"))).toBe(true);
 		expect(fs.existsSync(path.join(dir, ".minimum", "tasks", "image_upload", "contracts", "initial.json"))).toBe(true);
@@ -266,8 +276,9 @@ describe("runPipeline", () => {
 		expect(result.ok).toBe(true);
 		expect(gate.payloads).toHaveLength(1);
 		// Question is a short decision point; the DAG detail moves to `context`.
-		expect(gate.payloads[0]!.question).toContain("进入 W2/3");
-		expect(gate.payloads[0]!.context).toContain("W0.5 DAG 确认");
+		// User-facing text uses the short stage names (Build/Refine), not W codes.
+		expect(gate.payloads[0]!.question).toContain("进入 Build");
+		expect(gate.payloads[0]!.context).toContain("Refine DAG 确认");
 		const confirmIndex = events.findIndex((e) => e.type === "dag_confirmation_requested");
 		const w23Index = events.findIndex((e) => e.type === "phase_start" && (e as any).phase === "W2/3");
 		expect(confirmIndex).toBeGreaterThan(-1);

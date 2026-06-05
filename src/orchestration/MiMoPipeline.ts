@@ -34,6 +34,7 @@ import {
 	type ArtifactPaths,
 } from "./PipelineArtifactStore.js";
 import { schedule, type WaveEvent } from "./WaveScheduler.js";
+import { stageLabel, stageName } from "./StageDisplay.js";
 import type { TaskResult, WorkerExecutor } from "./TaskRunner.js";
 import type { ChoicePayload, ConfirmationGate } from "../tools/choice/ConfirmationGate.js";
 
@@ -143,7 +144,7 @@ export async function runPipeline(
 	let statusReason: PipelineResult["statusReason"] = "complete";
 
 	// ── W0: load memory, compile coarse DAG ──────────────────────────────────
-	emit({ type: "phase_start", phase: "W0", label: "compile" });
+	emit({ type: "phase_start", phase: "W0", label: stageName("W0") });
 	const memory = await loadCanonicalMemory(opts.projectRoot, taskType);
 	emit({
 		type: "memory_loaded",
@@ -206,7 +207,7 @@ export async function runPipeline(
 
 	let missionLoopIndex = 0;
 	while (true) {
-		emit({ type: "phase_start", phase: "W3.5", label: "mission check" });
+		emit({ type: "phase_start", phase: "W3.5", label: stageName("W3.5") });
 		let missionText: string;
 		let missionFeedback: string | undefined;
 		let missionParseRetryUsed = false;
@@ -241,12 +242,12 @@ export async function runPipeline(
 				attempt: missionParseRetryUsed ? 2 : 1,
 			});
 			const choice = await askPipelineChoice(opts.choiceGate, {
-				question: "W3.5 解析失败，如何恢复？",
+				question: "Accept 解析失败，如何恢复？",
 				context: [`错误: ${mission.error}`, `Loop: ${missionLoopIndex}`, rawExcerpt ? `原始摘要: ${rawExcerpt}` : ""].filter(Boolean).join("\n"),
 				options: [
-					{ id: "retry_w35", title: "重试 W3.5", summary: missionParseRetryUsed ? "已重试一次，再试仍可能失败。" : "带解析反馈重跑 mission checker。" },
+					{ id: "retry_w35", title: "重试 Accept", summary: missionParseRetryUsed ? "已重试一次，再试仍可能失败。" : "带解析反馈重跑 mission checker。" },
 					{ id: "needs_human_confirmation", title: "暂停", summary: "安全停止，不发错误。" },
-					{ id: "approve_to_w4", title: "推进到 W4", summary: "用户 override，跳过本轮检查。" },
+					{ id: "approve_to_w4", title: "推进到 Finalize", summary: "用户 override，跳过本轮检查。" },
 				],
 				allowCustom: false,
 			});
@@ -299,12 +300,12 @@ export async function runPipeline(
 		}
 		if (missionLoopIndex >= maxMissionRepairLoops) {
 			const capChoice = await askPipelineChoice(opts.choiceGate, {
-				question: `W3.5 修复上限 (${maxMissionRepairLoops} 轮) 已达，如何继续？`,
+				question: `Accept 修复上限 (${maxMissionRepairLoops} 轮) 已达，如何继续？`,
 				context: mission.report.reason ? `原因: ${mission.report.reason}` : undefined,
 				options: [
 					{ id: "continue_repair", title: "再修一轮", summary: "突破上限一次，继续新修复任务。" },
 					{ id: "stop_for_human", title: "暂停", summary: "安全停止，不发错误。" },
-					{ id: "approve_to_w4", title: "强制进入 W4", summary: "用户 override，跳过剩余修复。" },
+					{ id: "approve_to_w4", title: "强制进入 Finalize", summary: "用户 override，跳过剩余修复。" },
 				],
 				allowCustom: false,
 			});
@@ -357,7 +358,7 @@ export async function runPipeline(
 			knownIssues,
 			baseInputs,
 			memoryText: memory.text,
-			labelSuffix: " repair",
+			labelSuffix: ` repair ${missionLoopIndex}`,
 			passId: `repair-${missionLoopIndex}`,
 			artifactPaths,
 			gateRetryKeys,
@@ -366,7 +367,7 @@ export async function runPipeline(
 	}
 
 	// ── W4: finalize + memory governance ──────────────────────────────────────
-	emit({ type: "phase_start", phase: "W4", label: "finalize" });
+	emit({ type: "phase_start", phase: "W4", label: stageName("W4") });
 	const candidates = await listCandidates(opts.projectRoot);
 	let finalizeReport: FinalizeReport | undefined;
 	try {
@@ -425,7 +426,7 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 	} = args;
 
 	// ── W1: perception ───────────────────────────────────────────────────────
-	emit({ type: "phase_start", phase: "W1", label: `perception${labelSuffix}` });
+	emit({ type: "phase_start", phase: "W1", label: stageLabel("W1", labelSuffix) });
 	const perceptionDag = filterDag(dag, (p) => PERCEPTION_PERSONAS.has(p));
 	const { contracts: perceptionContracts } = refineDag(perceptionDag, {
 		inputs: baseInputs,
@@ -448,7 +449,7 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 	let autoRefineRetryUsed = false;
 	while (true) {
 		const retryLabel = refineRetryUsed ? " retry" : autoRefineRetryUsed ? " auto retry" : "";
-		emit({ type: "phase_start", phase: "W0.5", label: `refine${labelSuffix}${retryLabel}` });
+		emit({ type: "phase_start", phase: "W0.5", label: stageLabel("W0.5", labelSuffix, retryLabel) });
 		const currentPassId = refineRetryUsed
 			? `${passId}-refine-retry`
 			: autoRefineRetryUsed
@@ -540,11 +541,11 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 				artifactPath: confirmationPath,
 			});
 			const choice = await askPipelineChoice(opts.choiceGate, {
-				question: "确认 DAG，进入 W2/3？",
+				question: "确认 DAG，进入 Build？",
 				context: `${confirmation.brief}\n\n## DAG Flow\n${confirmation.flow}`,
 				options: [
-					{ id: "continue_w23", title: "继续 W2/3", summary: "确认 DAG，进入实现/验证。" },
-					{ id: "rerun_refine", title: "重跑 W0.5", summary: refineRetryUsed ? "已重跑过一次；再次选择会安全停止。" : "带反馈重新 refine。" },
+					{ id: "continue_w23", title: "继续 Build", summary: "确认 DAG，进入实现/验证。" },
+					{ id: "rerun_refine", title: "重跑 Refine", summary: refineRetryUsed ? "已重跑过一次；再次选择会安全停止。" : "带反馈重新 refine。" },
 					{ id: "stop_for_human", title: "暂停", summary: "安全停止，不发错误。" },
 				],
 				allowCustom: false,
@@ -571,7 +572,7 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 	resolvedContracts.push(...allContracts);
 
 	// ── W2/3: implementation + validation (exclude perception, already run) ───
-	emit({ type: "phase_start", phase: "W2/3", label: `implement + validate${labelSuffix}` });
+	emit({ type: "phase_start", phase: "W2/3", label: stageLabel("W2/3", labelSuffix) });
 	const implContracts = allContracts.filter((c) => !PERCEPTION_PERSONAS.has(c.personaId));
 	if (implContracts.length > 0) {
 		try {
@@ -634,11 +635,11 @@ function buildDagConfirmation(args: {
 	const launchRequirementCount = args.contracts.reduce((n, c) => n + (c.launchRequirements?.length ?? 0), 0);
 	const runnable = args.contracts.filter((c) => !PERCEPTION_PERSONAS.has(c.personaId));
 	const briefLines = [
-		"# W0.5 DAG 确认",
+		"# Refine DAG 确认",
 		`目标: ${args.userRequest}`,
 		`passId: ${args.passId}`,
-		`W1 感知结果: ${perception.length ? perception.map((r) => `${r.taskId}/${r.personaId}/${r.status}`).join(", ") : "无感知任务"}`,
-		`W0.5 contracts: ${args.contracts.length} 个，预计 W2/3 启动: ${runnable.length} 个`,
+		`Scan 感知结果: ${perception.length ? perception.map((r) => `${r.taskId}/${r.personaId}/${r.status}`).join(", ") : "无感知任务"}`,
+		`Refine contracts: ${args.contracts.length} 个，预计 Build 启动: ${runnable.length} 个`,
 		`launchRequirements: ${launchRequirementCount} 条`,
 		`refine errors: ${args.refineErrors.length ? args.refineErrors.map((e) => `${e.taskId}: ${e.errors.join("; ")}`).join(" | ") : "无"}`,
 		`known issues: ${args.knownIssues.length ? args.knownIssues.slice(-3).join(" | ") : "无"}`,

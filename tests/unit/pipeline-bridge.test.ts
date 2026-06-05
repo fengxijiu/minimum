@@ -192,6 +192,17 @@ describe("translatePipelineEvent", () => {
 		expect(out[0]).toEqual({ kind: "error", text: "[W4] bad" });
 	});
 
+	it("uses short stage names in choice and human-confirmation notices", () => {
+		const choice = translatePipelineEvent({ type: "pipeline_choice", phase: "W2/3", choiceId: "continue_w23", reason: "dag confirmation" });
+		expect((choice[0] as any).kind).toBe("notice");
+		expect((choice[0] as any).text).toContain("Build");
+		expect((choice[0] as any).text).not.toContain("W2/3");
+
+		const human = translatePipelineEvent({ type: "human_confirmation_required", phase: "W3.5", reason: "needs review" });
+		expect((human[0] as any).text).toContain("[Accept]");
+		expect((human[0] as any).text).not.toContain("W3.5");
+	});
+
 	it("maps W0.5 confirmation and W3.5 parse failure to notices", () => {
 		const confirmation = translatePipelineEvent({
 			type: "dag_confirmation_requested",
