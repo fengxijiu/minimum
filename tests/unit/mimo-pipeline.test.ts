@@ -588,6 +588,34 @@ Reason:
 		expect(written).toContain("Use multer.");
 	});
 
+	it("falls back to deterministic memory merges when finalize emits no decisions", async () => {
+		const withMem: WorkerExecutor = {
+			run: async () =>
+				`<task_report><status>ok</status>done</task_report>\n<memory_candidate>\nscope: backend/upload\nconfidence: high\nrelated_files:\n  - src/upload.ts\n\n## Finding\nUse multer.\n</memory_candidate>`,
+		};
+		const result = await runPipeline("image upload backend", {
+			projectRoot: dir,
+			planner: stubPlanner({
+				finalize: async () => `<finalize>{"memory_decisions":[]}</finalize>`,
+			}),
+			executor: withMem,
+			choiceGate: continueGate(),
+		});
+
+		expect(result.ok).toBe(true);
+		expect(result.finalize!.applied).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					candidateId: "T2-1.code_executor",
+					action: "merge",
+				}),
+			]),
+		);
+		expect(await listCandidates(dir)).toEqual([]);
+		const written = fs.readFileSync(path.join(dir, ".minimum", "backend.md"), "utf-8");
+		expect(written).toContain("Use multer.");
+	});
+
 	it("fails cleanly (no uncaught throw) when the DAG has an impl cycle", async () => {
 		const cyclicDag = JSON.stringify({
 			epic: "cyclic",

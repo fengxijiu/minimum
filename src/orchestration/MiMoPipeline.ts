@@ -4,13 +4,15 @@ import {
 	applyFinalize,
 	compileFinalize,
 	contextPackPath,
+	defaultMemorySectionForCandidate,
+	defaultMemoryTargetForCandidate,
 	listCandidates,
 	loadCanonicalMemory,
 	memoryIndexPath,
 	refreshMemoryIndex,
 	type FinalizeReport,
 } from "../memory/governance/index.js";
-import type { MemoryCandidate } from "../memory/governance/types.js";
+import type { MemoryCandidate, MergeDecision } from "../memory/governance/types.js";
 import type { PersonaId } from "../personas/Persona.js";
 import { compileCoarse, classifyTaskType } from "./TaskCompiler.js";
 import { buildWaves } from "./TaskGraph.js";
@@ -416,7 +418,12 @@ export async function runPipeline(
 		const fin = compileFinalize(finalizeText);
 		if (fin.ok) {
 			const epicTaskIds = resolvedContracts.map((c) => c.taskId);
-			finalizeReport = await applyFinalize(opts.projectRoot, fin.finalize, candidates, {
+			// NEW: fill planner omissions so durable candidates do not get stranded in staging.
+			const memoryDecisions = withFallbackMemoryDecisions(fin.finalize.memoryDecisions, candidates);
+			finalizeReport = await applyFinalize(opts.projectRoot, {
+				...fin.finalize,
+				memoryDecisions,
+			}, candidates, {
 				epicTaskIds,
 			});
 			emit({ type: "finalize_done", report: finalizeReport });
@@ -450,6 +457,24 @@ export async function runPipeline(
 		...(artifacts.length && { artifacts }),
 	});
 	return { ok: true, results: allResults, statusReason, ...(finalizeReport && { finalize: finalizeReport }) };
+}
+
+function withFallbackMemoryDecisions(
+	decisions: MergeDecision[],
+	candidates: MemoryCandidate[],
+): MergeDecision[] {
+	const decidedIds = new Set(decisions.map((decision) => decision.candidateId));
+	const fallback = candidates
+		.filter((candidate) => candidate.body.trim().length > 0 && candidate.scope !== "none")
+		.filter((candidate) => !decidedIds.has(`${candidate.sourceTask}.${candidate.persona}`))
+		.map((candidate) => ({
+			candidateId: `${candidate.sourceTask}.${candidate.persona}`,
+			action: "merge" as const,
+			target: defaultMemoryTargetForCandidate(candidate),
+			section: defaultMemorySectionForCandidate(candidate),
+			reason: "Deterministic fallback merged a staged candidate because W4 emitted no decision for it.",
+		}));
+	return fallback.length > 0 ? [...decisions, ...fallback] : decisions;
 }
 
 interface DagPassOptions {

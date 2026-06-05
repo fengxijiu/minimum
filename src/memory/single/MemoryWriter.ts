@@ -1,6 +1,8 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import {
+	defaultMemorySectionForCandidate,
+	defaultMemoryTargetForCandidate,
 	renderEntry,
 	score,
 	shouldPersist,
@@ -85,11 +87,12 @@ export class MemoryWriter {
 		switch (classification) {
 			case "merge":
 			case "update": {
-				const target = options.target ?? defaultTargetFor(candidate);
+				// NEW: reuse shared routing so single-agent and W4 memory land in the same files.
+				const target = options.target ?? defaultMemoryTargetForCandidate(candidate);
 				const filePath = path.join(this.projectRoot, this.memoryRoot, target);
 				await upsertSectionInFile(
 					filePath,
-					options.section ?? defaultSectionFor(candidate),
+					options.section ?? defaultMemorySectionForCandidate(candidate),
 					renderEntry(candidate),
 					classification === "update" ? "replace" : "append",
 				);
@@ -179,29 +182,9 @@ function decisionReason(
 	return "Auto-merged by deterministic memory scorer.";
 }
 
-function defaultTargetFor(candidate: MemoryCandidate): string {
-	const scope = candidate.scope.toLowerCase();
-	if (scope.includes("global") || scope.includes("user")) return "global.md";
-	if (scope.includes("frontend")) return "frontend.md";
-	if (scope.includes("backend")) return "backend.md";
-	if (scope.includes("api")) return "api.md";
-	return "project.md";
-}
-
-function defaultSectionFor(candidate: MemoryCandidate): string {
-	if (isGlobalMemory(candidate)) return "User Preferences";
-	return candidate.scope === "none"
-		? "Notes"
-		: titleCase(candidate.scope.split(/[/:]/)[0] ?? "Notes");
-}
-
 function isGlobalMemory(candidate: MemoryCandidate, target?: string): boolean {
 	const scope = candidate.scope.toLowerCase();
 	return target === "global.md" || scope.includes("global") || scope.includes("user");
-}
-
-function titleCase(value: string): string {
-	return value.length === 0 ? "Notes" : `${value[0]!.toUpperCase()}${value.slice(1)}`;
 }
 
 function containsAny(body: string, signals: string[]): boolean {
