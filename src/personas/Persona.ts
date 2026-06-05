@@ -19,6 +19,7 @@ export type PersonaId =
 	| "master_planner"
 	| "vision"
 	| "repo_scout"
+	| "web_searcher"
 	| "context_builder"
 	| "code_executor"
 	| "test_writer"

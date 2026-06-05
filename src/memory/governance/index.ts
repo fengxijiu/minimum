@@ -60,6 +60,11 @@ export {
 	writeManifest,
 } from "./MemoryManifest.js";
 export {
+	availableCanonicalMemoryTargets,
+	defaultMemorySectionForCandidate,
+	defaultMemoryTargetForCandidate,
+} from "./MemoryRouting.js";
+export {
 	score,
 	shouldPersist,
 	shouldRequireSecondReview,

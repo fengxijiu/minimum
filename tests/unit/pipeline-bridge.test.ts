@@ -155,6 +155,40 @@ describe("createPlannerBridge", () => {
 		expect(userMessage).toContain(".minimum/index.json");
 		expect(userMessage).toContain("Decision: APPROVED_TO_W4");
 	});
+
+	it("passes structured memory candidate evidence and target hints to finalize", async () => {
+		const calls: any[] = [];
+		const client: CompletionClient = {
+			async *streamChat(options) {
+				calls.push(options);
+				yield { type: "content", content: FINALIZE };
+			},
+		};
+		const planner = createPlannerBridge(client);
+		await planner.finalize(
+			[{ taskId: "T2-1", personaId: "code_executor", status: "ok", report: "done", memoryCandidateBody: undefined, errors: [], durationMs: 1 }],
+			[{
+				sourceTask: "T2-1",
+				persona: "code_executor",
+				scope: "backend/upload",
+				confidence: "high",
+				relatedFiles: ["src/upload.ts"],
+				body: "## Finding\nUse multer.\n",
+			}],
+			"CANONICAL MEMORY",
+		);
+		const userMessage = calls[0]!.messages.find((m: any) => m.role === "user")!.content;
+		expect(userMessage).toContain("## Memory Candidates");
+		expect(userMessage).toContain('"candidateId": "T2-1.code_executor"');
+		expect(userMessage).toContain('"relatedFiles": [');
+		expect(userMessage).toContain("Use multer.");
+		expect(userMessage).toContain('"suggestedTarget": "backend.md"');
+		expect(userMessage).toContain('"suggestedSection": "Backend"');
+		expect(userMessage).toContain("## Canonical Target Choices");
+		expect(userMessage).toContain("architecture.md");
+		expect(userMessage).toContain("backend.md");
+		expect(userMessage).toContain("Finalize now.");
+	});
 });
 
 describe("createWorkerExecutor", () => {

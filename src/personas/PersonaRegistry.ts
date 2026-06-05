@@ -59,6 +59,7 @@ function buildValidPersonaIdsBlock(): string {
 		"master_planner",
 		"vision",
 		"repo_scout",
+		"web_searcher",
 		"context_builder",
 		"code_executor",
 		"test_writer",
@@ -157,6 +158,27 @@ function buildPersonas(): Map<PersonaId, Persona> {
 			"git_status",
 			"git_log",
 		],
+		toolDenylist: ["write_file", "edit_file", "apply_patch", "exec_shell"],
+		pathPolicy: {
+			canWrite: false,
+			alwaysAllowedGlobs: [],
+			forbiddenGlobs: WORKER_FORBIDDEN_WRITES,
+		},
+		maxSteps: 100,
+		maxTokens: 64_000,
+		outputSchema: "task_report",
+		parallelism: { soloPerWave: false, maxConcurrent: 2 },
+	});
+
+	out.set("web_searcher", {
+		id: "web_searcher",
+		kind: "worker",
+		model: "mimo-v2.5",
+		systemPrompt: buildPersonaPrompt("web_searcher", "web-searcher.md", footer),
+		// web_fetch reads pages; mcp__* covers the user's web-search MCP server
+		// (e.g. OneSearch) whose exact tool names are config-dependent. Read-only,
+		// so the broad MCP wildcard cannot write or execute anything.
+		toolAllowlist: ["web_fetch", "read_file", "mcp__*"],
 		toolDenylist: ["write_file", "edit_file", "apply_patch", "exec_shell"],
 		pathPolicy: {
 			canWrite: false,
