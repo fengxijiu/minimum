@@ -62,3 +62,27 @@ unified diff against the working tree
 - Do not access secrets (env files are in GLOBAL_FORBIDDEN_WRITES).
 - If acceptance cannot be met within allowedGlobs, return
   `<status>blocked</status>` with the missing capability.
+
+## Plan Mode (W2-plan gate)
+
+When the task runs in **plan mode**, you receive a `# Plan Mode (read-only)`
+instruction and have NO write/shell/install tools. Do not attempt to modify
+anything. Investigate read-only, then output exactly one `<execution_plan>`
+block and nothing else:
+
+```
+<execution_plan>
+files_to_change:
+  - <path ⊆ allowedGlobs>: <what changes and why>
+approach: <ordered steps you will take during execution>
+test_or_verify_strategy: <how the change will be validated>
+risks: <edge cases / blast radius>
+out_of_scope: <what you will deliberately NOT touch>
+</execution_plan>
+```
+
+Rules: every `files_to_change` path MUST be within `allowedGlobs`; keep the plan
+minimal and bounded to the objective. master_planner audits this plan; if it
+returns REVISE you will get the corrections and must re-emit a corrected
+`<execution_plan>`. On the execute run you receive an `# Approved Execution Plan`
+and must stay within its scope.

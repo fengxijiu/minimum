@@ -54,6 +54,12 @@ export interface TaskContract {
 		required: boolean;
 		commands: string[];
 	};
+	/**
+	 * When true, the worker must first emit an <execution_plan> that
+	 * master_planner audits (W2-plan gate) before it may write/execute. Defaults
+	 * on for code_executor / test_writer write tasks when planMode is enabled.
+	 */
+	requiresPlanApproval?: boolean;
 
 	/** Output schema expected from the worker; worker personas use task_report. */
 	outputSchema: OutputSchema;
@@ -88,6 +94,12 @@ export interface TaskInputs {
 	constraints: string[];
 	/** Project-level static compile commands selected for this run. */
 	staticCompileCommands?: string[];
+	/**
+	 * The execution plan approved (and possibly corrected) by master_planner in
+	 * the W2-plan gate. Injected into the execute run so the worker stays within
+	 * the audited scope. Absent when planMode is off or the task needs no plan.
+	 */
+	approvedPlan?: string;
 }
 
 export interface TaskPathPolicy {

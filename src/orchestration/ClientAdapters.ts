@@ -27,6 +27,7 @@ import type {
 	TaskResult,
 	WorkerExecutionResult,
 	WorkerExecutor,
+	WorkerRunMode,
 } from "./TaskRunner.js";
 import {
 	WorkerLoop,
@@ -187,6 +188,28 @@ export function createPlannerBridge(
 						content: userContent.join("\n\n"),
 					},
 				],
+				max,
+			);
+		},
+		auditPlan: async (input) => {
+			const userContent = [
+				"# W2-plan Audit Input",
+				`## Task\n${input.taskId} (${input.persona})`,
+				`## Objective\n${input.objective}`,
+				`## allowedGlobs\n${input.allowedGlobs.join(", ") || "(none)"}`,
+				`## Acceptance\n${input.acceptance.map((a) => `- ${a}`).join("\n") || "(none)"}`,
+				`## Non-Goals\n${input.nonGoals.map((g) => `- ${g}`).join("\n") || "(none)"}`,
+				`## Upstream Artifacts\n${input.upstreamArtifacts || "(none)"}`,
+				`## Proposed Execution Plan\n${input.plan}`,
+				[
+					"Audit this execution plan now (W2-plan gate).",
+					"Output exactly one <plan_audit> JSON block: { \"decision\": \"APPROVED\" | \"REVISE\", \"corrections\": string[], \"reason\": string }.",
+					"REVISE (with concrete corrections) when files_to_change exceed allowedGlobs, acceptance is not covered, the scope is too broad or violates non-goals, or it conflicts with the upstream artifacts. Otherwise APPROVED with empty corrections.",
+				].join(" "),
+			];
+			return collectText(
+				client,
+				[await sys(), { role: "user", content: userContent.join("\n\n") }],
 				max,
 			);
 		},
@@ -395,7 +418,9 @@ export function createWorkerExecutor(
 			contract: TaskContract,
 			_filteredTools: string[],
 			repair?: SchemaRepairRequest,
+			runOpts?: { mode?: WorkerRunMode },
 		): Promise<WorkerExecutionResult> => {
+			const planMode = runOpts?.mode === "plan";
 			const persona = getPersona(contract.personaId);
 			const max = opts.maxTokens ?? persona.maxTokens;
 			const projectSkills = opts.projectRoot
@@ -433,14 +458,32 @@ export function createWorkerExecutor(
 					`\n# Static Compile Commands\n${contract.inputs.staticCompileCommands.map((command) => `- ${command}`).join("\n")}`,
 				);
 			}
-			if (contract.postStaticCompile?.required) {
+			if (planMode) {
+				// W2-plan turn: read-only, propose a plan for master to audit.
 				lines.push(
-					"\n# Tail Static Compile Requirement\nAfter your main task work, run the static compile command(s) above and do not return a successful final <task_report> until they pass.",
+					[
+						"\n# Plan Mode (read-only)",
+						"Do NOT modify any file, run shell commands, or install anything.",
+						"Investigate read-only, then output exactly one <execution_plan> block with:",
+						"files_to_change (each ⊆ allowedGlobs), approach, test_or_verify_strategy,",
+						"risks, and out_of_scope. No prose before or after the block.",
+					].join("\n"),
+				);
+			} else {
+				if (contract.inputs.approvedPlan) {
+					lines.push(
+						`\n# Approved Execution Plan\nFollow this master-approved plan; do not exceed its scope:\n${contract.inputs.approvedPlan}`,
+					);
+				}
+				if (contract.postStaticCompile?.required) {
+					lines.push(
+						"\n# Tail Static Compile Requirement\nAfter your main task work, run the static compile command(s) above and do not return a successful final <task_report> until they pass.",
+					);
+				}
+				lines.push(
+					"\nComplete the task. Your final response must consist only of the required XML blocks from the system prompt, with no prose before or after them.",
 				);
 			}
-			lines.push(
-				"\nComplete the task. Your final response must consist only of the required XML blocks from the system prompt, with no prose before or after them.",
-			);
 			if (repair) {
 				lines.push(`\n# Schema Repair\n${repair.feedback}`);
 			}
@@ -453,6 +496,7 @@ export function createWorkerExecutor(
 					persona,
 					contract,
 					maxTokens: max,
+					...(planMode && { readOnly: true }),
 					onEvent: opts.onWorkerEvent
 						? (ev) => opts.onWorkerEvent!(contract, ev)
 						: undefined,
