@@ -665,4 +665,17 @@ describe("selectPersonaTools (master-granted MCP)", () => {
 		const names = selectPersonaTools(defs("read_file", "exec_shell"), repoScout, ["exec_shell"]).map((t) => t.name);
 		expect(names).not.toContain("exec_shell");
 	});
+
+	it("exposes readonly fallback shell tools without exposing denied shell execution", () => {
+		const names = selectPersonaTools(
+			defs("read_file", "shell_fs_read", "shell_search", "shell_git_read", "exec_shell"),
+			repoScout,
+			["shell_fs_read", "shell_search", "shell_git_read", "exec_shell"],
+		).map((t) => t.name);
+		expect(names).toContain("read_file");
+		expect(names).toContain("shell_fs_read");
+		expect(names).toContain("shell_search");
+		expect(names).toContain("shell_git_read");
+		expect(names).not.toContain("exec_shell");
+	});
 });

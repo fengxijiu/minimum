@@ -1,13 +1,31 @@
 import type { MemoryIndexRefreshScheduler } from "../memory/governance/RefreshScheduler.js";
 import { writeCandidate } from "../memory/governance/MemoryStaging.js";
 import type { MemoryCandidate, MemoryConfidence } from "../memory/governance/types.js";
-import type { PersonaId } from "../personas/Persona.js";
+import type { Persona, PersonaId } from "../personas/Persona.js";
 import { getPersona } from "../personas/PersonaRegistry.js";
 import { filterAllowedTools } from "../tools/policy/ToolAllowlistEnforcer.js";
 import { validateContract } from "./ContractValidator.js";
 import type { TaskContract } from "./TaskContract.js";
 
-export type TaskStatus = "ok" | "blocked" | "error" | "contract_invalid";
+export type TaskStatus =
+	| "ok"
+	| "blocked"
+	| "error"
+	| "contract_invalid"
+	| "degraded"
+	| "skipped";
+
+export interface ReadonlyFallbackAccess {
+	mode: "readonly_workspace";
+	allowed: boolean;
+	root: string;
+	allowTools: string[];
+	denyTools: string[];
+	allowFileGlobs: string[];
+	denyFileGlobs: string[];
+	maxFileBytes: number;
+	maxTotalBytes: number;
+}
 
 export interface TaskResult {
 	taskId: string;
@@ -24,6 +42,11 @@ export interface TaskResult {
 	hitStepLimit?: boolean;
 	/** True when TaskRunner retried once to repair a missing <task_report> envelope. */
 	schemaRepairAttempted?: boolean;
+	retryCount?: number;
+	degradedReason?: string;
+	skipReason?: string;
+	lastError?: string;
+	fallbackAccess?: ReadonlyFallbackAccess;
 	durationMs: number;
 }
 
@@ -57,6 +80,33 @@ export interface TaskRunnerOptions {
 	executor: WorkerExecutor;
 	refreshScheduler?: MemoryIndexRefreshScheduler;
 }
+
+const READONLY_FALLBACK_ALLOW_TOOLS = [
+	"read_file",
+	"list_directory",
+	"grep",
+	"glob",
+	"git_status",
+	"git_log",
+	"git_diff",
+	"shell_fs_read",
+	"shell_search",
+	"shell_git_read",
+] as const;
+
+const READONLY_FALLBACK_DENY_TOOLS = [
+	"write_file",
+	"edit_file",
+	"apply_patch",
+	"exec_shell",
+	"shell_raw",
+	"install_dependency",
+	"web_fetch",
+	"git",
+] as const;
+
+export const RETRYABLE_SCAN_ATTEMPTS = 5;
+export const RETRYABLE_WORKER_ATTEMPTS = 3;
 
 /**
  * Run a single contracted task end-to-end.
@@ -112,18 +162,25 @@ export async function runTask(
 	let report = reportInspection.content;
 	let memBlock = extractXmlBlock(rawOutput, "memory_candidate") || undefined;
 	let status = detectStatus(report);
+	let missingBlocks = findMissingReportBlocks(report, status, persona);
 	let schemaRepairAttempted = false;
 	const attempts: MissingReportAttempt[] = [
 		buildMissingReportAttempt("initial", rawOutput, execution, reportInspection),
 	];
 
-	if (!report) {
+	// One repair round covers two cases: a missing/malformed <task_report>
+	// envelope, or a completed report that omits a persona-required sub-block
+	// (e.g. repo_scout without <file_list>). Both feed back a targeted re-emit
+	// request asking only for the missing piece, then re-validate once.
+	if (!report || missingBlocks.length > 0) {
 		schemaRepairAttempted = true;
-		const repair = buildSchemaRepairRequest(
-			rawOutput,
-			execution,
-			reportInspection.diagnostics,
-		);
+		const repair = report
+			? buildBlockRepairRequest(rawOutput, missingBlocks)
+			: buildSchemaRepairRequest(
+				rawOutput,
+				execution,
+				reportInspection.diagnostics,
+			);
 		try {
 			execution = normalizeWorkerExecution(
 				await opts.executor.run(contract, filteredTools, repair),
@@ -133,6 +190,7 @@ export async function runTask(
 			report = reportInspection.content;
 			memBlock = extractXmlBlock(rawOutput, "memory_candidate") || undefined;
 			status = detectStatus(report);
+			missingBlocks = findMissingReportBlocks(report, status, persona);
 			attempts.push(buildMissingReportAttempt("repair", rawOutput, execution, reportInspection));
 		} catch (err: unknown) {
 			const repairError = err instanceof Error ? err.message : String(err);
@@ -180,6 +238,185 @@ export async function runTask(
 	};
 }
 
+export async function runTaskWithRetry(
+	contract: TaskContract,
+	opts: TaskRunnerOptions,
+): Promise<TaskResult> {
+	const start = Date.now();
+	const maxAttempts = contract.personaId === "repo_scout"
+		? RETRYABLE_SCAN_ATTEMPTS
+		: RETRYABLE_WORKER_ATTEMPTS;
+	let lastResult: TaskResult | undefined;
+
+	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+		const result = await runTask(contract, opts);
+		lastResult = result;
+		if (!shouldRetryTaskResult(result)) {
+			return attempt === 1 ? result : { ...result, retryCount: attempt - 1 };
+		}
+		if (attempt < maxAttempts) continue;
+	}
+
+	const retryCount = Math.max(0, maxAttempts - 1);
+	const lastError = summarizeRetryError(lastResult);
+	if (contract.personaId === "repo_scout") {
+		const degradedReason = `repo_scout scan failed after ${maxAttempts} retryable attempt(s)`;
+		return {
+			taskId: contract.taskId,
+			personaId: contract.personaId,
+			status: "degraded",
+			report: buildDegradedScanReport(degradedReason, lastError),
+			memoryCandidateBody: undefined,
+			errors: [degradedReason, ...(lastError ? [`last error: ${lastError}`] : [])],
+			retryCount,
+			degradedReason,
+			...(lastError && { lastError }),
+			fallbackAccess: buildReadonlyFallbackAccess(opts.projectRoot),
+			durationMs: Date.now() - start,
+		};
+	}
+
+	const skipReason = `task skipped after ${maxAttempts} retryable attempt(s)`;
+	return {
+		taskId: contract.taskId,
+		personaId: contract.personaId,
+		status: "skipped",
+		report: buildSkippedReport(skipReason, lastError),
+		memoryCandidateBody: undefined,
+		errors: [skipReason, ...(lastError ? [`last error: ${lastError}`] : [])],
+		retryCount,
+		skipReason,
+		...(lastError && { lastError }),
+		durationMs: Date.now() - start,
+	};
+}
+
+export function buildReadonlyFallbackAccess(root: string): ReadonlyFallbackAccess {
+	return {
+		mode: "readonly_workspace",
+		allowed: true,
+		root,
+		allowTools: [...READONLY_FALLBACK_ALLOW_TOOLS],
+		denyTools: [...READONLY_FALLBACK_DENY_TOOLS],
+		allowFileGlobs: [
+			"**/*.ts",
+			"**/*.tsx",
+			"**/*.js",
+			"**/*.jsx",
+			"**/*.json",
+			"**/*.md",
+			"**/*.yaml",
+			"**/*.yml",
+			"**/*.toml",
+		],
+		denyFileGlobs: [
+			"**/.env",
+			"**/.env.*",
+			"**/secrets/**",
+			"**/.ssh/**",
+			"**/node_modules/**",
+			"**/.git/objects/**",
+		],
+		maxFileBytes: 512_000,
+		maxTotalBytes: 20_000_000,
+	};
+}
+
+function shouldRetryTaskResult(result: TaskResult): boolean {
+	if (result.status !== "error") return false;
+	const text = `${result.report}\n${result.errors.join("\n")}`.toLowerCase();
+	if (isNonRetryableErrorText(text)) return false;
+	return isRetryableErrorText(text);
+}
+
+function isRetryableErrorText(text: string): boolean {
+	return [
+		/\btimeout\b/,
+		/timed out/,
+		/rate[_\s-]?limit/,
+		/rate limited/,
+		/rate-limited/,
+		/\b429\b/,
+		/network[_\s-]?error/,
+		/\bnetwork\b/,
+		/econnreset/,
+		/etimedout/,
+		/econnrefused/,
+		/api[_\s-]?5xx/,
+		/\b50[0234]\b/,
+		/tool[_\s-]?unavailable/,
+		/unavailable/,
+		/empty[_\s-]?response/,
+		/empty stream/,
+		/empty output/,
+		/no output/,
+		/malformed[_\s-]?tool[_\s-]?response/,
+		/malformed tool/,
+		/maxsteps/,
+		/max steps/,
+		/step limit/,
+	].some((pattern) => pattern.test(text));
+}
+
+function isNonRetryableErrorText(text: string): boolean {
+	return [
+		/permission[_\s-]?denied/,
+		/access denied/,
+		/workspace[_\s-]?not[_\s-]?found/,
+		/invalid[_\s-]?contract/,
+		/schema[_\s-]?validation[_\s-]?failed/,
+		/user[_\s-]?cancelled/,
+		/user canceled/,
+		/tool[_\s-]?denied/,
+		/blocked_path_violation/,
+		/path violation/,
+		/policy violation/,
+		/safety denial/,
+		/not in .* allowlist/,
+		/in .* denylist/,
+	].some((pattern) => pattern.test(text));
+}
+
+function summarizeRetryError(result: TaskResult | undefined): string {
+	if (!result) return "";
+	const text = result.errors.length ? result.errors.join("; ") : result.report;
+	return summarizeRawOutput(text);
+}
+
+function buildDegradedScanReport(reason: string, lastError: string): string {
+	return [
+		"<status>degraded</status>",
+		`<summary>${escapeXml(reason)}.</summary>`,
+		"<fallback_access>",
+		"mode: readonly_workspace",
+		"allowed: true",
+		"</fallback_access>",
+		"<missing_outputs>",
+		"- file_list",
+		"- relevant_files",
+		"- tech_stack",
+		"- test_commands",
+		"- static_compile_commands",
+		"</missing_outputs>",
+		lastError ? `<last_error>${escapeXml(lastError)}</last_error>` : "",
+	].filter(Boolean).join("\n");
+}
+
+function buildSkippedReport(reason: string, lastError: string): string {
+	return [
+		"<status>skipped</status>",
+		`<summary>${escapeXml(reason)}.</summary>`,
+		lastError ? `<last_error>${escapeXml(lastError)}</last_error>` : "",
+	].filter(Boolean).join("\n");
+}
+
+function escapeXml(value: string): string {
+	return value
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;");
+}
+
 function normalizeWorkerExecution(
 	output: string | WorkerExecutionResult,
 ): WorkerExecutionResult {
@@ -215,6 +452,46 @@ function buildSchemaRepairRequest(
 			"  <status>completed | blocked | failed</status>",
 			"  <summary>Reuse only facts already gathered.</summary>",
 			"</task_report>",
+			`Raw excerpt: ${excerpt}`,
+		].join("\n"),
+	};
+}
+
+/**
+ * Required sub-blocks a completed report omitted. Only enforced for an "ok"
+ * (completed) report — a blocked/failed/degraded/skipped report legitimately
+ * drops deliverable blocks, and a missing envelope is handled separately.
+ */
+function findMissingReportBlocks(
+	report: string,
+	status: TaskStatus,
+	persona: Persona,
+): string[] {
+	if (!report || status !== "ok") return [];
+	const required = persona.requiredReportBlocks ?? [];
+	if (required.length === 0) return [];
+	return required.filter((tag) => !inspectXmlBlock(report, tag).content);
+}
+
+/**
+ * Targeted re-emit request for a report that parsed but is missing one or more
+ * persona-required sub-blocks. Asks the worker to keep everything it already
+ * produced and only add the named block(s).
+ */
+function buildBlockRepairRequest(
+	rawOutput: string,
+	missingBlocks: string[],
+): SchemaRepairRequest {
+	const excerpt = summarizeRawOutput(rawOutput.trim()) || "(empty)";
+	const blockList = missingBlocks.map((b) => `<${b}>`).join(", ");
+	return {
+		attempt: 2,
+		rawOutput,
+		feedback: [
+			`Your <task_report> parsed but is missing required block(s): ${blockList}.`,
+			"Re-emit the COMPLETE <task_report> with the SAME content you already produced, adding only the missing block(s) above.",
+			"Do not drop any block you already included. Do not include <memory_candidate> during this repair.",
+			"No prose before or after the XML block.",
 			`Raw excerpt: ${excerpt}`,
 		].join("\n"),
 	};
@@ -322,6 +599,8 @@ function escapeRegExp(value: string): string {
 function detectStatus(report: string): TaskStatus {
 	if (!report) return "error";
 	if (/<status>\s*blocked\s*<\/status>/i.test(report)) return "blocked";
+	if (/<status>\s*degraded\s*<\/status>/i.test(report)) return "degraded";
+	if (/<status>\s*skipped\s*<\/status>/i.test(report)) return "skipped";
 	if (/<status>\s*(failed?|error)\s*<\/status>/i.test(report)) return "error";
 	return "ok";
 }

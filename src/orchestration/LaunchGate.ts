@@ -69,6 +69,9 @@ export function evaluateLaunchGate(
 			if (hasNonBlockingDirective(upstream)) {
 				continue;
 			}
+			if (canUseReadonlyFallback(requirement, upstream)) {
+				continue;
+			}
 			issues.push({
 				taskId: contract.taskId,
 				requirement,
@@ -81,6 +84,9 @@ export function evaluateLaunchGate(
 			if (hasNonBlockingDirective(upstream)) {
 				continue;
 			}
+			if (canUseReadonlyFallback(requirement, upstream)) {
+				continue;
+			}
 			issues.push({
 				taskId: contract.taskId,
 				requirement,
@@ -89,6 +95,26 @@ export function evaluateLaunchGate(
 		}
 	}
 	return { ok: issues.length === 0, issues };
+}
+
+export function canUseReadonlyFallback(
+	requirement: LaunchRequirement,
+	upstream: TaskResult,
+): boolean {
+	if (requirement.artifact === "static_compile_commands") return false;
+	if (upstream.personaId !== "repo_scout") return false;
+	if (upstream.status !== "degraded") return false;
+	if (upstream.fallbackAccess?.mode !== "readonly_workspace" || !upstream.fallbackAccess.allowed) return false;
+	const explicit = requirement.fallback;
+	if (!explicit) return true;
+	if (explicit.mode !== "readonly_workspace") return false;
+	if (explicit.allowedWhen.length === 0) return true;
+	return explicit.allowedWhen.some((condition) => {
+		const c = condition.toLowerCase();
+		return c === "upstream_status:degraded" ||
+			c === "repo_scout_degraded" ||
+			c === "readonly_workspace_available";
+	});
 }
 
 export function hasNonBlockingDirective(result: TaskResult): boolean {

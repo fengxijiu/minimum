@@ -221,6 +221,38 @@ describe("refineDag", () => {
 		});
 	});
 
+	it("does NOT enable postStaticCompile for a write task that only writes markdown", () => {
+		const { contracts } = refineDag(mkDag(), {
+			inputs: { ...baseInputs, staticCompileCommands: ["npm run typecheck"] },
+			refinement: refinement([
+				{
+					taskId: "T2-1",
+					allowedGlobs: ["docs/code-audit-report.md"],
+					blockedCondition: "blocked if findings are unavailable",
+				},
+			]),
+		});
+		// Markdown-only audit/report task must not be gated on a whole-project compile.
+		expect(contracts[0]!.postStaticCompile).toBeUndefined();
+	});
+
+	it("enables postStaticCompile for a write task with a wildcard source glob", () => {
+		const { contracts } = refineDag(mkDag(), {
+			inputs: { ...baseInputs, staticCompileCommands: ["npm run typecheck"] },
+			refinement: refinement([
+				{
+					taskId: "T2-1",
+					allowedGlobs: ["src/**"],
+					blockedCondition: "blocked if context is missing",
+				},
+			]),
+		});
+		expect(contracts[0]!.postStaticCompile).toEqual({
+			required: true,
+			commands: ["npm run typecheck"],
+		});
+	});
+
 	it("enables postStaticCompile for test_runner contracts", () => {
 		const dag = mkDag({
 			phases: [

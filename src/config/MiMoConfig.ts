@@ -36,6 +36,8 @@ export interface CapacityGuardConfig {
 }
 
 export interface StormConfig {
+	/** 是否启用风暴检测（默认 false — 已关闭重复调用守卫） */
+	enabled?: boolean;
 	/** 风暴检测窗口大小（默认 6） */
 	windowSize?: number;
 	/** 触发抑制的重复阈值（默认 3） */
@@ -99,7 +101,7 @@ export interface MiMoConfig {
 	defaultModel?: string;
 	/** 最大 context 窗口 token 数（默认 131072） */
 	maxTokens?: number;
-	/** 单次任务最大步骤数（默认 50） */
+	/** 单次任务最大步骤数（默认 200） */
 	maxSteps?: number;
 	/** API 成本预算上限，USD（默认不限） */
 	budgetUsd?: number;
@@ -158,7 +160,7 @@ export const DEFAULT_MIMO_CONFIG: Required<MiMoConfig> = {
 	baseUrl: "https://api.xiaomimimo.com/v1",
 	defaultModel: "mimo-v2.5-pro",
 	maxTokens: 131072,
-	maxSteps: 50,
+	maxSteps: 200,
 	budgetUsd: 0,
 	enableReadGuard: true,
 	planMode: false,
@@ -177,6 +179,7 @@ export const DEFAULT_MIMO_CONFIG: Required<MiMoConfig> = {
 		refreshCooldownTurns: 6,
 	},
 	storm: {
+		enabled: false,
 		windowSize: 6,
 		threshold: 3,
 	},

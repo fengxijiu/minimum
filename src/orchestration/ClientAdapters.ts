@@ -281,7 +281,7 @@ const DELIVER_SYS = [
 	"You receive a pre-structured summary containing the original request, task outcomes, written files, and known issues.",
 	"Write a clear, concise <final_brief> in Markdown that answers the user's request directly.",
 	"Lead with what was accomplished, then list concrete changes made (files written, key findings).",
-	"If any tasks were blocked, errored, or produced warnings, surface them under a short warnings section.",
+	"If any tasks were degraded, skipped, blocked, errored, or produced warnings, surface them under a short warnings section.",
 	"Do not expose internal pipeline mechanics, .minimum/** artifacts, or agent-internal details.",
 	"Ground every claim in the provided summary — never invent results.",
 	"Output exactly one <final_brief> block containing Markdown, with no prose before or after it.",
@@ -296,9 +296,23 @@ function buildStructuredSummary(input: FinalDeliveryInput): string {
 	const taskSummaries = input.results.map((r) => {
 		const firstLine = r.report.split("\n").find((l) => l.trim().length > 0)?.trim() ?? "";
 		const summary = firstLine.length > 300 ? firstLine.slice(0, 297) + "..." : firstLine;
-		return `- **${r.taskId}** (${r.personaId}): ${r.status}${summary ? ` — ${summary}` : ""}${r.errors.length ? ` [errors: ${r.errors.join("; ")}]` : ""}`;
+		const details = [
+			...(r.errors.length ? [`errors: ${r.errors.join("; ")}`] : []),
+			...(r.retryCount !== undefined ? [`retries: ${r.retryCount}`] : []),
+			...(r.degradedReason ? [`degraded: ${r.degradedReason}`] : []),
+			...(r.skipReason ? [`skipped: ${r.skipReason}`] : []),
+			...(r.lastError ? [`last_error: ${r.lastError}`] : []),
+		];
+		return `- **${r.taskId}** (${r.personaId}): ${r.status}${summary ? ` — ${summary}` : ""}${details.length ? ` [${details.join("; ")}]` : ""}`;
 	}).join("\n");
 	sections.push(`## Task Outcomes\n${taskSummaries || "(none)"}`);
+
+	const warnings = input.results
+		.filter((r) => r.status === "degraded" || r.status === "skipped" || r.status === "blocked" || r.status === "error" || r.status === "contract_invalid")
+		.map((r) => `- ${r.taskId} (${r.personaId}) ${r.status}: ${r.degradedReason ?? r.skipReason ?? (r.errors.join("; ") || "see task report")}`);
+	if (warnings.length > 0) {
+		sections.push(`## Warning Conditions\n${warnings.join("\n")}`);
+	}
 
 	if (input.writtenFilesByTask?.length) {
 		const files = input.writtenFilesByTask

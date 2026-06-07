@@ -67,6 +67,15 @@ export interface Persona {
 	maxSteps: number;
 	maxTokens: number;
 	outputSchema: OutputSchema;
+	/**
+	 * XML sub-tags that MUST appear inside `<task_report>` for a *completed*
+	 * report to count as structurally complete (e.g. repo_scout's
+	 * `<workspace_state>` / `<file_list>`). Empty/undefined means only the
+	 * shared envelope is enforced. TaskRunner validates these after parsing and
+	 * issues one targeted re-emit naming the missing block(s); blocked/failed
+	 * reports are exempt because they legitimately omit deliverables.
+	 */
+	requiredReportBlocks?: string[];
 	parallelism: Parallelism;
 }
 

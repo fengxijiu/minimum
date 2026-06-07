@@ -2,10 +2,9 @@ import type { PersonaId } from "../personas/Persona.js";
 import type { TaskResult } from "./TaskRunner.js";
 
 /**
- * HarnessEvent — unified event stream for both WaveHarness and DynamicHarness.
+ * HarnessEvent — event stream emitted by {@link DynamicHarness}.
  *
- * Dynamic-mode events that WaveHarness does not emit are documented as such;
- * consumers (TUI, logs) should treat them as optional.
+ * Consumers (TUI, logs) should treat resource / queue-health events as optional.
  */
 
 export type HarnessEvent =
@@ -14,13 +13,9 @@ export type HarnessEvent =
 	| { type: "harness_complete"; allResults: TaskResult[] }
 
 	// ── Task-level transitions ─────────────────────────────────────────────
-	/** Wave mode: emitted per wave before tasks start. Dynamic mode: not used. */
-	| { type: "wave_start"; waveIndex: number; taskCount: number }
-	/** Wave mode: emitted per wave after all tasks complete. Dynamic mode: not used. */
-	| { type: "wave_complete"; waveIndex: number; results: TaskResult[] }
-	/** Task entered the ready queue (dynamic only; wave bundles these into wave_start). */
+	/** Task entered the ready queue. */
 	| { type: "task_ready"; taskId: string }
-	/** Task was scheduled onto a worker slot (dynamic only). */
+	/** Task was scheduled onto a worker slot. */
 	| { type: "task_scheduled"; taskId: string; personaId: PersonaId }
 	/** Worker started executing the task. */
 	| { type: "task_started"; taskId: string; personaId: PersonaId }
