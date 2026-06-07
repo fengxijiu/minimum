@@ -3,14 +3,12 @@ import type { HarnessEvent } from "./HarnessEvent.js";
 import type { TaskRunnerOptions, TaskResult } from "./TaskRunner.js";
 
 /**
- * DagHarness — unified scheduler interface for executing a set of TaskContracts.
+ * DagHarness — scheduler interface for executing a set of TaskContracts.
  *
- * Two implementations exist:
- *   • WaveHarness  — barrier-based wave scheduler (current behaviour)
- *   • DynamicHarness — real-time dependency-unlocking scheduler (future)
- *
- * External code (MiMoPipeline, tests) depends only on this interface,
- * not on buildWaves / schedule directly.
+ * The sole implementation is {@link DynamicHarness} — a DAG-driven scheduler
+ * that unlocks downstream tasks in real time as their dependencies complete,
+ * with write-lock serialisation, a launch gate, and idle detection. External
+ * code (MiMoPipeline, tests) depends only on this interface.
  */
 
 export interface DagHarnessOptions extends TaskRunnerOptions {

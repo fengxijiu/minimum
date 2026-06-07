@@ -4,6 +4,10 @@ node_modules/
 # Build output
 dist/
 *.tsbuildinfo
+# Compiled JS must never sit beside its .ts source (tsx would resolve the stale
+# .js over the .ts). Sources are .ts only; build output goes to dist/.
+src/**/*.js
+tui/src/**/*.js
 
 # Local runtime state
 .minimum/

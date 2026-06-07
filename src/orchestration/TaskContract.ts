@@ -12,13 +12,19 @@ export interface LaunchRequirement {
 	sourceTaskId: string;
 	artifact: LaunchArtifact;
 	required: boolean;
+	fallback?: LaunchRequirementFallback;
+}
+
+export interface LaunchRequirementFallback {
+	mode: "readonly_workspace";
+	allowedWhen: string[];
 }
 
 /**
  * TaskContract — the binding agreement between master_planner and a worker.
  *
  * Every Task in the DAG must have a fully-populated TaskContract before
- * WaveScheduler launches its worker. ContractValidator enforces this at
+ * the harness launches its worker. ContractValidator enforces this at
  * the entry to TaskRunner; missing required fields cause the launch to
  * fail with BLOCKED_INVALID_CONTRACT and force the master to re-compile.
  */

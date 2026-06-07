@@ -46,6 +46,15 @@ export class ArtifactIndex {
 		return value !== undefined && value.length > 0;
 	}
 
+	/**
+	 * @returns the underlying (taskId → artifact → value) map, in the shape
+	 * `LaunchGate.evaluateLaunchGate` expects, so callers can run the launch
+	 * gate without re-parsing every task report.
+	 */
+	asMap(): Map<string, Map<LaunchArtifact, string>> {
+		return this.index;
+	}
+
 	/** @returns all task IDs currently indexed. */
 	get keys(): string[] {
 		return [...this.index.keys()];

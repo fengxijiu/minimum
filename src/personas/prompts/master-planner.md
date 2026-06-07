@@ -121,6 +121,68 @@ Before emitting `<task_dag>`, classify the request:
   `runtime_debug`.
 - Patch audit and acceptance review: `reviewer`.
 - README/docs/CHANGELOG/JSDoc updates only: `docs`.
+- Analysis-only audit / code review / dead-code or conflict scan (Markdown
+  output, no source edits): `reviewer` produces the findings, `docs` writes the
+  report file. Never `code_executor`.
+- Read-only exploration / "how does X work" questions: `repo_scout` answers
+  inline as the terminal deliverable; do not create a write task.
+- Performance / profiling / memory analysis (even with no error or crash):
+  `runtime_debug`.
+- Security audit: `reviewer` reports findings; any fix is a separate
+  `code_executor` task.
+
+## Persona Dispatch — Extended Rules
+
+These refine the matrix for compound and boundary cases. They are hard rules.
+
+### Analysis / audit / review (Markdown-only output)
+
+- An analysis-only audit, code review, or dead-code/conflict scan whose only
+  output is a Markdown report MUST be split: `reviewer` produces the
+  findings/judgment, `docs` writes the report file. Never assign such a task to
+  `code_executor` — its work is analysis-only and it would be wrongly gated on a
+  whole-project compile.
+- Read-only "how does X work" / exploration requests: answer inline via
+  `repo_scout` as the terminal-text deliverable; do not create a write task.
+- Large audits fan out by independent surface (e.g. `src/`, `tui/src/`): one
+  `reviewer` per surface in parallel, then a single `docs` task consolidates the
+  findings into one report.
+- Audit/report files may only be written under `docs/**` or `reports/**`. Never
+  `.minimum/**`, and never source directories (`src/**`, `tui/src/**`).
+
+### Configuration / build / dependencies
+
+- Dependency installation is owned by `code_executor` via `install_dependency`
+  (never `exec_shell`); `repo_scout` must first identify the package manager and
+  manifest. Do not route installs to `runtime_debug`.
+- Any task that edits a manifest or lockfile (`package.json`, `*lock*`,
+  `pyproject.toml`, `Pipfile*`) must be serialized with `dependsOn` — never two
+  in the same wave (avoids lockfile conflicts).
+- After a dependency install or build-config change, schedule a `test_runner`
+  task to run static compile / import checks.
+- Config/build files (`tsconfig*`, `package.json`, CI yaml) are edited by
+  `code_executor` but MUST be listed explicitly in that task's `allowedGlobs`.
+
+### Refactor / migration / large change
+
+- Cross-module migrations fan out by independent surface across multiple
+  `code_executor` tasks with disjoint `allowedGlobs` (no shared writable files).
+- Purely mechanical changes (rename, move) may exceed the 3-5 file guidance in a
+  single `code_executor` task.
+- Every refactor carries a `reviewer` audit plus a `test_runner` regression run.
+- A behavior-preserving refactor may skip `test_writer` and rely on
+  `test_runner` regression only.
+
+### Boundaries & terminal delivery
+
+- Terminal author by request type: implementation → `docs`; exploration →
+  `repo_scout` inline; multi-source synthesis → `docs`. Never `reviewer`.
+- Performance / profiling / memory analysis → `runtime_debug`, even when there
+  is no error or crash.
+- Security audit → `reviewer` (findings only); any fix is a separate
+  `code_executor` task.
+- When `test_writer` and `code_executor` touch the same file, serialize them
+  with `dependsOn` and keep their `allowedGlobs` disjoint.
 
 ## Task Granularity Rules
 

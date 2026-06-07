@@ -109,7 +109,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 			alwaysAllowedGlobs: ["**"],
 			forbiddenGlobs: [],
 		},
-		maxSteps: 100,
+		maxSteps: 200,
 		maxTokens: 131_072,
 		outputSchema: "planner_dag",
 		parallelism: { soloPerWave: true, maxConcurrent: 1 },
@@ -142,6 +142,8 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		maxSteps: 100,
 		maxTokens: 64_000,
 		outputSchema: "task_report",
+		// vision.md core deliverable + the named W0.5 launch artifact.
+		requiredReportBlocks: ["visual_summary"],
 		parallelism: { soloPerWave: false, maxConcurrent: 1 },
 	});
 
@@ -167,6 +169,10 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		maxSteps: 100,
 		maxTokens: 64_000,
 		outputSchema: "task_report",
+		// repo-scout.md mandates these blocks ("Always output <workspace_state>,
+		// <task_semantics>, and <pipeline_directive>" + a non-omittable
+		// <file_list>). TaskRunner re-prompts for any that are missing.
+		requiredReportBlocks: ["workspace_state", "task_semantics", "file_list", "pipeline_directive"],
 		parallelism: { soloPerWave: false, maxConcurrent: 3 },
 	});
 
@@ -226,6 +232,9 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		maxSteps: 100,
 		maxTokens: 64_000,
 		outputSchema: "task_report",
+		// code-executor.md mandates a one-sentence <summary> and the deliverable
+		// <changed_files> list for a completed implementation.
+		requiredReportBlocks: ["summary", "changed_files"],
 		parallelism: { soloPerWave: false, maxConcurrent: 2 },
 	});
 
@@ -260,6 +269,8 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		maxSteps: 100,
 		maxTokens: 48_000,
 		outputSchema: "task_report",
+		// test-writer.md core deliverables: the covered surface and the test files.
+		requiredReportBlocks: ["test_scope", "new_or_modified_tests"],
 		parallelism: { soloPerWave: false, maxConcurrent: 2 },
 	});
 
@@ -289,6 +300,8 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		maxSteps: 100,
 		maxTokens: 64_000,
 		outputSchema: "task_report",
+		// test-runner.md: every run reports the command it ran and its exit code.
+		requiredReportBlocks: ["command", "exit_code"],
 		parallelism: { soloPerWave: false, maxConcurrent: 3 },
 	});
 
@@ -316,6 +329,9 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		maxSteps: 100,
 		maxTokens: 64_000,
 		outputSchema: "task_report",
+		// runtime-debug.md exists to produce a <root_cause>; a completed diagnosis
+		// must carry one (an undetermined cause returns blocked, which is exempt).
+		requiredReportBlocks: ["root_cause"],
 		parallelism: { soloPerWave: true, maxConcurrent: 1 },
 	});
 
@@ -334,6 +350,8 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		maxSteps: 100,
 		maxTokens: 48_000,
 		outputSchema: "task_report",
+		// reviewer.md: the verdict and risk level are mandatory single-line fields.
+		requiredReportBlocks: ["decision", "risk_level"],
 		parallelism: { soloPerWave: false, maxConcurrent: 1 },
 	});
 
@@ -364,6 +382,9 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		maxSteps: 100,	
 		maxTokens: 64_000,
 		outputSchema: "task_report",
+		// docs.md: a completed docs task always summarizes the user-facing outcome
+		// (even "no doc changes needed"); <changed_docs>/<patch> stay conditional.
+		requiredReportBlocks: ["summary"],
 		parallelism: { soloPerWave: false, maxConcurrent: 2 },
 	});
 

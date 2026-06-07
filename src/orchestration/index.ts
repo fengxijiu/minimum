@@ -14,6 +14,7 @@ export {
 } from "./ClientAdapters.js";
 export {
 	buildArtifactMap,
+	canUseReadonlyFallback,
 	evaluateLaunchGate,
 	hasNonBlockingDirective,
 	isContextGapBlocked,
@@ -41,6 +42,7 @@ export {
 	type PipelineResult,
 	type FinalDeliveryInput,
 	type PlannerBridge,
+	type WaveEvent,
 } from "./MiMoPipeline.js";
 export {
 	compileMissionCheck,
@@ -105,6 +107,7 @@ export type {
 	CoarseTask,
 	LaunchArtifact,
 	LaunchRequirement,
+	LaunchRequirementFallback,
 	TaskContract,
 	TaskInputs,
 	TaskPathPolicy,
@@ -112,6 +115,11 @@ export type {
 export {
 	extractXmlBlock,
 	runTask,
+	runTaskWithRetry,
+	buildReadonlyFallbackAccess,
+	RETRYABLE_SCAN_ATTEMPTS,
+	RETRYABLE_WORKER_ATTEMPTS,
+	type ReadonlyFallbackAccess,
 	type SchemaRepairRequest,
 	type TaskResult,
 	type TaskRunnerOptions,
@@ -119,14 +127,8 @@ export {
 	type WorkerExecutionResult,
 	type WorkerExecutor,
 } from "./TaskRunner.js";
-export {
-	schedule,
-	type ScheduleOptions,
-	type WaveEvent,
-} from "./WaveScheduler.js";
 export type { DagHarness, DagHarnessOptions } from "./DagHarness.js";
 export type { HarnessEvent, WorkerInternalEvent } from "./HarnessEvent.js";
-export { WaveHarness } from "./WaveHarness.js";
 export { DynamicHarness } from "./DynamicHarness.js";
 export { TaskGraphIndex } from "./TaskGraphIndex.js";
 export type { TaskRuntimeStatus } from "./TaskGraphIndex.js";
