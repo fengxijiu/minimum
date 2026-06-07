@@ -120,6 +120,12 @@ export interface WorkerRunInput {
 	executionDepth?: ExecutionDepth;
 	signal?: AbortSignal;
 	onEvent?: (event: WorkerEvent) => void;
+	/**
+	 * Plan-mode turn: strip every mutating tool (writes, shell exec, installs) so
+	 * the worker can only read while proposing an <execution_plan>. The model
+	 * never sees a tool it could use to change the workspace.
+	 */
+	readOnly?: boolean;
 }
 
 export interface WorkerRunResult {
@@ -135,6 +141,18 @@ export interface WorkerRunResult {
 }
 
 const WRITE_TOOL_NAMES = new Set(["write_file", "edit_file", "apply_patch"]);
+
+/** Tools that can mutate the workspace/environment — denied during a plan turn. */
+const MUTATING_TOOL_NAMES = new Set([
+	"write_file", "edit_file", "apply_patch",
+	"exec_shell", "shell_raw", "shell_test", "shell_typecheck", "shell_lint", "shell_build",
+	"install_dependency", "run_background", "stop_job", "git",
+]);
+
+/** Whether a tool can change files or the environment (so a read-only plan turn forbids it). */
+export function isMutatingTool(name: string): boolean {
+	return MUTATING_TOOL_NAMES.has(name);
+}
 
 /**
  * Tools a persona may invoke for a task: its static allowlist, plus the MCP
@@ -188,12 +206,16 @@ export class WorkerLoop {
 		// plus any MCP tools the master granted this task. The model never even
 		// sees a tool it cannot invoke.
 		const allTools = this.tools.getDefinitions();
-		const personaTools = selectPersonaTools(
+		const selectedTools = selectPersonaTools(
 			allTools,
 			input.persona,
 			input.contract.grantedMcpTools ?? [],
 			input.contract,
 		);
+		// Plan-mode turns are read-only: hide every mutating tool from the model.
+		const personaTools = input.readOnly
+			? selectedTools.filter((t) => !isMutatingTool(t.name))
+			: selectedTools;
 		const pendingStaticCompileCommands = new Set(
 			input.contract.postStaticCompile?.required
 				? input.contract.postStaticCompile.commands

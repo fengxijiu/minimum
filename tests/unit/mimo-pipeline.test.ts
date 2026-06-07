@@ -1096,6 +1096,96 @@ Reason:
 		const capGate = gate.payloads[gate.payloads.length - 1]!;
 		expect(capGate.question).toContain("2");
 	});
+
+	// ── W2-plan gate (plan → master audit → execute) ──────────────────────────
+
+	it("plan mode: audits the plan, then executes with the approved plan injected", async () => {
+		const executeApprovedPlans: Array<string | undefined> = [];
+		let auditCalls = 0;
+		const executor: WorkerExecutor = {
+			run: async (contract, _tools, _repair, runOpts) => {
+				if (runOpts?.mode === "plan") {
+					return "<execution_plan>\nfiles_to_change:\n- src/upload.ts: add handler\n</execution_plan>";
+				}
+				if (contract.taskId === "T2-1") executeApprovedPlans.push(contract.inputs.approvedPlan);
+				return contract.taskId === "T0-1" ? OK_WITH_FILE_LIST : OK;
+			},
+		};
+		const planner = stubPlanner({
+			auditPlan: async () => {
+				auditCalls++;
+				return '<plan_audit>{"decision":"APPROVED","corrections":[],"reason":"in scope"}</plan_audit>';
+			},
+		});
+		const events: PipelineEvent[] = [];
+		const result = await runPipeline("image upload backend", {
+			projectRoot: dir,
+			planner,
+			executor,
+			onEvent: (e) => events.push(e),
+			choiceGate: continueGate(),
+			planMode: "code_personas",
+		});
+
+		expect(result.ok).toBe(true);
+		// Only the code_executor write task (T2-1) is gated; repo_scout T0-1 is read-only.
+		expect(auditCalls).toBe(1);
+		expect(executeApprovedPlans).toHaveLength(1);
+		expect(executeApprovedPlans[0]).toContain("src/upload.ts");
+		expect(events.some((e) => e.type === "plan_proposed" && (e as any).taskId === "T2-1")).toBe(true);
+		expect(events.some((e) => e.type === "plan_audited" && (e as any).decision === "APPROVED")).toBe(true);
+	});
+
+	it("plan mode: blocks the task (no execute) when the plan keeps failing audit", async () => {
+		const ran: string[] = [];
+		const executor: WorkerExecutor = {
+			run: async (contract, _tools, _repair, runOpts) => {
+				if (runOpts?.mode === "plan") {
+					return "<execution_plan>\nfiles_to_change:\n- src/everything.ts\n</execution_plan>";
+				}
+				ran.push(contract.taskId);
+				return contract.taskId === "T0-1" ? OK_WITH_FILE_LIST : OK;
+			},
+		};
+		const planner = stubPlanner({
+			auditPlan: async () =>
+				'<plan_audit>{"decision":"REVISE","corrections":["scope is too broad; narrow to the upload handler"],"reason":"too broad"}</plan_audit>',
+		});
+		const events: PipelineEvent[] = [];
+		const result = await runPipeline("image upload backend", {
+			projectRoot: dir,
+			planner,
+			executor,
+			onEvent: (e) => events.push(e),
+			choiceGate: continueGate(),
+			planMode: "code_personas",
+			maxPlanRevisions: 1,
+		});
+
+		expect(result.ok).toBe(true);
+		// T2-1 never reaches execution; perception T0-1 still ran.
+		expect(ran).not.toContain("T2-1");
+		expect(events.some((e) => e.type === "plan_revise" && (e as any).taskId === "T2-1")).toBe(true);
+		expect(events.some((e) => e.type === "plan_audited" && (e as any).decision === "blocked")).toBe(true);
+	});
+
+	it("plan mode off (default): never calls auditPlan and executes directly", async () => {
+		const auditPlan = vi.fn(async () => '<plan_audit>{"decision":"APPROVED","corrections":[],"reason":"ok"}</plan_audit>');
+		const ran: string[] = [];
+		const executor: WorkerExecutor = {
+			run: async (contract) => { ran.push(contract.taskId); return contract.taskId === "T0-1" ? OK_WITH_FILE_LIST : OK; },
+		};
+		const result = await runPipeline("image upload backend", {
+			projectRoot: dir,
+			planner: stubPlanner({ auditPlan }),
+			executor,
+			choiceGate: continueGate(),
+		});
+
+		expect(result.ok).toBe(true);
+		expect(auditPlan).not.toHaveBeenCalled();
+		expect(ran).toContain("T2-1");
+	});
 });
 
 describe("MiMoPipeline W0 compile retry", () => {

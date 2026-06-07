@@ -24,6 +24,7 @@ import type { PipelineCache } from "./PipelineCache.js";
 import { compileRefinement, refineDag, type RefinementEntry } from "./Refiner.js";
 import { validateGrants, type GrantableCatalog } from "./CapabilityCatalog.js";
 import { buildArtifactMap, canUseReadonlyFallback, evaluateLaunchGate, isContextGapBlocked } from "./LaunchGate.js";
+import { compilePlanAudit, extractExecutionPlan, needsPlanApproval, type PlanMode } from "./PlanGate.js";
 import {
 	compileMissionCheck,
 	loopBackTasksToCoarseTasks,
@@ -102,6 +103,9 @@ export type PipelineEvent =
 	| { type: "human_confirmation_required"; phase: PipelinePhase; reason: string }
 	| { type: "gate_retry"; phase: "W2/3"; taskId: string; attempt: 1; reason: string }
 	| { type: "task_deferred"; phase: "W2/3"; taskId: string; reason: string; blockedCondition?: string }
+	| { type: "plan_proposed"; phase: "W2/3"; taskId: string; persona: PersonaId }
+	| { type: "plan_audited"; phase: "W2/3"; taskId: string; decision: "APPROVED" | "REVISE" | "blocked"; reason: string }
+	| { type: "plan_revise"; phase: "W2/3"; taskId: string; attempt: number; corrections: string[] }
 	| { type: "finalize_done"; report: FinalizeReport }
 	| {
 			type: "pipeline_complete";
@@ -135,6 +139,20 @@ export interface FinalDeliveryInput {
 	writtenFilesByTask?: Array<{ taskId: string; files: string[] }>;
 }
 
+/** Input for the W2-plan audit touchpoint. */
+export interface PlanAuditInput {
+	taskId: string;
+	persona: PersonaId;
+	objective: string;
+	allowedGlobs: string[];
+	acceptance: string[];
+	nonGoals: string[];
+	/** The worker's proposed <execution_plan> body. */
+	plan: string;
+	/** Compact summary of upstream artifacts (file_list, relevant_files, …). */
+	upstreamArtifacts: string;
+}
+
 /** Planner/checker LLM touchpoints used by the pipeline. */
 export interface PlannerBridge {
 	/**
@@ -154,6 +172,10 @@ export interface PlannerBridge {
 	): Promise<string>;
 	/** W3.5: returns a mission checker Markdown report. */
 	checkMission(input: MissionCheckInput, feedback?: string): Promise<string>;
+	/** W2-plan: audit a worker's proposed execution plan; returns text with a
+	 *  <plan_audit> block (APPROVED / REVISE + corrections). Optional — required
+	 *  only when planMode is enabled. */
+	auditPlan?(input: PlanAuditInput): Promise<string>;
 	/** W4: returns master output containing a <finalize> block. */
 	finalize(
 		results: TaskResult[],
@@ -218,6 +240,16 @@ export interface PipelineOptions {
 	orchestrationMode?: OrchestrationMode;
 	/** In-run cache for file reads and command results to avoid redundant I/O. */
 	cache?: PipelineCache;
+	/**
+	 * W2-plan gate: when a write task runs, the worker first proposes an
+	 * <execution_plan> that master_planner audits before execution.
+	 *   • "off"            — disabled (default; behaviour unchanged)
+	 *   • "code_personas"  — code_executor + test_writer write tasks
+	 *   • "all_writes"     — every write-capable task
+	 */
+	planMode?: PlanMode;
+	/** Max plan REVISE rounds before the task is blocked. Defaults to 2. */
+	maxPlanRevisions?: number;
 }
 
 export interface PipelineResult {
@@ -1030,7 +1062,17 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 				emit,
 				gateRetryKeys,
 			});
-			const implResults = await runDag(stripPerceptionDeps(runnable), opts, emit, args.refreshScheduler);
+			// W2-plan gate: write tasks propose a plan that master_planner audits
+			// before execution. Returns approved contracts (with inputs.approvedPlan);
+			// rejected ones are dropped and recorded as blocked.
+			const planned = await runPlanGate({
+				contracts: runnable,
+				allResults,
+				opts,
+				emit,
+				knownIssues,
+			});
+			const implResults = await runDag(stripPerceptionDeps(planned), opts, emit, args.refreshScheduler);
 			allResults.push(...implResults);
 			const retryResults = await retryBlockedContextGaps({
 				results: implResults,
@@ -1544,6 +1586,168 @@ function applyLaunchGate(args: {
 	}
 
 	return { runnable };
+}
+
+/**
+ * W2-plan gate. For each write task eligible under planMode, run the worker once
+ * in read-only plan mode to obtain an <execution_plan>, have master_planner audit
+ * it, and either approve (injecting inputs.approvedPlan) or loop on REVISE up to
+ * the revision cap. Tasks that fail planning are dropped (recorded as blocked).
+ * Non-eligible tasks pass through unchanged.
+ */
+async function runPlanGate(args: {
+	contracts: TaskContract[];
+	allResults: TaskResult[];
+	opts: PipelineOptions;
+	emit: (e: PipelineEvent) => void;
+	knownIssues: string[];
+}): Promise<TaskContract[]> {
+	const { contracts, allResults, opts, emit, knownIssues } = args;
+	const planMode: PlanMode = opts.planMode ?? "off";
+	if (planMode === "off") return contracts;
+
+	const auditPlan = opts.planner.auditPlan;
+	if (!auditPlan) {
+		knownIssues.push("W2/3 planMode enabled but planner has no auditPlan; skipping plan gate");
+		return contracts;
+	}
+
+	const maxRevisions = opts.maxPlanRevisions ?? 2;
+	const artifacts = buildArtifactMap(allResults);
+	const upstreamSummary = (contract: TaskContract): string => {
+		const parts: string[] = [];
+		for (const dep of contract.dependsOn) {
+			const m = artifacts.get(dep);
+			if (!m) continue;
+			const fl = m.get("file_list");
+			const rf = m.get("relevant_files");
+			if (fl) parts.push(`${dep}.file_list:\n${fl}`);
+			if (rf) parts.push(`${dep}.relevant_files:\n${rf}`);
+		}
+		return parts.join("\n\n");
+	};
+
+	const out: TaskContract[] = [];
+	for (const contract of contracts) {
+		let canWrite = false;
+		try {
+			canWrite = getPersona(contract.personaId).pathPolicy.canWrite;
+		} catch {
+			// unknown persona — leave canWrite false so the task passes through.
+		}
+		const eligible = needsPlanApproval(
+			contract.personaId,
+			canWrite,
+			contract.pathPolicy.allowedGlobs.length,
+			contract.requiresPlanApproval,
+			planMode,
+		);
+		if (!eligible) {
+			out.push(contract);
+			continue;
+		}
+
+		const approved = await planOneTask(contract, {
+			opts,
+			emit,
+			knownIssues,
+			maxRevisions,
+			upstream: upstreamSummary(contract),
+			auditPlan,
+		});
+		if (approved) out.push(approved);
+		// Rejected → omitted; planOneTask already emitted/recorded the block.
+	}
+	return out;
+}
+
+/** Run the plan→audit loop for a single eligible task. Returns the approved
+ *  contract (with inputs.approvedPlan) or undefined if it could not be approved. */
+async function planOneTask(
+	contract: TaskContract,
+	ctx: {
+		opts: PipelineOptions;
+		emit: (e: PipelineEvent) => void;
+		knownIssues: string[];
+		maxRevisions: number;
+		upstream: string;
+		auditPlan: NonNullable<PlannerBridge["auditPlan"]>;
+	},
+): Promise<TaskContract | undefined> {
+	const { opts, emit, knownIssues, maxRevisions, upstream, auditPlan } = ctx;
+	let revisePrior: string[] = [];
+
+	for (let attempt = 0; attempt <= maxRevisions; attempt++) {
+		// 1. Worker proposes a plan (read-only).
+		let planText: string;
+		try {
+			const repair = revisePrior.length > 0
+				? { feedback: `# Revision required\n${revisePrior.map((c) => `- ${c}`).join("\n")}`, rawOutput: "", attempt: attempt + 1 }
+				: undefined;
+			const raw = await opts.executor.run(contract, [], repair, { mode: "plan" });
+			planText = extractExecutionPlan(typeof raw === "string" ? raw : raw.text);
+		} catch (e) {
+			const reason = `plan generation failed: ${e instanceof Error ? e.message : String(e)}`;
+			knownIssues.push(`W2/3 ${contract.taskId} ${reason}`);
+			emit({ type: "plan_audited", phase: "W2/3", taskId: contract.taskId, decision: "blocked", reason });
+			return undefined;
+		}
+		if (!planText) {
+			const reason = "worker produced no <execution_plan>";
+			knownIssues.push(`W2/3 ${contract.taskId} ${reason}`);
+			emit({ type: "plan_audited", phase: "W2/3", taskId: contract.taskId, decision: "blocked", reason });
+			return undefined;
+		}
+		emit({ type: "plan_proposed", phase: "W2/3", taskId: contract.taskId, persona: contract.personaId });
+
+		// 2. Master audits the plan.
+		let auditText: string;
+		try {
+			auditText = await auditPlan({
+				taskId: contract.taskId,
+				persona: contract.personaId,
+				objective: contract.objective,
+				allowedGlobs: contract.pathPolicy.allowedGlobs,
+				acceptance: contract.acceptance,
+				nonGoals: contract.nonGoals ?? [],
+				plan: planText,
+				upstreamArtifacts: upstream,
+			});
+		} catch (e) {
+			const reason = `plan audit failed: ${e instanceof Error ? e.message : String(e)}`;
+			knownIssues.push(`W2/3 ${contract.taskId} ${reason}`);
+			emit({ type: "plan_audited", phase: "W2/3", taskId: contract.taskId, decision: "blocked", reason });
+			return undefined;
+		}
+		const audit = compilePlanAudit(auditText);
+		if (!audit.ok) {
+			const reason = `unparseable plan audit: ${audit.error}`;
+			knownIssues.push(`W2/3 ${contract.taskId} ${reason}`);
+			emit({ type: "plan_audited", phase: "W2/3", taskId: contract.taskId, decision: "blocked", reason });
+			return undefined;
+		}
+
+		if (audit.audit.decision === "APPROVED") {
+			emit({ type: "plan_audited", phase: "W2/3", taskId: contract.taskId, decision: "APPROVED", reason: audit.audit.reason });
+			return {
+				...contract,
+				inputs: { ...contract.inputs, approvedPlan: planText },
+			};
+		}
+
+		// REVISE
+		emit({ type: "plan_audited", phase: "W2/3", taskId: contract.taskId, decision: "REVISE", reason: audit.audit.reason });
+		if (attempt < maxRevisions) {
+			emit({ type: "plan_revise", phase: "W2/3", taskId: contract.taskId, attempt: attempt + 1, corrections: audit.audit.corrections });
+			revisePrior = audit.audit.corrections;
+			continue;
+		}
+		const reason = `plan still REVISE after ${maxRevisions} revision(s): ${audit.audit.reason || audit.audit.corrections.join("; ")}`;
+		knownIssues.push(`W2/3 ${contract.taskId} ${reason}`);
+		emit({ type: "plan_audited", phase: "W2/3", taskId: contract.taskId, decision: "blocked", reason });
+		return undefined;
+	}
+	return undefined;
 }
 
 function collectReadonlyFallbackContext(

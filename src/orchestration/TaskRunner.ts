@@ -66,12 +66,17 @@ export interface WorkerExecutionResult {
 	attempt?: number;
 }
 
+/** Worker run mode: a `plan` turn is read-only and must emit <execution_plan>;
+ *  `execute` (default) performs the task and emits <task_report>. */
+export type WorkerRunMode = "plan" | "execute";
+
 /** Injectable worker executor; real impl calls the LLM, tests may still return plain text. */
 export interface WorkerExecutor {
 	run(
 		contract: TaskContract,
 		filteredTools: string[],
 		repair?: SchemaRepairRequest,
+		runOpts?: { mode?: WorkerRunMode },
 	): Promise<string | WorkerExecutionResult>;
 }
 

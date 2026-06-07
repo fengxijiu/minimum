@@ -42,8 +42,18 @@ export {
 	type PipelineResult,
 	type FinalDeliveryInput,
 	type PlannerBridge,
+	type PlanAuditInput,
 	type WaveEvent,
 } from "./MiMoPipeline.js";
+export {
+	compilePlanAudit,
+	extractExecutionPlan,
+	needsPlanApproval,
+	type PlanAudit,
+	type PlanAuditResult,
+	type PlanDecision,
+	type PlanMode,
+} from "./PlanGate.js";
 export {
 	compileMissionCheck,
 	loopBackTasksToCoarseTasks,
