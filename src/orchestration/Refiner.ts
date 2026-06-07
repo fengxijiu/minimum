@@ -18,7 +18,7 @@ import type {
  * `allowedGlobs` (and optionally forbiddenGlobs / acceptance / constraints)
  * that were left "TBD-after-refine" at coarse-compile time. This module
  * parses that block and assembles the coarse DAG into fully-formed,
- * validated TaskContracts ready for the WaveScheduler.
+ * validated TaskContracts ready for the dynamic DAG harness.
  */
 
 export interface RefinementEntry {
@@ -267,8 +267,14 @@ function assembleContract(
 		error = mergeError(error, `task ${task.id} needs_refine write contract requires explicit blockedCondition`);
 	}
 	const staticCompileCommands = opts.inputs.staticCompileCommands ?? [];
+	// Only gate write tasks that can actually touch compilable source. A task whose
+	// allowedGlobs are purely docs/markdown (an audit, report, or findings task) must
+	// not be failed by a whole-project typecheck/build it cannot influence — otherwise
+	// it inherits unrelated compile breakage and is wrongly marked failed. test_runner
+	// is exempt: validating compilation IS its job, even with no writable globs.
+	const writesCompilableSource = allowedGlobs.some(globMayMatchCompilableSource);
 	const requiresPostStaticCompile =
-		(task.personaId === "test_runner" || persona.readOnly === false) &&
+		(task.personaId === "test_runner" || (persona.readOnly === false && writesCompilableSource)) &&
 		staticCompileCommands.length > 0;
 
 	const contract: TaskContract = {
@@ -315,6 +321,25 @@ function mergeError(current: string | undefined, next: string): string {
 
 function isRepairTaskWithAllowedGlobs(task: CoarseTask): task is CoarseTask & { allowedGlobs: string[] } {
 	return task.id.startsWith("T3.5-") && Array.isArray(task.allowedGlobs) && task.allowedGlobs.length > 0;
+}
+
+const COMPILABLE_SOURCE_EXT = /\.(?:[cm]?[jt]sx?|vue|svelte|astro)$/i;
+const NON_SOURCE_EXT =
+	/\.(?:mdx?|markdown|json5?|jsonc|ya?ml|toml|txt|csv|tsv|svg|png|jpe?g|gif|webp|ico|lock|html?|css|s[ac]ss|less)$/i;
+
+/**
+ * Whether a write glob could match a file the static-compile commands actually
+ * check. A specific docs/markdown path (e.g. `docs/report.md`, `tasks/x/findings.md`)
+ * returns false so report/audit tasks aren't gated on tsc/build. Wildcards or
+ * extension-less paths return true (conservative — they may include source).
+ */
+function globMayMatchCompilableSource(glob: string): boolean {
+	const g = glob.replace(/\\/g, "/").trim();
+	if (!g) return false;
+	if (COMPILABLE_SOURCE_EXT.test(g)) return true;
+	if (NON_SOURCE_EXT.test(g)) return false;
+	// No recognised extension: a wildcard or bare directory may still cover source.
+	return /[*?[\]]/.test(g) || !/\.[a-z0-9]+$/i.test(g);
 }
 
 function safeOutputSchema(

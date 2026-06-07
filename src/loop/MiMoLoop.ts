@@ -141,7 +141,7 @@ export interface MiMoLoopConfig {
 	hookManager?: IHookManager;
 	approvalManager?: IApprovalManager;
 	capacity?: Partial<CapacityConfig>;
-	storm?: { windowSize?: number; threshold?: number };
+	storm?: { enabled?: boolean; windowSize?: number; threshold?: number };
 	enableReadGuard?: boolean;
 	planMode?: boolean;
 	onChunk?: (chunk: {
@@ -240,6 +240,7 @@ export class MiMoLoop {
 	private messages: ChatMessage[] = [];
 	private abortController: AbortController | null = null;
 	private stormBreaker: StormBreaker;
+	private readonly stormEnabled: boolean;
 	private capacity: CapacityController;
 	private readTracker: ReadTracker;
 	private snapshotManager: SnapshotManager;
@@ -278,6 +279,7 @@ export class MiMoLoop {
 			toolCalls: 0,
 			errors: 0,
 		};
+		this.stormEnabled = config.storm?.enabled === true;
 		this.stormBreaker = new StormBreaker(
 			{
 				windowSize: config.storm?.windowSize ?? 6,
@@ -353,7 +355,7 @@ export class MiMoLoop {
 			await this.refreshSkillsContext();
 
 			// 2. 主循环（Reasonix 风格：无限迭代，通过 return 退出）
-			const maxSteps = this.config.maxSteps || 50;
+			const maxSteps = this.config.maxSteps || 200;
 
 			for (let step = 0; step < maxSteps; step++) {
 				// 检查取消
@@ -454,8 +456,14 @@ export class MiMoLoop {
 						response.toolCalls,
 					);
 
-					// 风暴检测 + 自纠正（参考 Reasonix）
-					const stormResult = this.stormBreaker.inspectBatch(repairedCalls);
+					// 风暴检测 + 自纠正（参考 Reasonix）。stormEnabled=false 时整体跳过，
+					// 不抑制任何重复调用。
+					const stormResult = this.stormEnabled
+						? this.stormBreaker.inspectBatch(repairedCalls)
+						: {
+								suppressed: repairedCalls.map(() => false),
+								reasons: repairedCalls.map(() => undefined),
+							};
 					const suppressedCalls = stormResult.suppressed;
 					const activeCalls = repairedCalls.filter(
 						(_, i) => !suppressedCalls[i],

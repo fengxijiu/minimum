@@ -61,6 +61,8 @@ function ChoiceBar({ request, selected }: { request: ChoiceRequest; selected: nu
   const summaryMax = Math.max(10, Math.floor(termCols / 3));
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={theme.accent} paddingX={2} paddingY={0}>
+      <Text color={theme.accent} bold>{truncateStr(request.question, titleMax)}</Text>
+      <Text color={theme.muted}>Review the summary above, then choose an action.</Text>
       <Box flexDirection="column">
         {request.options.map((opt, i) => {
           const active = i === selected;

@@ -8,6 +8,7 @@ import {
 	derivePrefix,
 	BUILTIN_ALLOWLIST,
 } from "../../src/tools/shell/parse.js";
+import { classifyCommand } from "../../src/tools/shell/policy/ShellClassifier.js";
 
 describe("tokenizeCommand", () => {
 	it("简单空格分词", () => {
@@ -64,5 +65,20 @@ describe("derivePrefix", () => {
 	});
 	it("空串返回空", () => {
 		expect(derivePrefix("")).toBe("");
+	});
+});
+
+describe("shell git read policy", () => {
+	it("classifies git ls-files as read-only git access", () => {
+		const decision = classifyCommand("git ls-files", {
+			cwd: process.cwd(),
+			allowedCategories: ["git_read"],
+			rawEnabled: false,
+			sensitivePathMode: "warn",
+		});
+		expect(decision.ok).toBe(true);
+		expect(decision.category).toBe("git_read");
+		expect(decision.effect).toBe("read_only");
+		expect(decision.requiresApproval).toBe(false);
 	});
 });

@@ -147,6 +147,29 @@ function validatePathPolicy(
 			`persona ${persona.id} requires allowedGlobs from the contract`,
 		);
 	}
+
+	// Guardrail: an implementation persona scoped to Markdown-only output is a
+	// mis-assignment. An analysis / audit / report task that only writes a
+	// Markdown file belongs to `reviewer` (findings) + `docs` (report), not
+	// `code_executor` — which is built for source edits and would otherwise be
+	// wrongly gated on a whole-project static compile it cannot influence.
+	if (
+		persona.id === "code_executor" &&
+		allowedGlobs.length > 0 &&
+		allowedGlobs.every(isDocumentationGlob)
+	) {
+		errors.push(
+			`code_executor task ${contract.taskId} writes only Markdown (${allowedGlobs.join(", ")}); ` +
+				"analysis/report tasks belong to reviewer (findings) + docs (report) — reassign the persona",
+		);
+	}
+}
+
+const DOCUMENTATION_GLOB_RE = /\.(?:mdx?|markdown)$/i;
+
+/** Whether a write glob targets only a documentation (Markdown) file. */
+function isDocumentationGlob(glob: string): boolean {
+	return DOCUMENTATION_GLOB_RE.test(glob.replace(/\\/g, "/").trim());
 }
 
 /**

@@ -513,7 +513,7 @@ export async function createEngineRunner(
     for (const Ctor of [
       eng.ReadFileTool, eng.ListDirectoryTool,
       eng.WriteFileTool, eng.EditFileTool, eng.ApplyPatchTool,
-      eng.GrepTool, eng.GlobTool,
+      eng.GrepTool, eng.SearchTool, eng.GlobTool,
       eng.GitTool,
       eng.WebFetchTool,
       eng.TodoWriteTool,

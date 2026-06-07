@@ -561,7 +561,7 @@ export function translatePipelineEvent(e: PipelineEvent): UiEvent[] {
 			return [
 				{
 					kind: "notice",
-					text: `W0.5 DAG confirmation requested\n${e.brief}\n\n${e.flow}${e.artifactPath ? `\nartifact: ${e.artifactPath}` : ""}`,
+					text: `Refine DAG confirmation ready${e.artifactPath ? ` · ${e.artifactPath}` : ""}`,
 					tone: "warn",
 				},
 			];
@@ -705,11 +705,13 @@ export function summarizePipelineBrief(
 	meta?: Pick<CompletionMeta, "finalBrief" | "conclusion" | "changedFiles">,
 ): { text: string; tone: "ok" | "warn" } {
 	const blocked = results.filter((r) => r.status === "blocked");
-	const errored = results.filter((r) => r.status !== "ok" && r.status !== "blocked");
+	const degraded = results.filter((r) => r.status === "degraded");
+	const skipped = results.filter((r) => r.status === "skipped");
+	const errored = results.filter((r) => r.status !== "ok" && r.status !== "blocked" && r.status !== "degraded" && r.status !== "skipped");
 	const brief = (meta?.finalBrief ?? meta?.conclusion ?? "").trim();
 	return {
 		text: brief || "Task completed, but no final brief was produced.",
-		tone: blocked.length || errored.length ? "warn" : "ok",
+		tone: blocked.length || degraded.length || skipped.length || errored.length ? "warn" : "ok",
 	};
 }
 
@@ -719,19 +721,23 @@ export function summarizePipelineComplete(
 	meta?: CompletionMeta,
 ): { text: string; tone: "ok" | "warn" } {
 	const ok = results.filter((r) => r.status === "ok");
+	const degraded = results.filter((r) => r.status === "degraded");
+	const skipped = results.filter((r) => r.status === "skipped");
 	const blocked = results.filter((r) => r.status === "blocked");
-	const errored = results.filter((r) => r.status !== "ok" && r.status !== "blocked");
+	const errored = results.filter((r) => r.status !== "ok" && r.status !== "degraded" && r.status !== "skipped" && r.status !== "blocked");
 
 	const lines: string[] = [
-		`Pipeline complete (W4) · ${results.length} task(s): ${ok.length} ok, ${blocked.length} blocked, ${errored.length} error`,
+		`Pipeline complete (W4) · ${results.length} task(s): ${ok.length} ok, ${degraded.length} degraded, ${skipped.length} skipped, ${blocked.length} blocked, ${errored.length} error`,
 	];
 
 	if (meta?.goal) lines.push(`goal: ${clip(meta.goal, 200)}`);
 
-	const byPersona = new Map<string, { ok: number; blocked: number; error: number }>();
+	const byPersona = new Map<string, { ok: number; degraded: number; skipped: number; blocked: number; error: number }>();
 	for (const r of results) {
-		const tally = byPersona.get(r.personaId) ?? { ok: 0, blocked: 0, error: 0 };
+		const tally = byPersona.get(r.personaId) ?? { ok: 0, degraded: 0, skipped: 0, blocked: 0, error: 0 };
 		if (r.status === "ok") tally.ok += 1;
+		else if (r.status === "degraded") tally.degraded += 1;
+		else if (r.status === "skipped") tally.skipped += 1;
 		else if (r.status === "blocked") tally.blocked += 1;
 		else tally.error += 1;
 		byPersona.set(r.personaId, tally);
@@ -739,6 +745,8 @@ export function summarizePipelineComplete(
 	const personaLine = [...byPersona.entries()]
 		.map(([persona, t]) => {
 			const parts = [`${t.ok} ok`];
+			if (t.degraded) parts.push(`${t.degraded} degraded`);
+			if (t.skipped) parts.push(`${t.skipped} skipped`);
 			if (t.blocked) parts.push(`${t.blocked} blocked`);
 			if (t.error) parts.push(`${t.error} error`);
 			return `${persona}: ${parts.join("/")}`;
@@ -777,7 +785,7 @@ export function summarizePipelineComplete(
 		for (const r of ledger) lines.push(...describeTaskOutput(r, writtenByTask?.get(r.taskId)));
 	}
 
-	return { text: lines.join("\n"), tone: blocked.length || errored.length ? "warn" : "ok" };
+	return { text: lines.join("\n"), tone: degraded.length || skipped.length || blocked.length || errored.length ? "warn" : "ok" };
 }
 
 /** Indent a (possibly multi-line) block, capping total length with an ellipsis. */
@@ -804,6 +812,9 @@ function describeTaskOutput(r: TaskResult, written?: Set<string>): string[] {
 	if (r.memoryCandidateBody && r.memoryCandidateBody.trim()) details.push("memory candidate");
 	if (r.hitStepLimit) details.push("hit step limit");
 	if (r.schemaRepairAttempted) details.push("schema repair retried");
+	if (r.retryCount !== undefined) details.push(`retries: ${r.retryCount}`);
+	if (r.degradedReason) details.push(`degraded: ${clip(r.degradedReason, 60)}`);
+	if (r.skipReason) details.push(`skipped: ${clip(r.skipReason, 60)}`);
 	if (r.stagingError) details.push(`staging error: ${clip(r.stagingError, 60)}`);
 	if (details.length) lines.push(`      details: ${details.join(", ")}`);
 
@@ -824,6 +835,10 @@ function formatTaskError(result: TaskResult): string {
 	}
 	if (result.schemaRepairAttempted) lines.push("schema_repair_attempted: true");
 	if (result.hitStepLimit !== undefined) lines.push(`hit_step_limit: ${result.hitStepLimit}`);
+	if (result.retryCount !== undefined) lines.push(`retry_count: ${result.retryCount}`);
+	if (result.degradedReason) lines.push(`degraded_reason: ${result.degradedReason}`);
+	if (result.skipReason) lines.push(`skip_reason: ${result.skipReason}`);
+	if (result.lastError) lines.push(`last_error: ${result.lastError}`);
 	if (result.stagingError) lines.push(`staging_error: ${result.stagingError}`);
 	if (Number.isFinite(result.durationMs)) lines.push(`duration_ms: ${result.durationMs}`);
 	return lines.join("\n");
@@ -832,6 +847,8 @@ function formatTaskError(result: TaskResult): string {
 function summarizeTaskResult(result: TaskResult): string {
 	const report = result.report.replace(/\s+/g, " ").trim();
 	if (result.errors.length > 0) return result.errors.join("; ");
+	if (result.degradedReason) return result.degradedReason;
+	if (result.skipReason) return result.skipReason;
 	if (report) return report.slice(0, 240);
 	return "no detailed task report returned";
 }
@@ -849,11 +866,13 @@ function isInternalProcessFile(file: string): boolean {
 
 function summarizePipelineResult(result: PipelineResult): string {
 	const okCount = result.results.filter((item) => item.status === "ok").length;
+	const degradedCount = result.results.filter((item) => item.status === "degraded").length;
+	const skippedCount = result.results.filter((item) => item.status === "skipped").length;
 	const blockedCount = result.results.filter((item) => item.status === "blocked").length;
-	const errorCount = result.results.length - okCount - blockedCount;
+	const errorCount = result.results.length - okCount - degradedCount - skippedCount - blockedCount;
 	const summary = [
 		result.ok ? "Pipeline completed." : "Pipeline failed.",
-		`Tasks: ${result.results.length} total, ${okCount} ok, ${blockedCount} blocked, ${errorCount} error.`,
+		`Tasks: ${result.results.length} total, ${okCount} ok, ${degradedCount} degraded, ${skippedCount} skipped, ${blockedCount} blocked, ${errorCount} error.`,
 		result.statusReason ? `Reason: ${result.statusReason}.` : "",
 		result.error ? `Error: ${result.error}` : "",
 	]

@@ -16,11 +16,26 @@ import type { TaskResult, WorkerExecutor } from "../../src/orchestration/index.j
 import { listCandidates } from "../../src/memory/governance/index.js";
 import type { ChoicePayload, ChoiceVerdict, ConfirmationGate } from "../../src/tools/choice/ConfirmationGate.js";
 
-const OK = `<task_report><status>ok</status>done</task_report>`;
-const OK_WITH_FILE_LIST = `<task_report><status>ok</status><file_list>
+// Satisfies code_executor's required blocks so the default impl task (T2-1)
+// passes field-level validation in one shot. Extra blocks are ignored by
+// non-code personas (read-only scouts still need their own blocks).
+const OK = `<task_report><status>ok</status><summary>done</summary><changed_files>
+- src/upload.ts
+</changed_files></task_report>`;
+// repo_scout deliverable shape — includes the persona's required blocks so it
+// passes TaskRunner's field-level validation in one shot (no repair re-run).
+const SCOUT_REQUIRED_BLOCKS = `<workspace_state>target_exists</workspace_state>
+<task_semantics>extend_existing</task_semantics>
+<pipeline_directive>
+  can_continue: true
+  blocking: false
+  scaffold_required: false
+  reason: target code exists
+</pipeline_directive>`;
+const OK_WITH_FILE_LIST = `<task_report><status>ok</status>${SCOUT_REQUIRED_BLOCKS}<file_list>
 - src/upload.ts
 </file_list>done</task_report>`;
-const OK_WITH_FILE_LIST_AND_STATIC_COMPILE = `<task_report><status>ok</status><file_list>
+const OK_WITH_FILE_LIST_AND_STATIC_COMPILE = `<task_report><status>ok</status>${SCOUT_REQUIRED_BLOCKS}<file_list>
 - src/upload.ts
 </file_list><static_compile_commands>
 - command: npm run typecheck
@@ -280,6 +295,96 @@ describe("runPipeline", () => {
 		expect(events.some((e) => e.type === "gate_retry")).toBe(false);
 	});
 
+	it("runs downstream with readonly fallback when repo_scout degrades", async () => {
+		const ran: string[] = [];
+		let delivered: Parameters<PlannerBridge["deliver"]>[0] | undefined;
+		const executor: WorkerExecutor = {
+			run: async (contract) => {
+				ran.push(contract.taskId);
+				if (contract.taskId === "T0-1") throw new Error("network error");
+				expect(contract.inputs.constraints.join("\n")).toContain("Repository scan is in degraded mode");
+				expect(contract.grantedMcpTools).toEqual(expect.arrayContaining(["shell_search", "shell_git_read"]));
+				return OK;
+			},
+		};
+		const planner = stubPlanner({
+			refine: async () =>
+				`<refine>${JSON.stringify({
+					tasks: [
+						{
+							taskId: "T2-1",
+							allowedGlobs: ["src/upload.ts"],
+							acceptance: ["returns 201"],
+							blockedCondition: "blocked if T0-1.file_list is unavailable or incomplete",
+							launchRequirements: [
+								{ sourceTaskId: "T0-1", artifact: "file_list", required: true },
+							],
+						},
+					],
+				})}</refine>`,
+			deliver: async (input) => {
+				delivered = input;
+				return `<final_brief># Result\n\nDone.</final_brief>`;
+			},
+		});
+
+		const result = await runPipeline("image upload backend", {
+			projectRoot: dir,
+			planner,
+			executor,
+			choiceGate: continueGate(),
+		});
+
+		expect(result.ok).toBe(true);
+		expect(ran.filter((id) => id === "T0-1")).toHaveLength(5);
+		expect(ran).toContain("T2-1");
+		expect(delivered?.results.find((r) => r.taskId === "T0-1")?.status).toBe("degraded");
+		expect(delivered?.knownIssues.join("\n")).toContain("readonly fallback");
+	});
+
+	it("skips retry-exhausted implementation tasks without aborting final delivery", async () => {
+		let delivered: Parameters<PlannerBridge["deliver"]>[0] | undefined;
+		const executor: WorkerExecutor = {
+			run: async (contract) => {
+				if (contract.taskId === "T0-1") return OK_WITH_FILE_LIST;
+				throw new Error("timeout while calling model");
+			},
+		};
+		const planner = stubPlanner({
+			refine: async () =>
+				`<refine>${JSON.stringify({
+					tasks: [
+						{
+							taskId: "T2-1",
+							allowedGlobs: ["src/upload.ts"],
+							acceptance: ["returns 201"],
+							blockedCondition: "blocked if implementation cannot access model output",
+							launchRequirements: [
+								{ sourceTaskId: "T0-1", artifact: "file_list", required: true },
+							],
+						},
+					],
+				})}</refine>`,
+			deliver: async (input) => {
+				delivered = input;
+				return `<final_brief># Result\n\nSkipped task reported.</final_brief>`;
+			},
+		});
+
+		const result = await runPipeline("image upload backend", {
+			projectRoot: dir,
+			planner,
+			executor,
+			choiceGate: continueGate(),
+		});
+
+		expect(result.ok).toBe(true);
+		const skipped = delivered?.results.find((r) => r.taskId === "T2-1");
+		expect(skipped?.status).toBe("skipped");
+		expect(skipped?.retryCount).toBe(2);
+		expect(skipped?.errors.join("\n")).toContain("skipped after 3");
+	});
+
 	it("asks for W0.5 DAG confirmation before W2/3 starts", async () => {
 		const gate = continueGate();
 		const events: PipelineEvent[] = [];
@@ -296,7 +401,7 @@ describe("runPipeline", () => {
 		// Question is a short decision point; the DAG detail moves to `context`.
 		// User-facing text uses the short stage names (Build/Refine), not W codes.
 		expect(gate.payloads[0]!.question).toContain("进入 Build");
-		expect(gate.payloads[0]!.context).toContain("Refine DAG 确认");
+		expect(gate.payloads[0]!.context).toContain("Refine DAG confirmation");
 		const confirmIndex = events.findIndex((e) => e.type === "dag_confirmation_requested");
 		const w23Index = events.findIndex((e) => e.type === "phase_start" && (e as any).phase === "W2/3");
 		expect(confirmIndex).toBeGreaterThan(-1);
@@ -694,6 +799,49 @@ Reason:
 		expect(refineCalls).toBe(2);
 		expect(refineFeedbacks[1]).toContain("Missing refinement entries: T2-1");
 		expect(refineFeedbacks[1]).toContain("Re-emit the ENTIRE <refine> block");
+		expect(events.some((e) => e.type === "pipeline_choice" && (e as any).choiceId === "auto_rerun_refine")).toBe(true);
+	});
+
+	it("auto-repairs W0.5 when a write task is left without allowedGlobs", async () => {
+		// A non-needs_refine code_executor task with no globs would otherwise reach
+		// Build and die as contract_invalid ("requires allowedGlobs"). The repair
+		// loop should re-prompt the planner with targeted feedback to fill them in.
+		const dagMissingGlobs = JSON.stringify({
+			epic: "image_upload",
+			phases: [
+				{ id: "P0", name: "perception", tasks: [
+					{ id: "T0-1", persona: "repo_scout", objective: "scan the repo layout", parallelGroup: "perception", dependsOn: [], needsRefine: false },
+				]},
+				{ id: "P2", name: "implementation", tasks: [
+					{ id: "T2-1", persona: "code_executor", objective: "implement the upload endpoint", parallelGroup: "backend", dependsOn: ["T0-1"], needsRefine: false },
+				]},
+			],
+		});
+		const refineFeedbacks: Array<string | undefined> = [];
+		let refineCalls = 0;
+		const planner = stubPlanner({
+			compile: async () => `<task_dag>${dagMissingGlobs}</task_dag>`,
+			refine: async (_dag, _perception, _memory, _catalog, feedback) => {
+				refineFeedbacks.push(feedback);
+				refineCalls++;
+				if (refineCalls === 1) return `<refine>{"tasks":[]}</refine>`;
+				return `<refine>{"tasks":[{"taskId":"T2-1","allowedGlobs":["src/upload.ts"],"acceptance":["returns 201"],"blockedCondition":"blocked if T0-1.file_list is unavailable or incomplete"}]}</refine>`;
+			},
+		});
+		const events: PipelineEvent[] = [];
+
+		const result = await runPipeline("image upload backend", {
+			projectRoot: dir,
+			planner,
+			executor: okExecutor(),
+			onEvent: (e) => events.push(e),
+			choiceGate: continueGate(),
+		});
+
+		expect(result.ok).toBe(true);
+		expect(refineCalls).toBe(2);
+		expect(refineFeedbacks[1]).toContain("Tasks missing allowedGlobs");
+		expect(refineFeedbacks[1]).toContain("T2-1");
 		expect(events.some((e) => e.type === "pipeline_choice" && (e as any).choiceId === "auto_rerun_refine")).toBe(true);
 	});
 

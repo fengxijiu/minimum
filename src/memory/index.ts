@@ -7,7 +7,6 @@ export type { ProjectMemoryEntry } from "./ProjectMemory.js";
 export { resolveMemory } from "./single/index.js";
 export type {
 	CurrentTask,
-	MemoryConfidence as SingleMemoryConfidence,
 	MemoryRecord,
 } from "./single/index.js";
 

@@ -174,6 +174,43 @@ describe("validateContract", () => {
 			);
 			expect(r.ok).toBe(true);
 		});
+
+		it("rejects a code_executor task scoped to Markdown-only output", () => {
+			// An audit/report task that only writes a .md file is a mis-assignment:
+			// it belongs to reviewer (findings) + docs (report).
+			const r = validateContract(
+				makeContract({
+					pathPolicy: {
+						allowedGlobs: ["tasks/audit/findings.md", "docs/report.md"],
+						forbiddenGlobs: [],
+					},
+				}),
+			);
+			expect(r.ok).toBe(false);
+			expect(r.errors.some((e) => e.includes("only Markdown"))).toBe(true);
+		});
+
+		it("accepts a code_executor task that also writes source alongside Markdown", () => {
+			const r = validateContract(
+				makeContract({
+					pathPolicy: {
+						allowedGlobs: ["src/upload.ts", "docs/upload.md"],
+						forbiddenGlobs: [],
+					},
+				}),
+			);
+			expect(r.ok).toBe(true);
+		});
+
+		it("accepts a code_executor task scoped to a config/manifest file", () => {
+			// .json/.yaml config is legitimate code_executor scope, not documentation.
+			const r = validateContract(
+				makeContract({
+					pathPolicy: { allowedGlobs: ["package.json"], forbiddenGlobs: [] },
+				}),
+			);
+			expect(r.ok).toBe(true);
+		});
 	});
 
 	describe("persona/output schema compatibility", () => {

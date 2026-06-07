@@ -16,15 +16,14 @@ import type { MemoryCandidate, MergeDecision } from "../memory/governance/types.
 import type { PersonaId } from "../personas/Persona.js";
 import { getPersona } from "../personas/PersonaRegistry.js";
 import { compileCoarse, classifyTaskType } from "./TaskCompiler.js";
-import { buildWaves } from "./TaskGraph.js";
 import type { CoarseDag, TaskContract, TaskInputs } from "./TaskContract.js";
-import { WaveHarness } from "./WaveHarness.js";
+import { DynamicHarness } from "./DynamicHarness.js";
 import { decideMissionCheckMode } from "./MissionCheckMode.js";
 import { classifyOrchestrationMode, type OrchestrationMode } from "./OrchestrationClassifier.js";
 import type { PipelineCache } from "./PipelineCache.js";
 import { compileRefinement, refineDag, type RefinementEntry } from "./Refiner.js";
 import { validateGrants, type GrantableCatalog } from "./CapabilityCatalog.js";
-import { buildArtifactMap, evaluateLaunchGate, isContextGapBlocked } from "./LaunchGate.js";
+import { buildArtifactMap, canUseReadonlyFallback, evaluateLaunchGate, isContextGapBlocked } from "./LaunchGate.js";
 import {
 	compileMissionCheck,
 	loopBackTasksToCoarseTasks,
@@ -41,7 +40,6 @@ import {
 	writeRepairDag,
 	type ArtifactPaths,
 } from "./PipelineArtifactStore.js";
-import { schedule, type WaveEvent } from "./WaveScheduler.js";
 import { stageLabel, stageName } from "./StageDisplay.js";
 import { extractXmlBlock, type TaskResult, type WorkerExecutor } from "./TaskRunner.js";
 import type { ChoicePayload, ConfirmationGate } from "../tools/choice/ConfirmationGate.js";
@@ -69,7 +67,27 @@ export const PERCEPTION_PERSONAS: ReadonlySet<PersonaId> = new Set<PersonaId>([
 	"context_builder",
 ]);
 
+const READONLY_FALLBACK_GRANTED_TOOLS = [
+	"shell_fs_read",
+	"shell_search",
+	"shell_git_read",
+] as const;
+
 export type PipelinePhase = "W0" | "W1" | "W0.5" | "W2/3" | "W3.5" | "W4";
+
+/**
+ * WaveEvent — progress-event shape consumed by the TUI pipeline panel. The
+ * dynamic harness adapter ({@link runDag}) emits the `task_start` / `task_done`
+ * variants; the remaining variants are retained as a stable wire format for the
+ * TUI translator (`PipelineBridge.translateWaveEvent`).
+ */
+export type WaveEvent =
+	| { type: "wave_start"; waveIndex: number; taskCount: number }
+	| { type: "task_start"; waveIndex: number; taskId: string }
+	| { type: "task_done"; waveIndex: number; result: TaskResult }
+	| { type: "wave_complete"; waveIndex: number; results: TaskResult[] }
+	| { type: "stage_pause"; waveIndex: number; reason: string }
+	| { type: "schedule_complete"; allResults: TaskResult[] };
 
 export type PipelineEvent =
 	| { type: "phase_start"; phase: PipelinePhase; label: string }
@@ -194,8 +212,6 @@ export interface PipelineOptions {
 	grantableCatalog?: GrantableCatalog;
 	/** Business-file writes observed by the caller and forwarded into W4 delivery. */
 	getDeliveryWrites?: () => Array<{ taskId: string; files: string[] }>;
-	/** Harness mode: "wave" (default) or "dynamic" (real-time dependency unlocking). */
-	harnessMode?: "wave" | "dynamic";
 	/** Force full W3.5 mission check even when a lighter mode would suffice. */
 	forceMissionCheck?: boolean;
 	/** Override the automatic orchestration mode classification. */
@@ -335,6 +351,7 @@ export async function runPipeline(
 		emit({ type: "phase_start", phase: "W3.5", label: stageName("W3.5") });
 		let missionText: string;
 		let missionFeedback: string | undefined;
+		let missionAutoRetryUsed = false;
 		let missionParseRetryUsed = false;
 		let mission = undefined as ReturnType<typeof compileMissionCheck> | undefined;
 		while (true) {
@@ -364,8 +381,17 @@ export async function runPipeline(
 				error: mission.error,
 				rawExcerpt,
 				loopIndex: missionLoopIndex,
-				attempt: missionParseRetryUsed ? 2 : 1,
+				attempt: missionAutoRetryUsed || missionParseRetryUsed ? 2 : 1,
 			});
+			// Automatic targeted re-emit before involving the human: hand the
+			// parser error + raw excerpt back so the checker can complete the
+			// missing module (a legal Decision line / usable loop-back tasks).
+			if (!missionAutoRetryUsed) {
+				missionAutoRetryUsed = true;
+				missionFeedback = `${mission.error}\nRaw report excerpt:\n${rawExcerpt || "(empty)"}`;
+				emit({ type: "pipeline_choice", phase: "W3.5", choiceId: "auto_rerun_mission", reason: mission.error });
+				continue;
+			}
 			const choice = await askPipelineChoice(opts.choiceGate, {
 				question: "Accept 解析失败，如何恢复？",
 				context: [`错误: ${mission.error}`, `Loop: ${missionLoopIndex}`, rawExcerpt ? `原始摘要: ${rawExcerpt}` : ""].filter(Boolean).join("\n"),
@@ -618,7 +644,7 @@ async function runScanOnly(
 	};
 
 	try {
-		const results = await runWaves([scoutContract], opts, emit);
+		const results = await runDag([scoutContract], opts, emit);
 		allResults.push(...results);
 	} catch (e) {
 		return fail(emit, "W1", e, allResults);
@@ -690,7 +716,7 @@ async function runDirectEdit(
 	});
 	if (perceptionContracts.length > 0) {
 		try {
-			const results = await runWaves(perceptionContracts, opts, emit);
+			const results = await runDag(perceptionContracts, opts, emit);
 			allResults.push(...results);
 		} catch (e) {
 			return fail(emit, "W1", e, allResults);
@@ -715,7 +741,7 @@ async function runDirectEdit(
 		abortOnConflict: false,
 	};
 	try {
-		const results = await runWaves([editContract], opts, emit, refreshScheduler);
+		const results = await runDag([editContract], opts, emit, refreshScheduler);
 		allResults.push(...results);
 	} catch (e) {
 		return fail(emit, "W2/3", e, allResults);
@@ -822,7 +848,7 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 	});
 	if (perceptionContracts.length > 0) {
 		try {
-			const perceptionResults = await runWaves(perceptionContracts, opts, emit, args.refreshScheduler);
+			const perceptionResults = await runDag(perceptionContracts, opts, emit, args.refreshScheduler);
 			allResults.push(...perceptionResults);
 		} catch (e) {
 			return { ok: false, result: fail(emit, "W1", e, allResults) };
@@ -839,14 +865,15 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 	let refineErrors: ReturnType<typeof refineDag>["errors"] = [];
 	let refineFeedback: string | undefined;
 	let refineRetryUsed = false;
-	let autoRefineRetryUsed = false;
+	let autoRefineRounds = 0;
+	const MAX_AUTO_REFINE_ROUNDS = 2;
 	while (true) {
-		const retryLabel = refineRetryUsed ? " retry" : autoRefineRetryUsed ? " auto retry" : "";
+		const retryLabel = refineRetryUsed ? " retry" : autoRefineRounds > 0 ? " auto retry" : "";
 		emit({ type: "phase_start", phase: "W0.5", label: stageLabel("W0.5", labelSuffix, retryLabel) });
 		const currentPassId = refineRetryUsed
 			? `${passId}-refine-retry`
-			: autoRefineRetryUsed
-				? `${passId}-auto-refine-retry`
+			: autoRefineRounds > 0
+				? `${passId}-auto-refine-retry-${autoRefineRounds}`
 				: passId;
 		let refinement: Map<string, RefinementEntry> = new Map();
 		let refinementParsed = false;
@@ -908,15 +935,18 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 				}
 			}
 		}
-		const missingRefinementTaskIds = getMissingRefinementTaskIds(refineErrors);
-		if (missingRefinementTaskIds.length > 0 && !autoRefineRetryUsed) {
-			autoRefineRetryUsed = true;
-			refineFeedback = [
-				`Missing refinement entries: ${missingRefinementTaskIds.join(", ")}`,
-				"The previous <refine> block is invalid. Every needs_refine task must have exactly one refinement entry.",
-				"Re-emit the ENTIRE <refine> block, not an incremental patch.",
-			].join("\n");
-			emit({ type: "pipeline_choice", phase: "W0.5", choiceId: "auto_rerun_refine", reason: refineFeedback });
+		// Validate-and-repair gate: when the refine block produced contracts with
+		// repairable errors (missing allowedGlobs / blockedCondition / nonGoals,
+		// glob conflicts, missing entries, bad grants), re-prompt the planner with
+		// targeted per-task feedback to re-emit the specific modules before passing
+		// the contracts to Build — rather than letting an invalid contract die later
+		// as contract_invalid. Capped at MAX_AUTO_REFINE_ROUNDS; remaining errors
+		// fall through to the human confirmation gate below.
+		const refineRepair = buildRefineRepairFeedback(refineErrors);
+		if (refineRepair && autoRefineRounds < MAX_AUTO_REFINE_ROUNDS) {
+			autoRefineRounds++;
+			refineFeedback = refineRepair.feedback;
+			emit({ type: "pipeline_choice", phase: "W0.5", choiceId: "auto_rerun_refine", reason: refineRepair.reason });
 			continue;
 		}
 		if (refineErrors.length > 0) {
@@ -951,7 +981,15 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 			});
 			const choice = await askPipelineChoice(opts.choiceGate, {
 				question: "确认 DAG，进入 Build？",
-				context: `${confirmation.brief}\n\n## DAG Flow\n${confirmation.flow}`,
+				context: buildDagChoiceContext({
+					userRequest: baseInputs.userGoal,
+					passId: currentPassId,
+					dag,
+					contracts: allContracts,
+					refineErrors,
+					knownIssues,
+					artifactPath: confirmationPath,
+				}),
 				options: [
 					{ id: "continue_w23", title: "继续 Build", summary: "确认 DAG，进入实现/验证。" },
 					{ id: "rerun_refine", title: "重跑 Refine", summary: refineRetryUsed ? "已重跑过一次；再次选择会安全停止。" : "带反馈重新 refine。" },
@@ -992,7 +1030,7 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 				emit,
 				gateRetryKeys,
 			});
-			const implResults = await runWaves(stripPerceptionDeps(runnable), opts, emit, args.refreshScheduler);
+			const implResults = await runDag(stripPerceptionDeps(runnable), opts, emit, args.refreshScheduler);
 			allResults.push(...implResults);
 			const retryResults = await retryBlockedContextGaps({
 				results: implResults,
@@ -1012,14 +1050,100 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 	return { ok: true };
 }
 
-function getMissingRefinementTaskIds(errors: ReturnType<typeof refineDag>["errors"]): string[] {
-	const missing = new Set<string>();
-	for (const error of errors) {
-		if (error.errors.some((message) => message.includes("needs_refine but has no refinement entry"))) {
-			missing.add(error.taskId);
+interface RefineRepair {
+	/** Targeted re-emit instructions handed back to the planner. */
+	feedback: string;
+	/** Short summary for the auto_rerun_refine pipeline_choice event. */
+	reason: string;
+}
+
+/**
+ * Classify refine/contract validation errors into the subset that the planner
+ * can fix by re-emitting the <refine> block, and build targeted feedback that
+ * names the exact task + field to complete. Returns undefined when nothing is
+ * refine-repairable (e.g. coarse-DAG-level problems), so the caller proceeds to
+ * the human confirmation gate instead of looping.
+ */
+function buildRefineRepairFeedback(
+	errors: ReturnType<typeof refineDag>["errors"],
+): RefineRepair | undefined {
+	const missingEntries = new Set<string>();
+	const missingGlobs = new Set<string>();
+	const missingBlocked = new Set<string>();
+	const missingNonGoals = new Set<string>();
+	const globConflicts: string[] = [];
+	const grantIssues: string[] = [];
+
+	for (const entry of errors) {
+		for (const message of entry.errors) {
+			if (message.includes("needs_refine but has no refinement entry")) {
+				missingEntries.add(entry.taskId);
+			} else if (message.includes("requires allowedGlobs")) {
+				missingGlobs.add(entry.taskId);
+			} else if (message.includes("blockedCondition must be at least 8 characters")) {
+				// Hard contract_invalid only — the Refiner's "requires explicit
+				// blockedCondition" nudge still yields a valid (defaulted) contract,
+				// so it is not worth a re-prompt round.
+				missingBlocked.add(entry.taskId);
+			} else if (message.includes("nonGoals must be a non-empty array")) {
+				missingNonGoals.add(entry.taskId);
+			} else if (entry.taskId === "_glob_conflict") {
+				globConflicts.push(message);
+			} else if (message.includes("is not in the grantable catalog")) {
+				grantIssues.push(message);
+			}
 		}
 	}
-	return [...missing];
+
+	const lines: string[] = [];
+	if (missingEntries.size > 0) {
+		lines.push(`Missing refinement entries: ${[...missingEntries].join(", ")}`);
+	}
+	if (missingGlobs.size > 0) {
+		lines.push(
+			`Tasks missing allowedGlobs (provide a non-empty allowedGlobs array scoping each task's writable files): ${[...missingGlobs].join(", ")}`,
+		);
+	}
+	if (missingBlocked.size > 0) {
+		lines.push(
+			`Tasks missing a valid blockedCondition (provide a >=8 character condition describing when the task should stop): ${[...missingBlocked].join(", ")}`,
+		);
+	}
+	if (missingNonGoals.size > 0) {
+		lines.push(
+			`Tasks missing nonGoals (provide a non-empty nonGoals array of explicit out-of-scope boundaries): ${[...missingNonGoals].join(", ")}`,
+		);
+	}
+	if (globConflicts.length > 0) {
+		lines.push(
+			`Glob conflicts — give the listed tasks disjoint allowedGlobs:\n${globConflicts.map((c) => `  - ${c}`).join("\n")}`,
+		);
+	}
+	if (grantIssues.length > 0) {
+		lines.push(
+			`Capability grant issues — only grant skills/tools present in the grantable catalog:\n${grantIssues.map((g) => `  - ${g}`).join("\n")}`,
+		);
+	}
+
+	if (lines.length === 0) return undefined;
+
+	const reasonParts = [
+		missingEntries.size ? `${missingEntries.size} missing entr${missingEntries.size === 1 ? "y" : "ies"}` : "",
+		missingGlobs.size ? `${missingGlobs.size} missing allowedGlobs` : "",
+		missingBlocked.size ? `${missingBlocked.size} missing blockedCondition` : "",
+		missingNonGoals.size ? `${missingNonGoals.size} missing nonGoals` : "",
+		globConflicts.length ? `${globConflicts.length} glob conflict(s)` : "",
+		grantIssues.length ? `${grantIssues.length} grant issue(s)` : "",
+	].filter(Boolean);
+
+	return {
+		feedback: [
+			"The previous <refine> block produced invalid task contracts. Re-emit the ENTIRE <refine> block (not an incremental patch) with every issue below fixed. Every needs_refine task must have exactly one entry.",
+			"",
+			...lines,
+		].join("\n"),
+		reason: reasonParts.join(", "),
+	};
 }
 
 async function askPipelineChoice(
@@ -1075,6 +1199,70 @@ function buildDagConfirmation(args: {
 		args.contracts.map((c) => `- ${c.taskId} [${c.personaId}] dependsOn=${c.dependsOn.join(",") || "(none)"} blockedCondition=${c.blockedCondition ?? "(none)"}`).join("\n") || "(none)",
 	].join("\n");
 	return { brief: briefLines.join("\n"), flow, markdown };
+}
+
+/**
+ * Build a compressed "decision summary card" for the W0.5 ask_choice context.
+ * Full DAG flow is written to artifact; this returns only the actionable info
+ * a user needs to decide continue / rerun / pause.
+ */
+function buildDagChoiceContext(args: {
+	userRequest: string;
+	passId: string;
+	dag: CoarseDag;
+	contracts: TaskContract[];
+	refineErrors: ReturnType<typeof refineDag>["errors"];
+	knownIssues: string[];
+	artifactPath: string;
+}): string {
+	const errorById = new Map(args.refineErrors.map((e) => [e.taskId, e.errors]));
+	const runnable = args.contracts.filter((c) => !PERCEPTION_PERSONAS.has(c.personaId));
+	const deferred = args.contracts.filter((c) => (c.launchRequirements?.length ?? 0) > 0);
+	const writers = runnable.filter((c) => c.pathPolicy.allowedGlobs.length > 0);
+
+	const lines: string[] = [
+		"# Refine DAG confirmation",
+		`Goal: ${clipLine(args.userRequest, 120)}`,
+		`passId: ${args.passId}`,
+		"",
+		"## Summary",
+		`contracts: ${args.contracts.length}`,
+		`runnable Build tasks: ${runnable.length}`,
+		`contract errors: ${args.refineErrors.length}`,
+		`deferred-risk tasks: ${deferred.length}`,
+		`write-capable tasks: ${writers.length}`,
+		"",
+		"## Build candidates",
+	];
+
+	for (const c of runnable.slice(0, 8)) {
+		const errors = errorById.get(c.taskId);
+		const status = errors ? "!" : c.launchRequirements?.length ? "?" : "✓";
+		const writes = c.pathPolicy.allowedGlobs.length
+			? ` writes: ${c.pathPolicy.allowedGlobs.join(", ")}`
+			: "";
+		const deps = c.dependsOn.length ? ` deps: ${c.dependsOn.join(", ")}` : "";
+		lines.push(`  ${status} ${c.taskId} ${c.personaId}${deps}${writes}`);
+	}
+
+	if (runnable.length > 8) {
+		lines.push(`  … ${runnable.length - 8} more task(s), see artifact`);
+	}
+
+	if (args.refineErrors.length || args.knownIssues.length) {
+		lines.push("", "## Risks");
+		for (const e of args.refineErrors.slice(0, 5)) {
+			lines.push(`  ! ${e.taskId}: ${clipLine(e.errors.join("; "), 140)}`);
+		}
+		for (const issue of args.knownIssues.slice(-3)) {
+			lines.push(`  ! ${clipLine(issue, 140)}`);
+		}
+	}
+
+	lines.push("", "## Full DAG");
+	lines.push(`  ${args.artifactPath}`);
+
+	return lines.join("\n");
 }
 
 function buildDagFlow(
@@ -1308,6 +1496,7 @@ function applyLaunchGate(args: {
 }): { runnable: TaskContract[] } {
 	const { contracts, allResults, knownIssues, emit, gateRetryKeys } = args;
 	const artifacts = buildArtifactMap(allResults);
+	const resultsById = new Map(allResults.map((result) => [result.taskId, result]));
 	const runnable: TaskContract[] = [];
 	const deferred = new Set<string>();
 
@@ -1323,7 +1512,14 @@ function applyLaunchGate(args: {
 
 		const decision = evaluateLaunchGate(contract, allResults, artifacts);
 		if (decision.ok) {
-			runnable.push(contract);
+			const fallbackContext = collectReadonlyFallbackContext(contract, resultsById);
+			if (fallbackContext.length > 0) {
+				const reason = `${contract.taskId} running with readonly fallback because ${fallbackContext.join("; ")}`;
+				knownIssues.push(`W2/3 ${reason}`);
+				runnable.push(withReadonlyFallback(contract, fallbackContext));
+			} else {
+				runnable.push(contract);
+			}
 			continue;
 		}
 
@@ -1348,6 +1544,51 @@ function applyLaunchGate(args: {
 	}
 
 	return { runnable };
+}
+
+function collectReadonlyFallbackContext(
+	contract: TaskContract,
+	resultsById: Map<string, TaskResult>,
+): string[] {
+	const out: string[] = [];
+	for (const requirement of contract.launchRequirements ?? []) {
+		if (!requirement.required) continue;
+		const upstream = resultsById.get(requirement.sourceTaskId);
+		if (!upstream) continue;
+		if (canUseReadonlyFallback(requirement, upstream)) {
+			out.push(`${requirement.sourceTaskId}.${requirement.artifact} missing after degraded repo_scout`);
+		}
+	}
+	return out;
+}
+
+function withReadonlyFallback(
+	contract: TaskContract,
+	reasons: string[],
+): TaskContract {
+	const fallbackConstraints = [
+		"Repository scan is in degraded mode. Reconstruct only the minimum required repository perception yourself using bounded readonly workspace access.",
+		`Fallback reason(s): ${reasons.join("; ")}`,
+		"Allowed fallback operations: read_file, list_directory, grep/glob, shell_fs_read, shell_search, shell_git_read including git ls-files.",
+		"Do not modify files, install dependencies, access env/secrets, use network fetch, or run git commit/checkout/reset/push.",
+		"Clearly mark your final task_report assumptions/risk_notes if results depend on degraded scan fallback.",
+	];
+	return {
+		...contract,
+		inputs: {
+			...contract.inputs,
+			constraints: [
+				...contract.inputs.constraints,
+				...fallbackConstraints,
+			],
+		},
+		grantedMcpTools: [
+			...new Set([
+				...(contract.grantedMcpTools ?? []),
+				...READONLY_FALLBACK_GRANTED_TOOLS,
+			]),
+		],
+	};
 }
 
 async function retryBlockedContextGaps(args: {
@@ -1381,7 +1622,7 @@ async function retryBlockedContextGaps(args: {
 	}
 
 	if (retryContracts.length === 0) return [];
-	const retryResults = await runWaves(stripPerceptionDeps(retryContracts), opts, emit, args.refreshScheduler);
+	const retryResults = await runDag(stripPerceptionDeps(retryContracts), opts, emit, args.refreshScheduler);
 	for (const result of retryResults) {
 		if (!isContextGapBlocked(result)) continue;
 		const contract = byId.get(result.taskId);
@@ -1392,76 +1633,36 @@ async function retryBlockedContextGaps(args: {
 	return retryResults;
 }
 
-async function runWaves(
+/**
+ * Execute a set of fully-resolved TaskContracts on the dynamic DAG harness
+ * (real-time dependency unlocking, write-lock serialisation, launch gate).
+ * HarnessEvents are adapted to the legacy "wave" PipelineEvent shape the TUI
+ * pipeline panel consumes.
+ */
+async function runDag(
 	contracts: TaskContract[],
 	opts: PipelineOptions,
 	emit: (e: PipelineEvent) => void,
 	refreshScheduler?: MemoryIndexRefreshScheduler,
 ): Promise<TaskResult[]> {
-	// Phase 5: harnessMode — choose WaveHarness (default) or DynamicHarness.
-	const isDynamic = opts.harnessMode === "dynamic";
-	if (isDynamic) {
-		const { DynamicHarness } = await import("./DynamicHarness.js");
-		const harness = new DynamicHarness();
-		return harness.runToCompletion(contracts, {
-			projectRoot: opts.projectRoot,
-			executor: opts.executor,
-			refreshScheduler,
-			onEvent: (event) => {
-				if (event.type === "task_started") {
-					emit({ type: "wave", event: { type: "task_start", waveIndex: 0, taskId: event.taskId } });
-					return;
-				}
-				if (event.type === "task_done") {
-					emit({ type: "wave", event: { type: "task_done", waveIndex: 0, result: event.result } });
-					return;
-				}
-				if (event.type === "task_blocked") {
-					emit({ type: "wave", event: { type: "task_done", waveIndex: 0, result: event.result } });
-					return;
-				}
-				if (event.type === "task_failed") {
-					emit({ type: "wave", event: { type: "task_done", waveIndex: 0, result: event.result } });
-					return;
-				}
-				if (event.type === "task_skipped") {
-					emit({ type: "wave", event: { type: "task_done", waveIndex: 0, result: { taskId: event.taskId, personaId: "code_executor", status: "blocked", report: "", memoryCandidateBody: undefined, errors: [event.reason], durationMs: 0 } } });
-					return;
-				}
-			},
-		});
-	}
-
-	// Phase 1: DagHarness abstraction — use WaveHarness (preserves existing behaviour).
-	const harness = new WaveHarness({ validateContracts: false });
+	const harness = new DynamicHarness();
 	return harness.runToCompletion(contracts, {
 		projectRoot: opts.projectRoot,
 		executor: opts.executor,
 		refreshScheduler,
 		onEvent: (event) => {
-			// Translate HarnessEvent → PipelineEvent for backwards compatibility.
-			if (event.type === "wave_start" || event.type === "wave_complete") {
-				// WaveHarness emits WaveEvent via schedule; forwarded via task_started/task_done.
-				// The wave_start/wave_complete HarnessEvents come from the harness adapter.
-				// We emit them as stage-level pipeline events.
-				return; // Handled via task-level events below; phase_start covers the rest.
-			}
-			if (event.type === "task_started") {
-				// Emit as wave task_start for TUI pipeline panel compatibility.
-				emit({ type: "wave", event: { type: "task_start", waveIndex: 0, taskId: event.taskId } });
-				return;
-			}
-			if (event.type === "task_done") {
-				emit({ type: "wave", event: { type: "task_done", waveIndex: 0, result: event.result } });
-				return;
-			}
-			if (event.type === "task_blocked") {
-				emit({ type: "wave", event: { type: "task_done", waveIndex: 0, result: event.result } });
-				return;
-			}
-			if (event.type === "task_failed") {
-				emit({ type: "wave", event: { type: "task_done", waveIndex: 0, result: event.result } });
-				return;
+			switch (event.type) {
+				case "task_started":
+					emit({ type: "wave", event: { type: "task_start", waveIndex: 0, taskId: event.taskId } });
+					break;
+				case "task_done":
+				case "task_blocked":
+				case "task_failed":
+					emit({ type: "wave", event: { type: "task_done", waveIndex: 0, result: event.result } });
+					break;
+				case "task_skipped":
+					emit({ type: "wave", event: { type: "task_done", waveIndex: 0, result: { taskId: event.taskId, personaId: "code_executor", status: "blocked", report: "", memoryCandidateBody: undefined, errors: [event.reason], durationMs: 0 } } });
+					break;
 			}
 		},
 	});

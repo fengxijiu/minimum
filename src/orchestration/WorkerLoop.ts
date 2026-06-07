@@ -202,7 +202,7 @@ export class WorkerLoop {
 
 		// Per-task snapshot scope. Each runTask gets its own SnapshotManager so
 		// rollbacks from task A can't undo task B's edits when they run in
-		// parallel via WaveScheduler. The instance lives only for the duration
+		// parallel via the dynamic harness. The instance lives only for the duration
 		// of this call.
 		const snapshots = new SnapshotManager();
 

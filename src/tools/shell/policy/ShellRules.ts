@@ -119,6 +119,13 @@ export const GIT_READ_RULES: readonly ShellRule[] = [
 		effect: "read_only",
 		risk: "low",
 	},
+	{
+		id: "git-ls-files",
+		category: "git_read",
+		prefixes: ["git ls-files"],
+		effect: "read_only",
+		risk: "low",
+	},
 ] as const;
 
 export const ENV_PROBE_RULES: readonly ShellRule[] = [

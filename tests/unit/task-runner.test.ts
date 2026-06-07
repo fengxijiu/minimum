@@ -6,6 +6,7 @@ import type { TaskContract } from "../../src/orchestration/index.js";
 import {
 	extractXmlBlock,
 	runTask,
+	runTaskWithRetry,
 	type WorkerExecutor,
 } from "../../src/orchestration/index.js";
 import { listCandidates } from "../../src/memory/governance/index.js";
@@ -100,7 +101,7 @@ describe("runTask", () => {
 		const executor: WorkerExecutor = {
 			run: async () => {
 				calls++;
-				return `<task_report status="ok"><status>ok</status>\nDone.</task_report>`;
+				return `<task_report status="ok"><status>ok</status><summary>done</summary><changed_files>- a.ts</changed_files>\nDone.</task_report>`;
 			},
 		};
 		const r = await runTask(mkContract(), { projectRoot: dir, executor });
@@ -113,6 +114,87 @@ describe("runTask", () => {
 		const output = `<task_report><status>blocked</status>\nWaiting.</task_report>`;
 		const r = await runTask(mkContract(), { projectRoot: dir, executor: stubExecutor(output) });
 		expect(r.status).toBe("blocked");
+	});
+
+	const scoutContract = () =>
+		mkContract({
+			taskId: "T-scout-1",
+			personaId: "repo_scout",
+			pathPolicy: { allowedGlobs: [], forbiddenGlobs: [] },
+		});
+	const SCOUT_OK = `<task_report><status>ok</status>
+<workspace_state>target_exists</workspace_state>
+<task_semantics>extend_existing</task_semantics>
+<file_list>- a.ts</file_list>
+<pipeline_directive>can_continue: true</pipeline_directive>
+</task_report>`;
+
+	it("re-emits to fill a missing required report block (repo_scout)", async () => {
+		let calls = 0;
+		const executor: WorkerExecutor = {
+			run: async (_c, _t, repair) => {
+				calls++;
+				if (calls === 1) {
+					// Missing <file_list> and <pipeline_directive>.
+					return `<task_report><status>ok</status><workspace_state>x</workspace_state><task_semantics>y</task_semantics></task_report>`;
+				}
+				expect(repair?.feedback).toContain("<file_list>");
+				expect(repair?.feedback).toContain("<pipeline_directive>");
+				return SCOUT_OK;
+			},
+		};
+		const r = await runTask(scoutContract(), { projectRoot: dir, executor });
+		expect(calls).toBe(2);
+		expect(r.status).toBe("ok");
+		expect(r.schemaRepairAttempted).toBe(true);
+		expect(r.errors).toEqual([]);
+	});
+
+	it("does not repair when repo_scout emits all required blocks", async () => {
+		let calls = 0;
+		const executor: WorkerExecutor = {
+			run: async () => {
+				calls++;
+				return SCOUT_OK;
+			},
+		};
+		const r = await runTask(scoutContract(), { projectRoot: dir, executor });
+		expect(calls).toBe(1);
+		expect(r.status).toBe("ok");
+		expect(r.schemaRepairAttempted).toBeUndefined();
+	});
+
+	it("re-emits to fill a missing required report block (code_executor)", async () => {
+		let calls = 0;
+		const executor: WorkerExecutor = {
+			run: async (_c, _t, repair) => {
+				calls++;
+				if (calls === 1) {
+					// Missing <changed_files>.
+					return `<task_report><status>ok</status><summary>did it</summary></task_report>`;
+				}
+				expect(repair?.feedback).toContain("<changed_files>");
+				return `<task_report><status>ok</status><summary>did it</summary><changed_files>- src/upload.ts</changed_files></task_report>`;
+			},
+		};
+		const r = await runTask(mkContract(), { projectRoot: dir, executor });
+		expect(calls).toBe(2);
+		expect(r.status).toBe("ok");
+		expect(r.schemaRepairAttempted).toBe(true);
+	});
+
+	it("does not enforce required blocks on a blocked repo_scout report", async () => {
+		let calls = 0;
+		const executor: WorkerExecutor = {
+			run: async () => {
+				calls++;
+				return `<task_report><status>blocked</status>workspace inaccessible</task_report>`;
+			},
+		};
+		const r = await runTask(scoutContract(), { projectRoot: dir, executor });
+		expect(calls).toBe(1);
+		expect(r.status).toBe("blocked");
+		expect(r.schemaRepairAttempted).toBeUndefined();
 	});
 
 	it("returns error when executor throws", async () => {
@@ -265,7 +347,7 @@ describe("runTask", () => {
 		const executor: WorkerExecutor = {
 			run: async (_contract, tools) => {
 				seen.push(tools);
-				return `<task_report><status>ok</status></task_report>`;
+				return `<task_report><status>ok</status><summary>done</summary><changed_files>- a.ts</changed_files></task_report>`;
 			},
 		};
 		await runTask(mkContract(), { projectRoot: dir, executor });
@@ -284,5 +366,58 @@ describe("runTask", () => {
 		const output = `<task_report><status>ok</status>\nLGTM</task_report>`;
 		const r = await runTask(contract, { projectRoot: dir, executor: stubExecutor(output) });
 		expect(r.status).toBe("ok");
+	});
+
+	it("degrades repo_scout after five retryable failures", async () => {
+		let calls = 0;
+		const executor: WorkerExecutor = {
+			run: async () => {
+				calls++;
+				throw new Error("network error");
+			},
+		};
+		const r = await runTaskWithRetry(
+			mkContract({
+				taskId: "T0-1",
+				personaId: "repo_scout",
+				objective: "scan repository layout",
+				pathPolicy: { allowedGlobs: [], forbiddenGlobs: [] },
+			}),
+			{ projectRoot: dir, executor },
+		);
+		expect(calls).toBe(5);
+		expect(r.status).toBe("degraded");
+		expect(r.retryCount).toBe(4);
+		expect(r.fallbackAccess?.mode).toBe("readonly_workspace");
+		expect(r.report).toContain("<status>degraded</status>");
+	});
+
+	it("skips non-scan tasks after three retryable failures", async () => {
+		let calls = 0;
+		const executor: WorkerExecutor = {
+			run: async () => {
+				calls++;
+				throw new Error("timeout while calling model");
+			},
+		};
+		const r = await runTaskWithRetry(mkContract(), { projectRoot: dir, executor });
+		expect(calls).toBe(3);
+		expect(r.status).toBe("skipped");
+		expect(r.retryCount).toBe(2);
+		expect(r.skipReason).toContain("skipped after 3");
+	});
+
+	it("does not retry non-retryable worker failures", async () => {
+		let calls = 0;
+		const executor: WorkerExecutor = {
+			run: async () => {
+				calls++;
+				throw new Error("permission_denied");
+			},
+		};
+		const r = await runTaskWithRetry(mkContract(), { projectRoot: dir, executor });
+		expect(calls).toBe(1);
+		expect(r.status).toBe("error");
+		expect(r.retryCount).toBeUndefined();
 	});
 });
