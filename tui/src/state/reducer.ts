@@ -422,6 +422,9 @@ export function reduce(state: AppState, event: AgentEvent): AppState {
     case 'planmode.set':
       return state.planMode === event.enabled ? state : { ...state, planMode: event.enabled };
 
+    case 'plangate.set':
+      return state.planGateMode === event.mode ? state : { ...state, planGateMode: event.mode };
+
     // ── verbose ───────────────────────────────────────────────────
     case 'verbose.toggle':
       return { ...state, verbose: !state.verbose };

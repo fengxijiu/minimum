@@ -144,6 +144,8 @@ export interface Runner {
   startNewSession?(): Promise<void>;
   /** Enable or disable plan mode (blocks mutating tools so the AI only plans). */
   setPlanMode?(enabled: boolean): void;
+  /** Switch the orchestrator's W2-plan audit gate (off / code_personas / all_writes). */
+  setPlanGateMode?(mode: 'off' | 'code_personas' | 'all_writes'): void;
   /** One-shot text completion used by local command services such as /learn. */
   completeText?(prompt: string): Promise<string>;
   /** Refresh command-visible learned skills after /learn apply --load. */
@@ -686,6 +688,7 @@ export async function createEngineRunner(
         setApprovalMode: (mode) => approvalManager.setMode(mode),
         getHistory: () => pipelineBridge.getHistory?.() ?? [],
         loadHistory: (msgs) => pipelineBridge.loadHistory?.(msgs),
+        setPlanGateMode: (mode) => pipelineBridge.setPlanGateMode?.(mode),
       };
     }
     const toolNames: string[] = (tools.getDefinitions?.() ?? []).map((d: { name: string }) => d.name);

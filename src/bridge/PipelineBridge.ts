@@ -12,6 +12,7 @@ import {
 	type CompletionClient,
 	type PipelineEvent,
 	type PipelineResult,
+	type PlanMode,
 	type TaskResult,
 	type WaveEvent,
 } from "../orchestration/index.js";
@@ -48,6 +49,10 @@ export interface PipelineBridgeOptions {
 	billingMode?: BillingMode;
 	/** Master-granted capability policy (denylist + kill switch); from MiMoConfig. */
 	capabilityGrants?: { enabled?: boolean; denylistSkills?: string[]; denylistMcpTools?: string[] };
+	/** W2-plan audit gate: which write tasks must propose+get a plan approved before executing. */
+	planMode?: PlanMode;
+	/** Cap on REVISE round-trips for the W2-plan gate (default 2). */
+	maxPlanRevisions?: number;
 }
 
 /**
@@ -76,11 +81,19 @@ export async function buildCatalogForBridge(opts: {
 export class PipelineBridge {
 	private pendingApprovals = new Map<string, (response: ApprovalResponse) => void>();
 	private history: import("../types/common.js").ChatMessage[] = [];
+	private planGateMode: PlanMode;
 
 	constructor(
 		private client: CompletionClient,
 		private opts: PipelineBridgeOptions,
-	) {}
+	) {
+		this.planGateMode = opts.planMode ?? "off";
+	}
+
+	/** Switch the W2-plan audit gate at runtime (off / code_personas / all_writes). */
+	setPlanGateMode(mode: PlanMode): void {
+		this.planGateMode = mode;
+	}
 
 	/**
 	 * Build the prompter callback we register on ApprovalManager only while a
@@ -399,6 +412,8 @@ export class PipelineBridge {
 			executor,
 			onEvent: push,
 			choiceGate: this.opts.choiceGate,
+			planMode: this.planGateMode,
+			...(this.opts.maxPlanRevisions !== undefined && { maxPlanRevisions: this.opts.maxPlanRevisions }),
 			getDeliveryWrites: () =>
 				[...writtenByTask.entries()]
 					.map(([taskId, files]) => ({

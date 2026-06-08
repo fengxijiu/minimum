@@ -158,6 +158,8 @@ export type AppState = {
   sessionName: string | null;
   /** Plan mode — when true the engine blocks all mutating tools so the AI only plans. */
   planMode: boolean;
+  /** Orchestrator W2-plan audit gate: which write tasks must get a plan approved before executing. */
+  planGateMode: 'off' | 'code_personas' | 'all_writes';
   /** Orchestrator pipeline phases — null when not running the pipeline. */
   pipeline: PipelinePhase[] | null;
   /** In-flight + recently-finished sub-agents. Brief rendered in PipelinePanel

@@ -1260,6 +1260,12 @@ export function App({
     runner.setPlanMode?.(sPlanMode);
   }, [sPlanMode, runner]);
 
+  // ── Sync W2-plan gate mode → orchestrator ────────────────────────────
+  const sPlanGateMode = useSlice(state, s => s.planGateMode);
+  useEffect(() => {
+    pipelineRunner?.setPlanGateMode?.(sPlanGateMode);
+  }, [sPlanGateMode, pipelineRunner]);
+
   // ── Text-wrap width for dividers / turn-meta rules ──────────────────
   // No sidebar any more: the chat uses (nearly) the full terminal width.
   const chatCols = Math.max(40, termSize.cols - 2);
