@@ -48,6 +48,7 @@ export function createInitialState(cwd: string): AppState {
     mcpLoading: null,
     sessionName: null,
     planMode: false,
+    planGateMode: 'off',
     pipeline: null,
     subagents: [],
   };

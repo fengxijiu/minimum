@@ -23,6 +23,7 @@ export type AgentEvent =
   | { type: 'permission.show'; perm: import('../types.js').Permission }
   // plan mode
   | { type: 'planmode.set'; enabled: boolean }
+  | { type: 'plangate.set'; mode: 'off' | 'code_personas' | 'all_writes' }
   // session
   | { type: 'session.clear' }
   | { type: 'session.reset' }

@@ -106,7 +106,7 @@ export const COMMANDS: TuiCommand[] = [
   // view
   { name: 'copy',   desc: 'Copy last reply to clipboard',   category: 'view' },
   { name: 'diff',   desc: 'Toggle inline diff blocks',      category: 'view' },
-  { name: 'plan',   desc: 'Plan a task or manage drafts', category: 'view', usage: '/plan [task | on | off | drafts | preview <id> | import <id> | reject <id>]' },
+  { name: 'plan',   desc: 'Plan a task or manage drafts', category: 'view', usage: '/plan [task | on | off | gate <off|code_personas|all_writes> | drafts | preview <id> | import <id> | reject <id>]' },
   { name: 'mode',   desc: 'Switch mode: agent / chat / orchestrate', category: 'view', usage: '/mode <agent|chat|orchestrate>' },
   { name: 'orchestrate', desc: 'Run the multi-persona pipeline', category: 'view', usage: '/orchestrate <request>', aliases: ['pipeline', 'orch'] },
   { name: 'pet',    desc: 'Toggle liliMiMO mascot',         category: 'view' },
@@ -333,6 +333,17 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
       if (sub === 'off') {
         return { kind: 'event', event: { type: 'planmode.set', enabled: false } };
       }
+      if (sub === 'gate') {
+        const gateMode = args[1]?.toLowerCase();
+        if (gateMode === 'off' || gateMode === 'code_personas' || gateMode === 'all_writes') {
+          return { kind: 'event', event: { type: 'plangate.set', mode: gateMode } };
+        }
+        return {
+          kind: 'note',
+          note: `Plan gate (W2 audit): ${state.planGateMode}. Usage: /plan gate off|code_personas|all_writes`,
+          tone: 'warn',
+        };
+      }
       if (sub === 'drafts') {
         return { kind: 'plan.drafts' };
       }
@@ -363,7 +374,8 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
       const modeInfo = state.planMode
         ? 'Plan mode: ON (mutating tools blocked). Use /plan off to disable.'
         : 'Plan mode: off. Use /plan <task> to plan, or /plan on to enable.';
-      return { kind: 'note', note: `${planInfo}  ${modeInfo}` };
+      const gateInfo = `Plan gate (W2 audit): ${state.planGateMode}. Use /plan gate <off|code_personas|all_writes> to switch.`;
+      return { kind: 'note', note: `${planInfo}  ${modeInfo}  ${gateInfo}` };
     }
 
     case 'undo': {
