@@ -40,19 +40,17 @@ export class ArtifactIndex {
 		return this.index.get(taskId)?.get(artifact);
 	}
 
+	/** Snapshot the indexed artifacts for launch-gate checks. */
+	asMap(): Map<string, Map<LaunchArtifact, string>> {
+		return new Map(
+			[...this.index.entries()].map(([taskId, artifacts]) => [taskId, new Map(artifacts)]),
+		);
+	}
+
 	/** Check whether a required artifact is present and non-empty. */
 	has(taskId: string, artifact: LaunchArtifact): boolean {
 		const value = this.get(taskId, artifact);
 		return value !== undefined && value.length > 0;
-	}
-
-	/**
-	 * @returns the underlying (taskId → artifact → value) map, in the shape
-	 * `LaunchGate.evaluateLaunchGate` expects, so callers can run the launch
-	 * gate without re-parsing every task report.
-	 */
-	asMap(): Map<string, Map<LaunchArtifact, string>> {
-		return this.index;
 	}
 
 	/** @returns all task IDs currently indexed. */

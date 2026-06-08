@@ -25,6 +25,8 @@ import { compileRefinement, refineDag, type RefinementEntry } from "./Refiner.js
 import { validateGrants, type GrantableCatalog } from "./CapabilityCatalog.js";
 import { buildArtifactMap, canUseReadonlyFallback, evaluateLaunchGate, isContextGapBlocked } from "./LaunchGate.js";
 import { compilePlanAudit, extractExecutionPlan, needsPlanApproval, type PlanMode } from "./PlanGate.js";
+import { classifyRoutePolicy, type RouteHint, type RoutePolicy } from "./RoutePolicy.js";
+import { validateAgainstRoutePolicy } from "./RoutePolicyValidator.js";
 import {
 	compileMissionCheck,
 	loopBackTasksToCoarseTasks,
@@ -42,7 +44,7 @@ import {
 	type ArtifactPaths,
 } from "./PipelineArtifactStore.js";
 import { stageLabel, stageName } from "./StageDisplay.js";
-import { extractXmlBlock, type TaskResult, type WorkerExecutor } from "./TaskRunner.js";
+import { extractXmlBlock, type TaskResult, type TaskRunnerOptions, type WorkerExecutor } from "./TaskRunner.js";
 import type { ChoicePayload, ConfirmationGate } from "../tools/choice/ConfirmationGate.js";
 
 /**
@@ -238,6 +240,10 @@ export interface PipelineOptions {
 	forceMissionCheck?: boolean;
 	/** Override the automatic orchestration mode classification. */
 	orchestrationMode?: OrchestrationMode;
+	/** Optional route/fan-out hints; explicit hints override automatic route policy classification. */
+	routeHint?: RouteHint;
+	/** Fully resolved route policy, usually built by PipelineBridge from the clean user request. */
+	routePolicy?: RoutePolicy;
 	/** In-run cache for file reads and command results to avoid redundant I/O. */
 	cache?: PipelineCache;
 	/**
@@ -250,6 +256,7 @@ export interface PipelineOptions {
 	planMode?: PlanMode;
 	/** Max plan REVISE rounds before the task is blocked. Defaults to 2. */
 	maxPlanRevisions?: number;
+	retryBackoff?: TaskRunnerOptions["retryBackoff"];
 }
 
 export interface PipelineResult {
@@ -268,7 +275,9 @@ export async function runPipeline(
 	opts: PipelineOptions,
 ): Promise<PipelineResult> {
 	const emit = opts.onEvent ?? (() => {});
-	const orchestrationMode = opts.orchestrationMode ?? classifyOrchestrationMode(userRequest);
+	const routePolicy = opts.routePolicy ?? classifyRoutePolicy(userRequest, opts.routeHint);
+	opts.routePolicy = routePolicy;
+	const orchestrationMode = opts.orchestrationMode ?? orchestrationModeForRoutePolicy(routePolicy, userRequest);
 
 	if (orchestrationMode === "scan_only") {
 		return runScanOnly(userRequest, opts, emit);
@@ -646,6 +655,13 @@ export async function runPipeline(
 	};
 }
 
+function orchestrationModeForRoutePolicy(routePolicy: RoutePolicy, userRequest: string): OrchestrationMode {
+	if (routePolicy.route === "scan_only") return "scan_only";
+	if (routePolicy.route === "direct_edit") return "direct_edit";
+	if (routePolicy.route === "full_pipeline") return classifyOrchestrationMode(userRequest);
+	return "full_pipeline";
+}
+
 async function runScanOnly(
 	userRequest: string,
 	opts: PipelineOptions,
@@ -891,6 +907,7 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 		...baseInputs,
 		...(staticCompileCommands.length > 0 && { staticCompileCommands }),
 	};
+	const routePolicy = opts.routePolicy ?? classifyRoutePolicy(baseInputs.userGoal, opts.routeHint);
 
 	// ── W0.5: refine ──────────────────────────────────────────────────────────
 	let allContracts: TaskContract[] = [];
@@ -952,6 +969,18 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 		});
 		allContracts = refined.contracts;
 		refineErrors = refined.errors;
+		const routePolicyIssues = validateAgainstRoutePolicy({ routePolicy, contracts: allContracts, dag });
+		if (routePolicyIssues.length > 0 && autoRefineRounds < MAX_AUTO_REFINE_ROUNDS) {
+			autoRefineRounds++;
+			refineFeedback = [
+				"# coarse-task-risk",
+				...routePolicyIssues.map((issue) => `- ${issue.code}${issue.taskId ? ` (${issue.taskId})` : ""}: ${issue.message}`),
+				"",
+				"Re-emit the ENTIRE <refine> block preserving task ids where possible. For audit_review, split broad reviewers by finding domain or bounded file cluster, avoid one global scout file_list gate, and make docs depend on reviewer task reports.",
+			].join("\n");
+			emit({ type: "pipeline_choice", phase: "W0.5", choiceId: "auto_rerun_refine", reason: "coarse-task-risk" });
+			continue;
+		}
 		// Validate master grants against the catalog: record an error AND strip the
 		// offending grant so an unknown/denied capability can never reach a worker.
 		if (opts.grantableCatalog) {
@@ -1854,6 +1883,8 @@ async function runDag(
 		projectRoot: opts.projectRoot,
 		executor: opts.executor,
 		refreshScheduler,
+		retryBackoff: opts.retryBackoff,
+		...(opts.routePolicy && { routePolicy: opts.routePolicy }),
 		onEvent: (event) => {
 			switch (event.type) {
 				case "task_started":

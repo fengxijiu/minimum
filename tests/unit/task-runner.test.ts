@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TaskContract } from "../../src/orchestration/index.js";
 import {
 	extractXmlBlock,
@@ -370,6 +370,7 @@ describe("runTask", () => {
 
 	it("degrades repo_scout after five retryable failures", async () => {
 		let calls = 0;
+		const sleep = vi.fn(async (_ms: number) => {});
 		const executor: WorkerExecutor = {
 			run: async () => {
 				calls++;
@@ -383,7 +384,7 @@ describe("runTask", () => {
 				objective: "scan repository layout",
 				pathPolicy: { allowedGlobs: [], forbiddenGlobs: [] },
 			}),
-			{ projectRoot: dir, executor },
+			{ projectRoot: dir, executor, retryBackoff: { sleep } },
 		);
 		expect(calls).toBe(5);
 		expect(r.status).toBe("degraded");
@@ -394,30 +395,71 @@ describe("runTask", () => {
 
 	it("skips non-scan tasks after three retryable failures", async () => {
 		let calls = 0;
+		const sleep = vi.fn(async (_ms: number) => {});
 		const executor: WorkerExecutor = {
 			run: async () => {
 				calls++;
 				throw new Error("timeout while calling model");
 			},
 		};
-		const r = await runTaskWithRetry(mkContract(), { projectRoot: dir, executor });
+		const r = await runTaskWithRetry(mkContract(), {
+			projectRoot: dir,
+			executor,
+			retryBackoff: { sleep },
+		});
 		expect(calls).toBe(3);
 		expect(r.status).toBe("skipped");
 		expect(r.retryCount).toBe(2);
 		expect(r.skipReason).toContain("skipped after 3");
 	});
 
+	it("waits with jittered exponential backoff between retryable worker failures", async () => {
+		let calls = 0;
+		const sleep = vi.fn(async (_ms: number) => {});
+		const random = vi
+			.fn<() => number>()
+			.mockReturnValueOnce(0.25)
+			.mockReturnValueOnce(0.75);
+		const executor: WorkerExecutor = {
+			run: async () => {
+				calls++;
+				throw new Error("timeout while calling model");
+			},
+		};
+		const r = await runTaskWithRetry(mkContract(), {
+			projectRoot: dir,
+			executor,
+			retryBackoff: {
+				baseDelayMs: 100,
+				maxDelayMs: 1_000,
+				random,
+				sleep,
+			},
+		});
+		expect(calls).toBe(3);
+		expect(r.status).toBe("skipped");
+		expect(sleep).toHaveBeenCalledTimes(2);
+		expect(sleep).toHaveBeenNthCalledWith(1, 25);
+		expect(sleep).toHaveBeenNthCalledWith(2, 150);
+	});
+
 	it("does not retry non-retryable worker failures", async () => {
 		let calls = 0;
+		const sleep = vi.fn(async (_ms: number) => {});
 		const executor: WorkerExecutor = {
 			run: async () => {
 				calls++;
 				throw new Error("permission_denied");
 			},
 		};
-		const r = await runTaskWithRetry(mkContract(), { projectRoot: dir, executor });
+		const r = await runTaskWithRetry(mkContract(), {
+			projectRoot: dir,
+			executor,
+			retryBackoff: { sleep },
+		});
 		expect(calls).toBe(1);
 		expect(r.status).toBe("error");
 		expect(r.retryCount).toBeUndefined();
+		expect(sleep).not.toHaveBeenCalled();
 	});
 });

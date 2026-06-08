@@ -22,6 +22,7 @@ import type { MissionCheckInput } from "./MissionChecker.js";
 import type { CoarseDag } from "./TaskContract.js";
 import type { TaskContract } from "./TaskContract.js";
 import type { FinalDeliveryInput, PlannerBridge } from "./MiMoPipeline.js";
+import { renderRoutePolicyForPlanner, type RoutePolicy } from "./RoutePolicy.js";
 import type {
 	SchemaRepairRequest,
 	TaskResult,
@@ -82,6 +83,7 @@ export async function collectText(
 export interface PlannerBridgeOptions {
 	maxTokens?: number;
 	projectRoot?: string;
+	routePolicy?: RoutePolicy;
 }
 
 /** Build a PlannerBridge backed by a completion client + master_planner prompt. */
@@ -103,11 +105,12 @@ export function createPlannerBridge(
 
 	return {
 		compile: async (userRequest, memoryPrefix, feedback) => {
+			const routePolicyText = opts.routePolicy ? `\n\n${renderRoutePolicyForPlanner(opts.routePolicy)}` : "";
 			const messages: ChatMessage[] = [
 				await sys(userRequest),
 				{
 					role: "user",
-					content: `${memoryPrefix}\n\n# User Request\n${userRequest}\n\nCompile the coarse task DAG now. Output a single <task_dag> block.`,
+					content: `${memoryPrefix}\n\n# User Request\n${userRequest}${routePolicyText}\n\nCompile the coarse task DAG now. Output a single <task_dag> block.`,
 				},
 			];
 			if (feedback) {
@@ -128,6 +131,7 @@ export function createPlannerBridge(
 				`# Perception Reports\n${renderResults(perception)}`,
 				`# Canonical Project Memory\n${memoryPrefix || "(none)"}`,
 				`# Context Builder Guidance\n${contextBuilder.systemPrompt}`,
+				...(opts.routePolicy ? [renderRoutePolicyForPlanner(opts.routePolicy)] : []),
 				[
 					"Refine the needs_refine tasks.",
 					"The set of refine.tasks[].taskId values must exactly cover requiredRefinementTaskIds: no missing ids, no renamed ids, no duplicates, and no incremental-only responses.",
@@ -362,6 +366,7 @@ function buildStructuredSummary(input: FinalDeliveryInput): string {
 export interface WorkerExecutorOptions {
 	maxTokens?: number;
 	projectRoot?: string;
+	routePolicy?: RoutePolicy;
 	/** When set, worker tasks gain real tool execution via WorkerLoop. */
 	tools?: IToolHost;
 	/** When set, every tool call passes through the approvalMode gate. */
@@ -496,6 +501,9 @@ export function createWorkerExecutor(
 					persona,
 					contract,
 					maxTokens: max,
+					...(opts.routePolicy?.executionDepthByPersona[contract.personaId] && {
+						executionDepth: opts.routePolicy.executionDepthByPersona[contract.personaId],
+					}),
 					...(planMode && { readOnly: true }),
 					onEvent: opts.onWorkerEvent
 						? (ev) => opts.onWorkerEvent!(contract, ev)

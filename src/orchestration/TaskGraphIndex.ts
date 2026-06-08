@@ -10,7 +10,6 @@ export type TaskRuntimeStatus =
 	| "scheduled"
 	| "running"
 	| "ok"
-	| "degraded"
 	| "blocked"
 	| "failed"
 	| "contract_invalid"
@@ -96,15 +95,11 @@ export class TaskGraphIndex {
 	}
 
 	/**
-	 * Mark a task as completed in a dependency-satisfying state (`ok` or
-	 * `degraded`) and decrement all downstream unresolved counts. Returns the
-	 * set of tasks that just became ready (had their last hard dependency met).
-	 *
-	 * `degraded` still unlocks downstream — a degraded upstream is not a failure;
-	 * the caller's launch gate decides whether each downstream can proceed.
+	 * Mark a task as completed ok and decrement all downstream unresolved
+	 * counts. Returns the set of tasks that just became ready.
 	 */
-	tryUnlock(taskId: string, status: "ok" | "degraded" = "ok"): string[] {
-		this.status.set(taskId, status);
+	tryUnlock(taskId: string): string[] {
+		this.status.set(taskId, "ok");
 		const newlyReady: string[] = [];
 		for (const child of this.downstream.get(taskId) ?? []) {
 			const prev = this.unresolvedCount.get(child) ?? 0;
@@ -131,7 +126,7 @@ export class TaskGraphIndex {
 		const visit = new Set<string>();
 		const queue = [...(this.downstream.get(taskId) ?? [])];
 
-		const TERMINAL: Set<TaskRuntimeStatus> = new Set(["ok", "degraded", "failed", "skipped", "contract_invalid"]);
+		const TERMINAL: Set<TaskRuntimeStatus> = new Set(["ok", "failed", "skipped", "contract_invalid"]);
 
 		while (queue.length > 0) {
 			const id = queue.shift()!;
@@ -216,9 +211,8 @@ export class TaskGraphIndex {
 		}
 	}
 
-	/** @returns ids of tasks currently held in the deferred state. */
 	getDeferredIds(): string[] {
-		return [...this.blockedByDeferred];
+		return [...this.blockedByDeferred].sort((a, b) => this.comparePriority(a, b));
 	}
 
 	/** @returns count of tasks that are still pending / ready / scheduled / running. */
@@ -244,9 +238,9 @@ export class TaskGraphIndex {
 		return [...this.contracts.keys()];
 	}
 
-	/** @returns whether every task's status is a terminal state (ok/degraded/failed/skipped/contract_invalid). */
+	/** @returns whether every task's status is a terminal state (ok/failed/skipped/contract_invalid). */
 	get isComplete(): boolean {
-		const terminal: Set<TaskRuntimeStatus> = new Set(["ok", "degraded", "failed", "skipped", "contract_invalid"]);
+		const terminal: Set<TaskRuntimeStatus> = new Set(["ok", "failed", "skipped", "contract_invalid"]);
 		for (const s of this.status.values()) {
 			if (!terminal.has(s)) return false;
 		}
@@ -260,7 +254,7 @@ export class TaskGraphIndex {
 	buildIdleDiagnostics(): Array<{ taskId: string; reason: string }> {
 		const diags: Array<{ taskId: string; reason: string }> = [];
 		for (const [taskId, s] of this.status) {
-			if (s === "ok" || s === "degraded" || s === "failed" || s === "skipped" || s === "running") continue;
+			if (s === "ok" || s === "failed" || s === "skipped" || s === "running") continue;
 			if (s === "deferred") { diags.push({ taskId, reason: "waiting for repair or human confirmation" }); continue; }
 			if (s === "blocked") { diags.push({ taskId, reason: "blocked by context gap or upstream failure" }); continue; }
 			// pending/ready: list unresolved upstream deps

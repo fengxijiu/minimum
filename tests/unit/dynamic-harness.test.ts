@@ -2,8 +2,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { HarnessEvent, TaskContract, WorkerExecutor } from "../../src/orchestration/index.js";
-import { DynamicHarness } from "../../src/orchestration/index.js";
+import type { HarnessEvent } from "../../src/orchestration/HarnessEvent.js";
+import type { TaskContract } from "../../src/orchestration/TaskContract.js";
+import type { WorkerExecutor } from "../../src/orchestration/TaskRunner.js";
+import { DynamicHarness } from "../../src/orchestration/DynamicHarness.js";
+import { classifyRoutePolicy } from "../../src/orchestration/RoutePolicy.js";
 
 function mkContract(over: Partial<TaskContract> = {}): TaskContract {
 	return {
@@ -47,6 +50,7 @@ describe("DynamicHarness", () => {
 		const results = await new DynamicHarness().runToCompletion([a, b], {
 			projectRoot: dir,
 			executor,
+			retryBackoff: { sleep: async (_ms: number) => {} },
 		});
 
 		expect(results.find((r) => r.taskId === "T1")?.status).toBe("skipped");
@@ -63,11 +67,14 @@ describe("DynamicHarness", () => {
 		let active = 0;
 		let max = 0;
 		const executor: WorkerExecutor = {
-			run: async () => {
+			run: async (contract) => {
 				active++;
 				max = Math.max(max, active);
 				await new Promise((r) => setTimeout(r, 5));
 				active--;
+				if (contract.personaId === "reviewer") {
+					return `<task_report><status>ok</status><decision>approve</decision><risk_level>low</risk_level></task_report>`;
+				}
 				return `<task_report><status>ok</status></task_report>`;
 			},
 		};
@@ -108,6 +115,26 @@ describe("DynamicHarness", () => {
 		// Disjoint globs → no lock conflict → both run concurrently.
 		expect(peak()).toBe(2);
 		expect(results.filter((r) => r.status === "ok")).toHaveLength(2);
+	});
+
+	it("uses route policy persona caps instead of hardcoded cap 5", async () => {
+		const { executor, peak } = trackingExecutor();
+		const reviewers = Array.from({ length: 4 }, (_, index) => mkContract({
+			taskId: `T-R${index + 1}`,
+			personaId: "reviewer",
+			objective: `review scoped audit surface ${index + 1}`,
+			inputs: { userGoal: "repo-wide dead code audit", artifacts: [], constraints: [] },
+			pathPolicy: { allowedGlobs: [], forbiddenGlobs: [] },
+		}));
+
+		const results = await new DynamicHarness().runToCompletion(reviewers, {
+			projectRoot: dir,
+			executor,
+			routePolicy: classifyRoutePolicy("repo-wide dead code audit", { route: "audit_review", scale: "large" }),
+		});
+
+		expect(peak()).toBe(3);
+		expect(results.filter((r) => r.status === "ok")).toHaveLength(4);
 	});
 
 	// ── F1: launch gate (launchRequirements / artifact gate) ──────────────────
@@ -204,6 +231,7 @@ describe("DynamicHarness", () => {
 		const results = await new DynamicHarness().runToCompletion([scout, downstream], {
 			projectRoot: dir,
 			executor,
+			retryBackoff: { sleep: async (_ms: number) => {} },
 		});
 
 		// Upstream degraded, but the downstream still ran (not skipped).

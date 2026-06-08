@@ -14,7 +14,6 @@ export {
 } from "./ClientAdapters.js";
 export {
 	buildArtifactMap,
-	canUseReadonlyFallback,
 	evaluateLaunchGate,
 	hasNonBlockingDirective,
 	isContextGapBlocked,
@@ -40,20 +39,10 @@ export {
 	type PipelineOptions,
 	type PipelinePhase,
 	type PipelineResult,
+	type WaveEvent,
 	type FinalDeliveryInput,
 	type PlannerBridge,
-	type PlanAuditInput,
-	type WaveEvent,
 } from "./MiMoPipeline.js";
-export {
-	compilePlanAudit,
-	extractExecutionPlan,
-	needsPlanApproval,
-	type PlanAudit,
-	type PlanAuditResult,
-	type PlanDecision,
-	type PlanMode,
-} from "./PlanGate.js";
 export {
 	compileMissionCheck,
 	loopBackTasksToCoarseTasks,
@@ -63,19 +52,6 @@ export {
 	type MissionDecision,
 	type MissionLoopBackTask,
 } from "./MissionChecker.js";
-export {
-	decideMissionCheckMode,
-	type MissionCheckMode,
-} from "./MissionCheckMode.js";
-export {
-	resolveExecutionBudget,
-	type ExecutionDepth,
-} from "./ExecutionBudget.js";
-export {
-	classifyOrchestrationMode,
-	type OrchestrationMode,
-} from "./OrchestrationClassifier.js";
-export { PipelineCache } from "./PipelineCache.js";
 export {
 	artifactPath,
 	emptyArtifactPaths,
@@ -104,6 +80,20 @@ export {
 	type CompileSuccess,
 } from "./TaskCompiler.js";
 export {
+	classifyRoutePolicy,
+	normalizeRouteHint,
+	parseRouteHintFromInput,
+	renderRoutePolicyForPlanner,
+	type FanoutScale,
+	type OrchestrationRoute,
+	type RouteHint,
+	type RoutePolicy,
+} from "./RoutePolicy.js";
+export {
+	validateAgainstRoutePolicy,
+	type RoutePolicyIssue,
+} from "./RoutePolicyValidator.js";
+export {
 	buildWaves,
 	flattenCoarse,
 	partitionByParallelGroup,
@@ -117,7 +107,6 @@ export type {
 	CoarseTask,
 	LaunchArtifact,
 	LaunchRequirement,
-	LaunchRequirementFallback,
 	TaskContract,
 	TaskInputs,
 	TaskPathPolicy,
@@ -125,11 +114,6 @@ export type {
 export {
 	extractXmlBlock,
 	runTask,
-	runTaskWithRetry,
-	buildReadonlyFallbackAccess,
-	RETRYABLE_SCAN_ATTEMPTS,
-	RETRYABLE_WORKER_ATTEMPTS,
-	type ReadonlyFallbackAccess,
 	type SchemaRepairRequest,
 	type TaskResult,
 	type TaskRunnerOptions,
@@ -137,6 +121,7 @@ export {
 	type WorkerExecutionResult,
 	type WorkerExecutor,
 } from "./TaskRunner.js";
+export type { PlanMode } from "./PlanGate.js";
 export type { DagHarness, DagHarnessOptions } from "./DagHarness.js";
 export type { HarnessEvent, WorkerInternalEvent } from "./HarnessEvent.js";
 export { DynamicHarness } from "./DynamicHarness.js";

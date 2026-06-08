@@ -10,6 +10,7 @@ import { evaluateLaunchGate } from "./LaunchGate.js";
 import type { TaskContract } from "./TaskContract.js";
 import type { TaskResult } from "./TaskRunner.js";
 import { runTaskWithRetry } from "./TaskRunner.js";
+import { getPersona } from "../personas/PersonaRegistry.js";
 
 /**
  * DynamicHarness — real-time DAG-driven sub-agent scheduler.
@@ -48,18 +49,9 @@ export class DynamicHarness implements DagHarness {
 
 		// Global concurrency — effectively unbounded; the per-persona caps below
 		// are the binding constraint (each category may run up to 5 concurrently).
+		// Per-persona caps are resolved at launch time from route policy first,
+		// then PersonaRegistry defaults.
 		const maxGlobal = 99;
-		const personaCaps: Record<string, number> = {
-			code_executor: 5,
-			test_writer: 5,
-			test_runner: 5,
-			repo_scout: 5,
-			context_builder: 5,
-			reviewer: 5,
-			docs: 5,
-			vision: 5,
-			runtime_debug: 5,
-		};
 
 		emit?.({ type: "harness_start", taskCount: contracts.length });
 
@@ -134,7 +126,7 @@ export class DynamicHarness implements DagHarness {
 
 			if (result.status === "ok") {
 				emit?.({ type: "task_done", result });
-				const newlyReady = graph.tryUnlock(taskId, "ok");
+				const newlyReady = graph.tryUnlock(taskId);
 				for (const id of newlyReady) promote(id, taskId);
 				reevaluateDeferred();
 			} else if (result.status === "degraded") {
@@ -143,7 +135,7 @@ export class DynamicHarness implements DagHarness {
 				// each one can proceed via canUseReadonlyFallback or must defer. This
 				// matches wave-mode behaviour instead of blindly skipping the subtree.
 				emit?.({ type: "task_done", result });
-				const newlyReady = graph.tryUnlock(taskId, "degraded");
+				const newlyReady = graph.tryUnlock(taskId);
 				for (const id of newlyReady) promote(id, taskId);
 				reevaluateDeferred();
 			} else if (result.status === "skipped") {
@@ -196,7 +188,7 @@ export class DynamicHarness implements DagHarness {
 			while (!queue.isEmpty && running.activeCount < maxGlobal) {
 				const contract = queue.dequeue();
 				if (!contract) break;
-				if (!canLaunch(contract, running, personaCaps, maxGlobal)) {
+				if (!canLaunch(contract, running, options, maxGlobal)) {
 					// Persona slot full — put back and try next task.
 					skippedTasks.push(contract);
 					continue;
@@ -317,17 +309,28 @@ async function executeTask(
 		projectRoot: options.projectRoot,
 		executor: options.executor,
 		refreshScheduler: options.refreshScheduler,
+		retryBackoff: options.retryBackoff,
 	});
 }
 
 function canLaunch(
 	contract: TaskContract,
 	running: RunningSet,
-	personaCaps: Record<string, number>,
+	options: DagHarnessOptions | undefined,
 	maxGlobal: number,
 ): boolean {
 	if (running.activeCount >= maxGlobal) return false;
-	const personaCap = personaCaps[contract.personaId] ?? 5;
+	const personaCap = personaCapFor(contract.personaId, options);
 	if (running.personaCount(contract.personaId) >= personaCap) return false;
 	return true;
+}
+
+function personaCapFor(personaId: string, options?: DagHarnessOptions): number {
+	const routeCap = options?.routePolicy?.personaCaps[personaId as keyof typeof options.routePolicy.personaCaps];
+	if (routeCap !== undefined) return routeCap;
+	try {
+		return getPersona(personaId as Parameters<typeof getPersona>[0]).parallelism.maxConcurrent;
+	} catch {
+		return 2;
+	}
 }

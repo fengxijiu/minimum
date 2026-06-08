@@ -5,14 +5,18 @@ import type { IToolHost } from "../loop/MiMoLoop.js";
 import { buildGrantableCatalog, type GrantableCatalog } from "../orchestration/CapabilityCatalog.js";
 import type { ICodeValidator } from "../types/validator.js";
 import {
+	classifyRoutePolicy,
 	createPlannerBridge,
 	createWorkerExecutor,
+	parseRouteHintFromInput,
 	runPipeline,
 	stageName,
 	type CompletionClient,
 	type PipelineEvent,
 	type PipelineResult,
 	type PlanMode,
+	type RouteHint,
+	type RoutePolicy,
 	type TaskResult,
 	type WaveEvent,
 } from "../orchestration/index.js";
@@ -53,6 +57,10 @@ export interface PipelineBridgeOptions {
 	planMode?: PlanMode;
 	/** Cap on REVISE round-trips for the W2-plan gate (default 2). */
 	maxPlanRevisions?: number;
+	/** Static route hint used when the caller wants to force a path for every send. */
+	routeHint?: RouteHint;
+	/** Pre-resolved route policy; usually omitted so send() can classify per request. */
+	routePolicy?: RoutePolicy;
 }
 
 /**
@@ -135,7 +143,11 @@ export class PipelineBridge {
 	}
 
 	async *send(userInput: string): AsyncGenerator<UiEvent> {
-		const effectiveInput = this.buildUserRequest(userInput);
+		const parsed = parseRouteHintFromInput(userInput);
+		const cleanUserInput = parsed.cleanInput || userInput;
+		const routeHint = parsed.routeHint ?? this.opts.routeHint;
+		const routePolicy = this.opts.routePolicy ?? classifyRoutePolicy(cleanUserInput, routeHint);
+		const effectiveInput = this.buildUserRequest(cleanUserInput);
 		const queue: UiEvent[] = [];
 		let notify: (() => void) | undefined;
 		const wake = () => {
@@ -288,10 +300,12 @@ export class PipelineBridge {
 		const planner = createPlannerBridge(this.client, {
 			...(this.opts.maxTokens && { maxTokens: this.opts.maxTokens }),
 			projectRoot: this.opts.projectRoot,
+			routePolicy,
 		});
 		const executor = createWorkerExecutor(this.client, {
 			...(this.opts.maxTokens && { maxTokens: this.opts.maxTokens }),
 			projectRoot: this.opts.projectRoot,
+			routePolicy,
 			...(this.opts.tools && { tools: this.opts.tools }),
 			...(this.opts.approvalManager && { approvalManager: this.opts.approvalManager }),
 			...(this.opts.validator && { validator: this.opts.validator }),
@@ -410,6 +424,8 @@ export class PipelineBridge {
 			projectRoot: this.opts.projectRoot,
 			planner,
 			executor,
+			routePolicy,
+			...(routeHint && { routeHint }),
 			onEvent: push,
 			choiceGate: this.opts.choiceGate,
 			planMode: this.planGateMode,
@@ -424,12 +440,12 @@ export class PipelineBridge {
 			...(grantableCatalog && { grantableCatalog }),
 		})
 			.then((r) => {
-				this.recordTurn(userInput, summarizePipelineResult(r));
+				this.recordTurn(cleanUserInput, summarizePipelineResult(r));
 				queue.push({ kind: "done", success: r.ok });
 			})
 			.catch((err: unknown) => {
 				this.recordTurn(
-					userInput,
+					cleanUserInput,
 					`Pipeline failed: ${err instanceof Error ? err.message : String(err)}`,
 				);
 				queue.push({ kind: "error", text: err instanceof Error ? err.message : String(err) });

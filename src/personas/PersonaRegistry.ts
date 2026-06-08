@@ -214,7 +214,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		maxSteps: 100,
 		maxTokens: 131_072,
 		outputSchema: "task_report",
-		parallelism: { soloPerWave: false, maxConcurrent: 1 },
+		parallelism: { soloPerWave: false, maxConcurrent: 2 },
 	});
 
 	out.set("code_executor", {
@@ -352,7 +352,7 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		outputSchema: "task_report",
 		// reviewer.md: the verdict and risk level are mandatory single-line fields.
 		requiredReportBlocks: ["decision", "risk_level"],
-		parallelism: { soloPerWave: false, maxConcurrent: 1 },
+		parallelism: { soloPerWave: false, maxConcurrent: 2 },
 	});
 
 	out.set("docs", {
