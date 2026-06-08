@@ -16,9 +16,10 @@ import {
 import { LearnCommandService } from '../../dist/learn/LearnCommandService.js';
 import { PlanCommandService } from '../../dist/plans/PlanCommandService.js';
 import { loadLearnedSkillsSync } from '../../dist/skills/LearnedSkillLoader.js';
-import { mockRunner, uiEventToMessages, summarizeTool, summarizeToolResult, describePermissionArgs, buildErrorLines, PermissionQueue, type Runner, type EngineInfo, type McpOverviewInfo, type UiEvent, type UiPlanStatus, type TuiConfirmationGate } from './engine.js';
+import { mockRunner, uiEventToMessages, summarizeTool, summarizeToolResult, describePermissionArgs, buildErrorLines, PermissionQueue, type Runner, type EngineInfo, type McpOverviewInfo, type UiEvent, type UiPlanStatus, type TuiConfirmationGate, type ChatHistoryMessage } from './engine.js';
 import { scanFiles, readBranch, touch } from './files.js';
 import { getContextUsageK } from './context-usage.js';
+import { cloneChatHistory, handoffRunnerHistory, resolveSharedChatHistory } from './history-sync.js';
 import {
   saveTuiSession, loadTuiSessionById, listTuiSessions, formatSessionList,
   type TuiSession,
@@ -276,6 +277,7 @@ export function App({
   // ── Session persistence ──────────────────────────────────────────────
   const sessionIdRef = useRef(`auto_${Date.now()}`);
   const sessionCreatedAtRef = useRef(Date.now());
+  const sharedChatHistoryRef = useRef<ChatHistoryMessage[]>([]);
 
   // ── Per-turn telemetry (reset on turn.start, drained into turnmeta) ──
   const turnToolCountRef = useRef(0);
@@ -386,6 +388,33 @@ export function App({
     mcpServers: engineInfo.mcpServers,
     mcpToolCount: engineInfo.mcpToolCount,
   }), [engineInfo]);
+  const refreshSharedChatHistory = useCallback((sourceRunner?: Runner) => {
+    const nextShared = resolveSharedChatHistory(
+      sourceRunner?.getHistory?.(),
+      sharedChatHistoryRef.current,
+    );
+    sharedChatHistoryRef.current = nextShared;
+    return nextShared;
+  }, []);
+  const seedSharedChatHistory = useCallback((history: ChatHistoryMessage[]) => {
+    const nextShared = cloneChatHistory(history);
+    sharedChatHistoryRef.current = nextShared;
+    runner.loadHistory?.(nextShared);
+    pipelineRunner?.loadHistory?.(cloneChatHistory(nextShared));
+    return nextShared;
+  }, [pipelineRunner, runner]);
+  const handoffToRunner = useCallback((targetRunner?: Runner) => {
+    if (!targetRunner || activeRunnerRef.current === targetRunner) {
+      return sharedChatHistoryRef.current;
+    }
+    const nextShared = handoffRunnerHistory({
+      activeRunner: activeRunnerRef.current,
+      targetRunner,
+      sharedHistory: sharedChatHistoryRef.current,
+    });
+    sharedChatHistoryRef.current = nextShared;
+    return nextShared;
+  }, []);
   const restoreSession = useCallback(async (session: TuiSession) => {
     sessionIdRef.current = session.id;
     sessionCreatedAtRef.current = session.createdAt;
@@ -399,15 +428,16 @@ export function App({
     } else {
       await runner.loadLastSession?.();
     }
-    if (session.chatHistory?.length) {
-      runner.loadHistory?.(session.chatHistory);
-      pipelineRunner?.loadHistory?.(session.chatHistory);
-    }
+    const restoredShared = resolveSharedChatHistory(
+      session.chatHistory,
+      runner.getHistory?.(),
+    );
+    seedSharedChatHistory(restoredShared);
     dispatch({ type: 'session.restore', messages: session.messages, sessionName: session.name });
     const msgCount = session.messages.filter(m => m.type === 'user' || m.type === 'assistant').length;
-    const ctxNote = session.chatHistory?.length ? ` · AI context restored (${session.chatHistory.length} turns)` : '';
+    const ctxNote = restoredShared.length ? ` · AI context restored (${restoredShared.length} turns)` : '';
     return { msgCount, ctxNote };
-  }, [dispatch, pipelineRunner, runner]);
+  }, [dispatch, pipelineRunner, runner, seedSharedChatHistory]);
   // ── Command / permission handlers ───────────────────────────────────
   const applyOutcome = useCallback((o: CommandOutcome) => {
     switch (o.kind) {
@@ -427,6 +457,7 @@ export function App({
         sessionCreatedAtRef.current = Date.now();
         prevCostRef.current = 0;
         activeRunnerRef.current = runner;
+        sharedChatHistoryRef.current = [];
         // NEW: make /new a real session boundary for both engine surfaces.
         runner.loadHistory?.([]);
         pipelineRunner?.loadHistory?.([]);
@@ -464,13 +495,14 @@ export function App({
       case 'session.save': {
         const name = o.name?.trim() || `session_${Date.now()}`;
         const s = stateRef.current;
+        const chatHistory = refreshSharedChatHistory(activeRunnerRef.current);
         sessionIdRef.current = name;
         void saveTuiSession({
           id: name,
           name,
           projectPath: s.path,
           messages: s.messages,
-          chatHistory: activeRunnerRef.current.getHistory?.(),
+          chatHistory,
           engineSessionId: runner.getSessionId?.() ?? undefined,
           createdAt: sessionCreatedAtRef.current,
           updatedAt: Date.now(),
@@ -719,7 +751,7 @@ export function App({
         return;
       }
     }
-  }, [exit, dispatch, pipelineRunner, restoreSession, runner]);
+  }, [exit, dispatch, pipelineRunner, refreshSharedChatHistory, restoreSession, runner]);
 
   // Track which runner owns the currently in-flight turn so permission
   // resolutions route to the right side. EngineBridge and PipelineBridge each
@@ -727,6 +759,7 @@ export function App({
   // one leaks the worker promise.
   const activeRunnerRef = useRef<Runner>(runner);
   const initialSessionLoadedRef = useRef(false);
+  const prevModeRef = useRef<Mode>(stateRef.current.mode);
 
   useEffect(() => {
     if (initialSessionLoadedRef.current || !initialSession) return;
@@ -1105,6 +1138,11 @@ export function App({
     dispatch({ type: 'toast.show', text: `Permission: ${next}`, tone: 'info', ttlMs: 2000 });
   }, [APPROVAL_CYCLE, runner, dispatch]);
 
+  const prepareRunner = useCallback((targetRunner: Runner | undefined) => {
+    if (!targetRunner) return;
+    handoffToRunner(targetRunner);
+  }, [handoffToRunner]);
+
   const handleSubmit = useCallback((text: string) => {
     const st = stateRef.current;
 
@@ -1119,6 +1157,7 @@ export function App({
           return;
         }
         if (st.pending) dispatch({ type: 'pending.clear' });
+        prepareRunner(pipelineRunner);
         dispatch({ type: 'user.submit', text: `/orchestrate ${outcome.text}` });
         runTurn(pipelineRunner, outcome.text, true);
         return;
@@ -1127,6 +1166,7 @@ export function App({
         dispatch({ type: 'planmode.set', enabled: true });
         runner.setPlanMode?.(true);
         if (st.pending) dispatch({ type: 'pending.clear' });
+        prepareRunner(runner);
         dispatch({ type: 'user.submit', text: `/plan ${outcome.task}` });
         runTurn(runner, outcome.task, false);
         return;
@@ -1144,14 +1184,16 @@ export function App({
         dispatch({ type: 'system.push', text: 'Pipeline runner unavailable (engine not built or no API key).', tone: 'warn' });
         return;
       }
+      prepareRunner(pipelineRunner);
       dispatch({ type: 'user.submit', text: trimmed });
       runTurn(pipelineRunner, trimmed, true);
       return;
     }
 
+    prepareRunner(runner);
     dispatch({ type: 'user.submit', text: trimmed });
     runTurn(runner, trimmed, false);
-  }, [runner, pipelineRunner, dispatch, allowPermission, applyFix, applyOutcome, cmdCtx, runTurn]);
+  }, [runner, pipelineRunner, dispatch, allowPermission, applyFix, applyOutcome, cmdCtx, prepareRunner, runTurn]);
 
   const handleToastDismiss = useCallback((id: string) => {
     dispatch({ type: 'toast.dismiss', id });
@@ -1184,11 +1226,21 @@ export function App({
   const sToasts = useSlice(state, s => s.toasts);
   const sPlanMode = useSlice(state, s => s.planMode);
   const sVerbose = useSlice(state, s => s.verbose);
+  const sTurnInProgress = useSlice(state, s => s.turnInProgress);
   const sHasEdits = useSlice(state, s => s.edits.length > 0);
   const sHasMessages = useMemo(
     () => sMessages.some(m => m.type !== 'system'),
     [sMessages],
   );
+
+  useEffect(() => {
+    const prevMode = prevModeRef.current;
+    prevModeRef.current = sMode;
+    if (prevMode === sMode || sTurnInProgress) return;
+    const targetRunner = sMode === 'orchestrate' ? pipelineRunner : runner;
+    if (!targetRunner) return;
+    handoffToRunner(targetRunner);
+  }, [sMode, sTurnInProgress, pipelineRunner, runner, handoffToRunner]);
 
   // ── Keep the live (repainting) region minimal ───────────────────────
   // Continuously commit the longest *settled* prefix of messages into the
@@ -1217,7 +1269,6 @@ export function App({
   }, [settledCount, sCommittedCount, dispatch]);
 
   // ── Auto-save session after each turn ───────────────────────────────
-  const sTurnInProgress = useSlice(state, s => s.turnInProgress);
   const prevTurnInProgressRef = useRef(false);
   useEffect(() => {
     const justFinished = prevTurnInProgressRef.current && !sTurnInProgress;
@@ -1226,6 +1277,7 @@ export function App({
     const s = stateRef.current;
     const msgs = s.messages;
     if (msgs.length === 0) return;
+    const chatHistory = refreshSharedChatHistory(activeRunnerRef.current);
     // P1: 使用当前活跃 runner 获取 chatHistory，而非固定使用全局 runner
     // P2: 从 stateRef 获取 messages，避免 sMessages 变化导致 Effect 频繁重注册
     void saveTuiSession({
@@ -1233,12 +1285,12 @@ export function App({
       name: s.sessionName ?? sessionIdRef.current,
       projectPath: s.path,
       messages: msgs,
-      chatHistory: activeRunnerRef.current.getHistory?.(),
+      chatHistory,
       engineSessionId: runner.getSessionId?.() ?? undefined,
       createdAt: sessionCreatedAtRef.current,
       updatedAt: Date.now(),
     }).catch(() => {/* best-effort */});
-  }, [sTurnInProgress]);
+  }, [refreshSharedChatHistory, runner, sTurnInProgress]);
 
   // ── Context-window pressure warnings ───────────────────────────────
   // Fires a toast at each threshold once per session so the user knows

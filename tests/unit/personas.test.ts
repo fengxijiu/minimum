@@ -284,5 +284,31 @@ describe("PersonaRegistry", () => {
 			expect(sys).toContain("One code_executor task should not own more than 3-5 files unless the change is mechanical");
 			expect(sys).toContain("ask_choice");
 		});
+
+		it("defines route and scale selection policy", () => {
+			const sys = getPersona("master_planner").systemPrompt;
+			expect(sys).toContain("Route & Scale Selection Policy");
+			expect(sys).toContain("scan_only");
+			expect(sys).toContain("direct_edit");
+			expect(sys).toContain("audit_review");
+			expect(sys).toContain("implementation");
+			expect(sys).toContain("debug_fix");
+			expect(sys).toContain("dependency_config");
+			expect(sys).toContain("full_pipeline");
+			expect(sys).toContain("small | medium | large | auto");
+		});
+
+		it("defines audit_review scoped scout and reviewer fan-out rules", () => {
+			const sys = getPersona("master_planner").systemPrompt;
+			expect(sys).toContain("repo_scout is a context probe, not a global single-point gate");
+			expect(sys).toContain("Prefer scoped `repo_scout` tasks");
+			expect(sys).toContain("One reviewer owns exactly one finding domain or one bounded file cluster");
+			expect(sys).toContain("audit_review medium");
+			expect(sys).toContain("3-5 reviewers");
+			expect(sys).toContain("audit_review large");
+			expect(sys).toContain("6-10 reviewers");
+			expect(sys).toContain("docs depends on completed reviewer reports");
+			expect(sys).toContain("Do not make the final docs task depend directly on `repo_scout.file_list`");
+		});
 	});
 });

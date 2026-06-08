@@ -84,6 +84,14 @@ export interface TaskRunnerOptions {
 	projectRoot: string;
 	executor: WorkerExecutor;
 	refreshScheduler?: MemoryIndexRefreshScheduler;
+	retryBackoff?: Partial<RetryBackoffOptions>;
+}
+
+interface RetryBackoffOptions {
+	baseDelayMs: number;
+	maxDelayMs: number;
+	random: () => number;
+	sleep: (ms: number) => Promise<void>;
 }
 
 const READONLY_FALLBACK_ALLOW_TOOLS = [
@@ -112,6 +120,8 @@ const READONLY_FALLBACK_DENY_TOOLS = [
 
 export const RETRYABLE_SCAN_ATTEMPTS = 5;
 export const RETRYABLE_WORKER_ATTEMPTS = 3;
+const DEFAULT_RETRY_BACKOFF_MS = 500;
+const DEFAULT_RETRY_BACKOFF_CAP_MS = 8_000;
 
 /**
  * Run a single contracted task end-to-end.
@@ -259,7 +269,10 @@ export async function runTaskWithRetry(
 		if (!shouldRetryTaskResult(result)) {
 			return attempt === 1 ? result : { ...result, retryCount: attempt - 1 };
 		}
-		if (attempt < maxAttempts) continue;
+		if (attempt < maxAttempts) {
+			await waitForRetryBackoff(attempt, opts.retryBackoff);
+			continue;
+		}
 	}
 
 	const retryCount = Math.max(0, maxAttempts - 1);
@@ -427,6 +440,46 @@ function normalizeWorkerExecution(
 ): WorkerExecutionResult {
 	if (typeof output === "string") return { text: output };
 	return output;
+}
+
+function resolveRetryBackoff(
+	overrides?: Partial<RetryBackoffOptions>,
+): RetryBackoffOptions {
+	return {
+		baseDelayMs: overrides?.baseDelayMs ?? DEFAULT_RETRY_BACKOFF_MS,
+		maxDelayMs: overrides?.maxDelayMs ?? DEFAULT_RETRY_BACKOFF_CAP_MS,
+		random: overrides?.random ?? Math.random,
+		sleep: overrides?.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))),
+	};
+}
+
+function computeRetryBackoffMs(
+	attempt: number,
+	overrides?: Partial<RetryBackoffOptions>,
+): number {
+	const config = resolveRetryBackoff(overrides);
+	const cap = Math.min(
+		config.maxDelayMs,
+		config.baseDelayMs * 2 ** Math.max(0, attempt - 1),
+	);
+	return Math.max(0, Math.round(cap * clampUnitInterval(config.random())));
+}
+
+async function waitForRetryBackoff(
+	attempt: number,
+	overrides?: Partial<RetryBackoffOptions>,
+): Promise<void> {
+	const config = resolveRetryBackoff(overrides);
+	const delayMs = computeRetryBackoffMs(attempt, config);
+	if (delayMs <= 0) return;
+	await config.sleep(delayMs);
+}
+
+function clampUnitInterval(value: number): number {
+	if (!Number.isFinite(value)) return 0;
+	if (value <= 0) return 0;
+	if (value >= 1) return 1;
+	return value;
 }
 
 function buildSchemaRepairRequest(

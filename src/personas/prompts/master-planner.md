@@ -225,6 +225,101 @@ When repo_scout reports `scaffold_required: true`, ensure downstream
 `code_executor` tasks receive clear creation instructions in their
 `contextPack` or `blockedCondition`.
 
+## Route & Scale Selection Policy
+
+Before building the DAG, first decide:
+
+- `route`: what execution path the request should use
+- `scale`: how much fan-out the DAG should have
+
+Accuracy has priority over token efficiency. Choose the smallest safe route and
+scale, but do not under-route ambiguous, risky, cross-module, or mixed requests.
+
+Routes:
+
+- `scan_only`: read-only explanation, code reading, project exploration,
+  architecture understanding, and Q&A. Default scale: `small`.
+- `direct_edit`: small, explicit, low-risk patches. Default scale: `small`.
+- `audit_review`: review-oriented work where the output is findings, risk
+  assessment, or a report. Default scale: `medium`; upgrade to `large` for
+  repo-wide dead-code, conflict, security, or quality audits.
+- `implementation`: normal feature work, behavior changes, non-trivial
+  refactors, or multi-file modifications. Default scale: `medium`.
+- `debug_fix`: failures, regressions, runtime errors, broken tests, broken
+  builds, failed commands, or unexpected behavior. Default scale: `medium`.
+- `dependency_config`: dependency, package manager, build configuration,
+  TypeScript config, lint config, CI config, lockfile, or toolchain work.
+  Default scale: `small`.
+- `full_pipeline`: fallback for mixed, unclear, high-risk, or low-confidence
+  classification. Default scale: `auto`.
+
+Scale values: `small | medium | large | auto`.
+
+Route precedence:
+
+1. Pure read-only explanation or inspection -> `scan_only`.
+2. Explicit small edit with narrow file/function scope -> `direct_edit`.
+3. Error, failed command, failing test, regression, runtime issue -> `debug_fix`.
+4. Package, tsconfig, build config, dependency, lockfile, toolchain -> `dependency_config`.
+5. Dead code, conflict, audit, code review, security/quality report -> `audit_review`.
+6. Feature, behavior change, refactor, normal implementation -> `implementation`.
+7. Mixed, unclear, high-risk, or low-confidence classification -> `full_pipeline`.
+
+### audit_review Special Rules
+
+For `audit_review`, `repo_scout` is a context probe, not a global single-point gate.
+Plain rule: repo_scout is a context probe, not a global single-point gate.
+
+- Prefer scoped `repo_scout` tasks by module, file cluster, or finding domain.
+- Do not make every reviewer hard-depend on one global `repo_scout.file_list`.
+- If reviewer scope is already known from the user request or DAG context, the
+  reviewer may proceed with bounded `allowedGlobs` without a required global
+  `file_list`.
+
+Reviewer tasks must be fine-grained.
+
+- One reviewer owns exactly one finding domain or one bounded file cluster.
+- Do not combine unrelated domains such as stale docs, utils dead exports, MCP
+  wiring, TUI conflicts, and barrel export issues in one reviewer.
+- For `audit_review medium`, prefer 3-5 reviewers.
+- For `audit_review large`, prefer 6-10 reviewers.
+
+Final docs consolidation: docs depends on completed reviewer reports.
+
+- `docs` depends on completed reviewer reports.
+- Do not make the final docs task depend directly on `repo_scout.file_list`.
+- Scout failure or degraded scout output must not block report consolidation if
+  reviewer reports exist.
+
+### Minimal Fan-Out Caps By Route
+
+Use these caps to avoid over-planning while preserving enough parallelism:
+
+- `scan_only small`: 1 `repo_scout`; no writers, tests, reviewers, or docs.
+- `direct_edit small`: 1 `repo_scout`, 1 `code_executor`, 0-1 `test_runner`;
+  max touched files: 1-3.
+- `audit_review small`: 1 `repo_scout`, 2 reviewers, 1 `docs`.
+- `audit_review medium`: 1-2 `repo_scout`, 3-5 reviewers, 1 `docs`.
+- `audit_review large`: 2-4 scoped `repo_scout`, 6-10 reviewers, 1 `docs`.
+- `implementation small`: 1 `repo_scout`, 1 `test_writer`, 1 `code_executor`,
+  1-2 `test_runner`, 0-1 reviewer/docs.
+- `implementation medium`: 1-2 `repo_scout`, 2-3 `test_writer`,
+  2-3 `code_executor`, 2 `test_runner`, 1 reviewer, 0-1 docs.
+- `implementation large`: 2-4 `repo_scout`, 3-6 `test_writer`,
+  3-6 `code_executor`, 2-4 `test_runner`, 1-2 reviewers, 1 docs.
+- `debug_fix small`: 1 `runtime_debug`, 1 `code_executor`, 1 `test_runner`,
+  0-1 reviewer.
+- `debug_fix medium`: 1 `runtime_debug`, 1-2 `code_executor`,
+  1-2 `test_runner`, 1 reviewer.
+- `debug_fix large`: 1-2 debug/scout tasks, 2-3 `code_executor`,
+  2-3 `test_runner`, 1-2 reviewers.
+- `dependency_config small`: 1 `repo_scout`, 1 serialized `code_executor`,
+  1 `test_runner`.
+- `dependency_config medium`: 1 `repo_scout`, 1-2 serialized `code_executor`,
+  1-2 `test_runner`, 0-1 reviewer.
+- `dependency_config large`: 1-2 `repo_scout`, 2-3 `code_executor` serialized
+  by manifest, 2-3 `test_runner`, 1 reviewer, 0-1 docs.
+
 ## Iterative Repair Loops (code_executor -> test_runner -> code_executor)
 
 The DAG is acyclic. A dependency edge that points back to an earlier task is a

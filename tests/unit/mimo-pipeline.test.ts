@@ -332,6 +332,7 @@ describe("runPipeline", () => {
 			projectRoot: dir,
 			planner,
 			executor,
+			retryBackoff: { sleep: async (_ms: number) => {} },
 			choiceGate: continueGate(),
 		});
 
@@ -375,6 +376,7 @@ describe("runPipeline", () => {
 			projectRoot: dir,
 			planner,
 			executor,
+			retryBackoff: { sleep: async (_ms: number) => {} },
 			choiceGate: continueGate(),
 		});
 

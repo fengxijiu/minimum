@@ -6,8 +6,8 @@ import { WriteLockManager } from "./WriteLockManager.js";
  * ResourceManager — global resource scheduling for DynamicHarness.
  *
  * Controls:
- *   • Global concurrency cap (default 99 — effectively unbounded)
- *   • Per-persona concurrency caps (default 5 per category)
+ *   • Global concurrency cap (default 4)
+ *   • Per-persona concurrency caps
  *   • Write locks via WriteLockManager
  *   • install_dependency global project lock
  *   • shell command limited concurrency (default 2)
@@ -27,17 +27,17 @@ export interface ResourceConfig {
 }
 
 const DEFAULT_CONFIG: ResourceConfig = {
-	globalMax: 99,
+	globalMax: 4,
 	personaCaps: {
-		code_executor: 5,
-		test_writer: 5,
-		test_runner: 5,
-		repo_scout: 5,
-		context_builder: 5,
-		reviewer: 5,
-		docs: 5,
-		vision: 5,
-		runtime_debug: 5,
+		code_executor: 2,
+		test_writer: 1,
+		test_runner: 2,
+		repo_scout: 2,
+		context_builder: 1,
+		reviewer: 1,
+		docs: 1,
+		vision: 2,
+		runtime_debug: 1,
 	},
 	shellMax: 2,
 };
@@ -75,8 +75,6 @@ export class ResourceManager {
 	): { ok: true } | { ok: false; reasons: Array<{ type: string; detail: string }> } {
 		const reasons: Array<{ type: string; detail: string }> = [];
 
-		// Lightweight, side-effect-free checks first (S2: no write-lock rollback).
-
 		// 1. Global concurrency
 		if (this.globalActive >= this.config.globalMax) {
 			reasons.push({ type: "global_concurrency", detail: `global limit reached (${this.globalActive}/${this.config.globalMax})` });
@@ -84,25 +82,14 @@ export class ResourceManager {
 
 		// 2. Persona concurrency
 		const caps = this.config.personaCaps as Record<string, number | undefined>;
-		const personaCap = caps[personaId] ?? 5;
+		const personaCap = caps[personaId] ?? 2;
 		const personaActive = (this.personaActive.get(personaId) ?? 0);
 		if (personaActive >= personaCap) {
 			reasons.push({ type: "persona_concurrency", detail: `${personaId} limit reached (${personaActive}/${personaCap})` });
 		}
 
-		// 3. Install lock
-		if (needsInstall && this.installLocked) {
-			reasons.push({ type: "install_lock", detail: "dependency installation already in progress" });
-		}
-
-		// 4. Shell concurrency
-		if (needsShell && this.shellActive >= this.config.shellMax) {
-			reasons.push({ type: "shell_concurrency", detail: `shell limit reached (${this.shellActive}/${this.config.shellMax})` });
-		}
-
-		// 5. Write locks — checked last so a failure elsewhere never acquires a lock
-		//    that would then need rolling back.
-		const writeConflicts = this.writeLocks.findConflicts(allowedGlobs);
+		// 3. Write locks
+		const writeConflicts = this.writeLocks.tryLock(taskId, allowedGlobs);
 		if (writeConflicts.length > 0) {
 			reasons.push({
 				type: "write_lock",
@@ -110,12 +97,22 @@ export class ResourceManager {
 			});
 		}
 
+		// 4. Install lock
+		if (needsInstall && this.installLocked) {
+			reasons.push({ type: "install_lock", detail: "dependency installation already in progress" });
+		}
+
+		// 5. Shell concurrency
+		if (needsShell && this.shellActive >= this.config.shellMax) {
+			reasons.push({ type: "shell_concurrency", detail: `shell limit reached (${this.shellActive}/${this.config.shellMax})` });
+		}
+
 		if (reasons.length > 0) {
+			// Roll back write lock attempt
+			if (writeConflicts.length === 0) this.writeLocks.unlock(taskId);
 			return { ok: false, reasons };
 		}
 
-		// All checks passed — commit by acquiring the write lock and counters.
-		this.writeLocks.tryLock(taskId, allowedGlobs);
 		this.globalActive++;
 		this.personaActive.set(personaId, personaActive + 1);
 		if (needsInstall) this.installLocked = true;
