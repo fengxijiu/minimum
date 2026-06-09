@@ -3,7 +3,7 @@ import type {
 	IStreamingClient,
 	IToolHost,
 } from "../loop/MiMoLoop.js";
-import { SnapshotManager } from "../loop/SnapshotManager.js";
+import { AgentGitStore, GitSnapshotManager } from "../git/index.js";
 import {
 	computeTurnCost,
 	currencyFor,
@@ -222,11 +222,13 @@ export class WorkerLoop {
 				: [],
 		);
 
-		// Per-task snapshot scope. Each runTask gets its own SnapshotManager so
+		// Per-task snapshot scope. Each runTask gets its own GitSnapshotManager so
 		// rollbacks from task A can't undo task B's edits when they run in
 		// parallel via the dynamic harness. The instance lives only for the duration
 		// of this call.
-		const snapshots = new SnapshotManager();
+		const _gitStore = await AgentGitStore.resolve(this.projectRoot);
+		const _runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+		const snapshots = new GitSnapshotManager(_gitStore, _runId, input.contract.taskId);
 
 		const messages: ChatMessage[] = [
 			{ role: "system", content: input.systemPrompt },
@@ -479,7 +481,7 @@ export class WorkerLoop {
 		persona: Persona,
 		contract: TaskContract,
 		signal: AbortSignal | undefined,
-		snapshots: SnapshotManager,
+		snapshots: GitSnapshotManager,
 		emit: (e: WorkerEvent) => void,
 		pendingStaticCompileCommands: Set<string>,
 	): Promise<ExecuteOutcome> {
