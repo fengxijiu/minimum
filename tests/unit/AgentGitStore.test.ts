@@ -35,3 +35,44 @@ describe("AgentGitStore.resolve", () => {
     expect(fs.existsSync(store.config.gitDir)).toBe(true);
   });
 });
+
+describe("AgentGitStore.commitTree + setRef + readRef", () => {
+  it("stores a file as a commit and recalls it via ref", async () => {
+    execFileSync("git", ["init"], { cwd: tmpDir });
+    // git needs at least a user identity to commit-tree
+    execFileSync("git", ["config", "user.email", "test@minimum"], { cwd: tmpDir });
+    execFileSync("git", ["config", "user.name", "minimum-test"], { cwd: tmpDir });
+
+    const store = await AgentGitStore.resolve(tmpDir);
+
+    const sha = await store.commitTree(
+      [{ relativePath: "hello.txt", content: "world" }],
+      "test commit",
+    );
+    expect(sha).toMatch(/^[0-9a-f]{40}$/);
+
+    const ref = "refs/minimum/run-test/task-1";
+    await store.setRef(ref, sha);
+    const read = await store.readRef(ref);
+    expect(read).toBe(sha);
+  });
+
+  it("returns null for a missing ref", async () => {
+    execFileSync("git", ["init"], { cwd: tmpDir });
+    const store = await AgentGitStore.resolve(tmpDir);
+    expect(await store.readRef("refs/minimum/does-not-exist")).toBeNull();
+  });
+
+  it("records a null-content file as a deletion marker", async () => {
+    execFileSync("git", ["init"], { cwd: tmpDir });
+    execFileSync("git", ["config", "user.email", "t@t"], { cwd: tmpDir });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: tmpDir });
+    const store = await AgentGitStore.resolve(tmpDir);
+    // Should not throw when content is null (file did not exist)
+    const sha = await store.commitTree(
+      [{ relativePath: "gone.txt", content: null }],
+      "deletion snapshot",
+    );
+    expect(sha).toMatch(/^[0-9a-f]{40}$/);
+  });
+});
