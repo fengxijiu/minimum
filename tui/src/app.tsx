@@ -16,6 +16,7 @@ import {
 import { getAvailableApprovalModes, normalizeApprovalMode } from './approval-modes.js';
 import { LearnCommandService } from '../../dist/learn/LearnCommandService.js';
 import { PlanCommandService } from '../../dist/plans/PlanCommandService.js';
+import { AgentGitStore, RunAuditStore } from '../../dist/git/index.js';
 import { loadLearnedSkillsSync } from '../../dist/skills/LearnedSkillLoader.js';
 import { mockRunner, uiEventToMessages, summarizeTool, summarizeToolResult, describePermissionArgs, buildErrorLines, PermissionQueue, type Runner, type EngineInfo, type McpOverviewInfo, type UiEvent, type UiPlanStatus, type TuiConfirmationGate, type ChatHistoryMessage } from './engine.js';
 import { scanFiles, readBranch, touch } from './files.js';
@@ -735,6 +736,58 @@ export function App({
         }).catch(err => {
           dispatch({ type: 'system.push', text: `Failed to list MCP prompts: ${String(err?.message ?? err)}`, tone: 'warn' });
         });
+        return;
+      }
+      case 'history': {
+        const projectRoot = stateRef.current.path;
+        void (async () => {
+          try {
+            const store = await AgentGitStore.resolve(projectRoot);
+            const audit = new RunAuditStore(store);
+
+            if (o.runId) {
+              // Single-run view.
+              const [checkpoints, tasks] = await Promise.all([
+                audit.listCheckpoints(o.runId),
+                audit.listTaskRefs(o.runId),
+              ]);
+              if (checkpoints.length === 0 && tasks.length === 0) {
+                dispatch({ type: 'system.push', text: `Run "${o.runId}" not found.`, tone: 'warn' });
+                return;
+              }
+              const lines: string[] = [`Run: ${o.runId}`, ''];
+              if (checkpoints.length > 0) {
+                lines.push('Checkpoints:');
+                for (const { phase, sha } of checkpoints) {
+                  lines.push(`  v ${phase.padEnd(28)}  ${sha.slice(0, 8)}`);
+                }
+              }
+              if (tasks.length > 0) {
+                lines.push('');
+                lines.push('Tasks:');
+                for (const { taskId, sha } of tasks) {
+                  lines.push(`  . ${taskId.padEnd(28)}  ${sha.slice(0, 8)}`);
+                }
+              }
+              dispatch({ type: 'system.push', text: lines.join('\n'), tone: 'info' });
+            } else {
+              // All-runs listing.
+              const runs = await audit.listRuns();
+              if (runs.length === 0) {
+                dispatch({ type: 'system.push', text: 'No runs recorded yet. Runs are created automatically when tasks complete.', tone: 'info' });
+                return;
+              }
+              const lines: string[] = [`${runs.length} run(s) recorded:`, ''];
+              for (const runId of runs) {
+                const cps = await audit.listCheckpoints(runId);
+                lines.push(`  ${runId}  (${cps.length} checkpoint(s))`);
+              }
+              dispatch({ type: 'system.push', text: lines.join('\n'), tone: 'info' });
+            }
+          } catch (err) {
+            dispatch({ type: 'system.push', text: `history: ${String((err as Error)?.message ?? err)}`, tone: 'warn' });
+          }
+        })();
         return;
       }
       case 'mcp.prompt': {

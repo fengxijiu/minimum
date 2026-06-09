@@ -113,6 +113,7 @@ export const COMMANDS: TuiCommand[] = [
   { name: 'pet',    desc: 'Toggle liliMiMO mascot',         category: 'view' },
   { name: 'clear',  desc: 'Clear the chat stream',          category: 'view', aliases: ['cls'] },
   { name: 'verbose', desc: 'Toggle verbose mode',           category: 'view', aliases: ['v'] },
+  { name: 'history', desc: 'Browse agent run history', category: 'view', usage: '/history [runId]' },
   // system
   { name: 'permission', desc: 'Set permission mode: read-only | auto-edit | full-auto', category: 'system', usage: '/permission <mode>', aliases: ['approval', 'appr', 'perm'] },
   { name: 'run',    desc: 'Run a shell command (asks first)', category: 'system', usage: '/run <cmd>' },
@@ -253,7 +254,8 @@ export type CommandOutcome =
   | { kind: 'mcp.resources' }
   | { kind: 'mcp.read'; ref: string }
   | { kind: 'mcp.prompts' }
-  | { kind: 'mcp.prompt'; name: string; argsText?: string };
+  | { kind: 'mcp.prompt'; name: string; argsText?: string }
+  | { kind: 'history'; runId?: string };
 
 export type LearnCommandMode = 'create' | 'preview' | 'apply' | 'reject' | 'status';
 
@@ -549,6 +551,9 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
 
     case 'verbose':
       return { kind: 'event', event: { type: 'verbose.toggle' } };
+
+    case 'history':
+      return { kind: 'history', runId: args[0] };
 
     case 'mcp': {
       if (state.mcpLoading) {
