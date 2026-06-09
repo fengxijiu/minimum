@@ -14,3 +14,15 @@ export interface StoreConfig {
   /** Absolute path to the project root used as the work-tree. */
   workTree: string;
 }
+
+export interface CommitOpts {
+  /** SHA of the parent commit. Omit for an initial (root) commit. */
+  parent?: string;
+  /**
+   * Key-value pairs appended as git trailers after a blank line, e.g.
+   *   `{ "Minimum-Run": "run_123", "Minimum-Task": "t-1" }`
+   * becomes:
+   *   `Minimum-Run: run_123\nMinimum-Task: t-1`
+   */
+  trailers?: Record<string, string>;
+}

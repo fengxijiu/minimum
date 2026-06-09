@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import type { StoreConfig } from "./types.js";
+import type { CommitOpts, StoreConfig } from "./types.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -108,7 +108,7 @@ export class AgentGitStore {
   async commitTree(
     files: import("./types.js").FileChange[],
     message: string,
-    parent?: string,
+    opts?: CommitOpts,
   ): Promise<string> {
     const tmpIdx = path.join(
       os.tmpdir(),
@@ -140,10 +140,26 @@ export class AgentGitStore {
 
       const treeSha = await this.git(["write-tree"], { env: idxEnv });
 
-      const commitArgs = ["commit-tree", treeSha, "-m", message];
-      if (parent) commitArgs.push("-p", parent);
+      // Build message with optional trailers.
+      let fullMessage = message;
+      if (opts?.trailers && Object.keys(opts.trailers).length > 0) {
+        fullMessage +=
+          "\n\n" +
+          Object.entries(opts.trailers)
+            .map(([k, v]) => `${k}: ${v}`)
+            .join("\n");
+      }
 
-      const commitSha = await this.git(commitArgs);
+      const commitArgs = ["commit-tree", treeSha, "-m", fullMessage];
+      if (opts?.parent) commitArgs.push("-p", opts.parent);
+
+      const identityEnv: NodeJS.ProcessEnv = {
+        GIT_AUTHOR_NAME: "minimum-agent",
+        GIT_AUTHOR_EMAIL: "agent@minimum.local",
+        GIT_COMMITTER_NAME: "minimum-agent",
+        GIT_COMMITTER_EMAIL: "agent@minimum.local",
+      };
+      const commitSha = await this.git(commitArgs, { env: identityEnv });
       return commitSha;
     } finally {
       await fs.unlink(tmpIdx).catch(() => {});
@@ -173,6 +189,31 @@ export class AgentGitStore {
       return await this.git(["show", `${commitSha}:${relativePath}`], { raw: true });
     } catch {
       return null;
+    }
+  }
+
+  async forEachRef(
+    pattern: string,
+  ): Promise<Array<{ ref: string; sha: string }>> {
+    try {
+      const output = await this.git([
+        "for-each-ref",
+        "--format=%(refname) %(objectname)",
+        pattern,
+      ]);
+      if (!output) return [];
+      return output
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => {
+          const spaceIdx = line.indexOf(" ");
+          return {
+            ref: line.slice(0, spaceIdx),
+            sha: line.slice(spaceIdx + 1),
+          };
+        });
+    } catch {
+      return [];
     }
   }
 

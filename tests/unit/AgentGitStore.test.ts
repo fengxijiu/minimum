@@ -86,3 +86,51 @@ describe("AgentGitStore.commitTree + setRef + readRef", () => {
     expect(sha).toMatch(/^[0-9a-f]{40}$/);
   });
 });
+
+describe("AgentGitStore.commitTree trailers + forEachRef", () => {
+  it("embeds trailers in the commit message", async () => {
+    execFileSync("git", ["init"], { cwd: tmpDir });
+    execFileSync("git", ["config", "user.email", "t@t"], { cwd: tmpDir });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: tmpDir });
+    const store = await AgentGitStore.resolve(tmpDir);
+
+    const sha = await store.commitTree(
+      [{ relativePath: "x.txt", content: "hi" }],
+      "feat: test",
+      { trailers: { "Minimum-Run": "run-1", "Minimum-Task": "task-1" } },
+    );
+    const msg: string = execFileSync(
+      "git",
+      ["log", "--format=%B", "-1", sha],
+      { cwd: tmpDir },
+    ).toString();
+    expect(msg).toContain("Minimum-Run: run-1");
+    expect(msg).toContain("Minimum-Task: task-1");
+  });
+
+  it("forEachRef lists refs matching a pattern", async () => {
+    execFileSync("git", ["init"], { cwd: tmpDir });
+    execFileSync("git", ["config", "user.email", "t@t"], { cwd: tmpDir });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: tmpDir });
+    const store = await AgentGitStore.resolve(tmpDir);
+
+    const sha = await store.commitTree(
+      [{ relativePath: "y.txt", content: "yo" }],
+      "test",
+      {},
+    );
+    await store.setRef("refs/minimum/run-42/checkpoint/done", sha);
+
+    const refs = await store.forEachRef("refs/minimum/**/checkpoint/*");
+    expect(refs).toHaveLength(1);
+    expect(refs[0].ref).toBe("refs/minimum/run-42/checkpoint/done");
+    expect(refs[0].sha).toBe(sha);
+  });
+
+  it("forEachRef returns empty array when no refs match", async () => {
+    execFileSync("git", ["init"], { cwd: tmpDir });
+    const store = await AgentGitStore.resolve(tmpDir);
+    const result = await store.forEachRef("refs/minimum/*/checkpoint/*");
+    expect(result).toEqual([]);
+  });
+});
