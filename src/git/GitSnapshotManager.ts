@@ -4,25 +4,28 @@ import type { AgentGitStore } from "./AgentGitStore.js";
 import type { RunId, TaskId } from "./types.js";
 
 interface SnapEntry {
-  /** Blob sha in the git object store, or null when the file didn't exist. */
-  blobSha: string | null;
+  /**
+   * Commit SHA under refs/minimum/<runId>/task/<taskId>, or null when
+   * the file did not exist before the snapshot was taken.
+   */
+  commitSha: string | null;
+  /** Path relative to the store work-tree (forward slashes). */
+  relativePath: string;
 }
 
 /**
  * Drop-in replacement for `SnapshotManager`.
  *
- * Persists pre-edit file content as git blobs so rollbacks survive process
- * restarts. The external interface (snapshot / restore / reset) is
- * identical to the old in-memory manager so call-sites need no changes.
+ * Each `snapshot()` call creates a real git commit under
+ * `refs/minimum/<runId>/task/<taskId>` so snapshots survive process restarts
+ * and can be browsed with `RunAuditStore`. The external interface
+ * (snapshot / restore / reset) is identical to the old in-memory manager.
  */
 export class GitSnapshotManager {
   private entries = new Map<string, SnapEntry>(); // key = absolute path
 
   constructor(
     private readonly store: AgentGitStore,
-    // Reserved for Phase 2 (audit refs): will namespace snapshots under
-    // refs/minimum/<runId>/<taskId> to enable crash-recovery reconstruction.
-    // Not used in Phase 1's blob-only storage.
     private readonly runId: RunId,
     private readonly taskId: TaskId,
   ) {}
@@ -33,10 +36,19 @@ export class GitSnapshotManager {
       : path.resolve(rawPath);
   }
 
+  private get taskRef(): string {
+    return `refs/minimum/${this.runId}/task/${this.taskId}`;
+  }
+
   /** Capture file state before an edit. No-op if already snapshotted. */
   async snapshot(rawPath: string, workingDirectory?: string): Promise<void> {
     const abs = this.resolvePath(rawPath, workingDirectory);
     if (this.entries.has(abs)) return;
+
+    // Compute path relative to the work-tree (forward slashes for git).
+    const relativePath = path
+      .relative(this.store.config.workTree, abs)
+      .replace(/\\/g, "/");
 
     let content: string | null;
     try {
@@ -46,13 +58,25 @@ export class GitSnapshotManager {
     }
 
     if (content === null) {
-      this.entries.set(abs, { blobSha: null });
+      this.entries.set(abs, { commitSha: null, relativePath });
       return;
     }
 
-    // Store blob in git object store.
-    const blobSha = await this.store.storeBlob(content);
-    this.entries.set(abs, { blobSha });
+    // Chain commits: read current tip as parent so the ref grows linearly.
+    const parent = (await this.store.readRef(this.taskRef)) ?? undefined;
+    const commitSha = await this.store.commitTree(
+      [{ relativePath, content }],
+      `snapshot: ${relativePath}`,
+      {
+        parent,
+        trailers: {
+          "Minimum-Run": this.runId,
+          "Minimum-Task": this.taskId,
+        },
+      },
+    );
+    await this.store.setRef(this.taskRef, commitSha);
+    this.entries.set(abs, { commitSha, relativePath });
   }
 
   /** Restore a file to its snapshotted state. Returns false if not snapshotted. */
@@ -61,11 +85,14 @@ export class GitSnapshotManager {
     const entry = this.entries.get(abs);
     if (entry === undefined) return false;
 
-    if (entry.blobSha === null) {
+    if (entry.commitSha === null) {
       // File did not exist before — delete it.
       await fs.unlink(abs).catch(() => {});
     } else {
-      const content = await this.store.readBlob(entry.blobSha);
+      const content = await this.store.readFileAtCommit(
+        entry.commitSha,
+        entry.relativePath,
+      );
       if (content === null) return false;
       await fs.writeFile(abs, content, "utf-8");
     }

@@ -70,5 +70,13 @@ describe("GitSnapshotManager.snapshot", () => {
 
     // Must restore to v1, not v2.
     expect(fs.readFileSync(file, "utf-8")).toBe("v1");
+
+    // Verify a task ref was written to the git store.
+    const refs: string = execFileSync(
+      "git",
+      ["for-each-ref", "--format=%(refname)", "refs/minimum/run-1/"],
+      { cwd: tmpDir },
+    ).toString().trim();
+    expect(refs).toContain("refs/minimum/run-1/task/task-3");
   });
 });
