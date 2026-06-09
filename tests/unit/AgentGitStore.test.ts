@@ -55,6 +55,16 @@ describe("AgentGitStore.commitTree + setRef + readRef", () => {
     await store.setRef(ref, sha);
     const read = await store.readRef(ref);
     expect(read).toBe(sha);
+
+    // round-trip: read file content back from the commit
+    const content = await store.readFileAtCommit(sha, "hello.txt");
+    expect(content).toBe("world");
+
+    // blob round-trip
+    const blobSha = await store.storeBlob("blob content");
+    expect(blobSha).toMatch(/^[0-9a-f]{40}$/);
+    const blob = await store.readBlob(blobSha);
+    expect(blob).toBe("blob content");
   });
 
   it("returns null for a missing ref", async () => {

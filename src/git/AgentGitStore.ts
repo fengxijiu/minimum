@@ -75,6 +75,9 @@ export class AgentGitStore {
         child.stdout.on("data", (d: Buffer) => chunks.push(d));
         child.stderr.on("data", (d: Buffer) => errChunks.push(d));
         child.on("error", reject);
+        child.stdin.on("error", () => {
+          // Swallow EPIPE — close event fires with nonzero exit, handled below
+        });
         child.on("close", (code) => {
           if (code !== 0) {
             const msg = Buffer.concat(errChunks).toString();
@@ -174,12 +177,12 @@ export class AgentGitStore {
   }
 
   /** Stores a blob in the object store, returns its sha. */
-  async git_hashObject(content: string): Promise<string> {
+  async storeBlob(content: string): Promise<string> {
     return this.git(["hash-object", "-w", "--stdin"], { input: content });
   }
 
   /** Retrieves blob content by sha; returns null if not found. */
-  async git_catBlob(sha: string): Promise<string | null> {
+  async readBlob(sha: string): Promise<string | null> {
     try {
       return await this.git(["cat-file", "blob", sha], { raw: true });
     } catch {
