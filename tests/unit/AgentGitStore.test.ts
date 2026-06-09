@@ -104,7 +104,7 @@ describe("AgentGitStore.commitTree trailers + forEachRef", () => {
       ["log", "--format=%B", "-1", sha],
       { cwd: tmpDir },
     ).toString();
-    expect(msg).toContain("Minimum-Run: run-1");
+    expect(msg).toContain("feat: test\n\nMinimum-Run: run-1");
     expect(msg).toContain("Minimum-Task: task-1");
   });
 

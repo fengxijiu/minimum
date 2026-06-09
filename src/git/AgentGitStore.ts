@@ -146,7 +146,8 @@ export class AgentGitStore {
         fullMessage +=
           "\n\n" +
           Object.entries(opts.trailers)
-            .map(([k, v]) => `${k}: ${v}`)
+            // Sanitize values: newlines would corrupt the trailer block.
+            .map(([k, v]) => `${k}: ${v.replace(/[\r\n]/g, " ")}`)
             .join("\n");
       }
 
