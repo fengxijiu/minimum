@@ -424,7 +424,7 @@ export function createWorkerExecutor(
 			contract: TaskContract,
 			_filteredTools: string[],
 			repair?: SchemaRepairRequest,
-			runOpts?: { mode?: WorkerRunMode },
+			runOpts?: { mode?: WorkerRunMode; signal?: AbortSignal },
 		): Promise<WorkerExecutionResult> => {
 			const planMode = runOpts?.mode === "plan";
 			const persona = getPersona(contract.personaId);
@@ -506,6 +506,7 @@ export function createWorkerExecutor(
 						executionDepth: opts.routePolicy.executionDepthByPersona[contract.personaId],
 					}),
 					...(planMode && { readOnly: true }),
+					...(runOpts?.signal !== undefined && { signal: runOpts.signal }),
 					onEvent: opts.onWorkerEvent
 						? (ev) => opts.onWorkerEvent!(contract, ev)
 						: undefined,

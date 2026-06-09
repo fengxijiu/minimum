@@ -258,6 +258,7 @@ export interface PipelineOptions {
 	/** Max plan REVISE rounds before the task is blocked. Defaults to 2. */
 	maxPlanRevisions?: number;
 	retryBackoff?: TaskRunnerOptions["retryBackoff"];
+	signal?: AbortSignal;
 }
 
 export interface PipelineResult {
@@ -298,6 +299,8 @@ export async function runPipeline(
 	const refreshScheduler = new MemoryIndexRefreshScheduler();
 	let maxMissionRepairLoops = opts.maxMissionRepairLoops ?? DEFAULT_MAX_MISSION_REPAIR_LOOPS;
 	let statusReason: PipelineStatusReason = "complete";
+
+	if (opts.signal?.aborted) return fail(emit, "W0", new Error("Aborted"));
 
 	// ── W0: load memory, compile coarse DAG ──────────────────────────────────
 	emit({ type: "phase_start", phase: "W0", label: stageName("W0") });
@@ -342,6 +345,8 @@ export async function runPipeline(
 	}
 	emit({ type: "dag_compiled", epicId: dag.epicId, taskCount });
 
+	if (opts.signal?.aborted) return fail(emit, "W0", new Error("Aborted"));
+
 	const baseInputs: TaskInputs = { userGoal: userRequest, artifacts: [], constraints: [] };
 
 	const initialPass = await runDagPass({
@@ -382,6 +387,8 @@ export async function runPipeline(
 		testsPassed,
 		userRequestedFullCheck: opts.forceMissionCheck ?? false,
 	});
+
+	if (opts.signal?.aborted) return fail(emit, "W3.5", new Error("Aborted"));
 
 	if (missionMode === "skip") {
 		emit({ type: "phase_start", phase: "W3.5", label: stageName("W3.5") });
@@ -582,6 +589,7 @@ export async function runPipeline(
 	} // end missionMode !== "skip"
 
 	// ── W4: finalize + memory governance ──────────────────────────────────────
+	if (opts.signal?.aborted) return fail(emit, "W4", new Error("Aborted"));
 	await refreshScheduler.flushIfDirty(opts.projectRoot);
 	emit({ type: "phase_start", phase: "W4", label: stageName("W4") });
 	const candidates = await listCandidates(opts.projectRoot);
@@ -1892,6 +1900,7 @@ async function runDag(
 		refreshScheduler,
 		retryBackoff: opts.retryBackoff,
 		...(opts.routePolicy && { routePolicy: opts.routePolicy }),
+		...(opts.signal !== undefined && { signal: opts.signal }),
 		onEvent: (event) => {
 			switch (event.type) {
 				case "task_started":

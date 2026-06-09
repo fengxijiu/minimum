@@ -143,6 +143,7 @@ export class PipelineBridge {
 	}
 
 	async *send(userInput: string): AsyncGenerator<UiEvent> {
+		const ac = new AbortController();
 		const parsed = parseRouteHintFromInput(userInput);
 		const cleanUserInput = parsed.cleanInput || userInput;
 		const routeHint = parsed.routeHint ?? this.opts.routeHint;
@@ -429,6 +430,7 @@ export class PipelineBridge {
 			onEvent: push,
 			choiceGate: this.opts.choiceGate,
 			planMode: this.planGateMode,
+			signal: ac.signal,
 			...(this.opts.maxPlanRevisions !== undefined && { maxPlanRevisions: this.opts.maxPlanRevisions }),
 			getDeliveryWrites: () =>
 				[...writtenByTask.entries()]
@@ -467,6 +469,7 @@ export class PipelineBridge {
 			await finished;
 			while (queue.length) yield queue.shift()!;
 		} finally {
+			ac.abort();
 			restorePrompter?.();
 			// Drop any approvals that were still pending — the user already
 			// moved on; better to break the dangling promise than to leave it

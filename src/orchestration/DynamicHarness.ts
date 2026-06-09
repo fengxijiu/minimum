@@ -264,6 +264,11 @@ export class DynamicHarness implements DagHarness {
 		drainQueue();
 
 		while (running.activeCount > 0 || !queue.isEmpty) {
+			if (options?.signal?.aborted) {
+				running.cancelAll();
+				break;
+			}
+
 			if (running.activeCount === 0 && queue.isEmpty) {
 				emitIdleIfIncomplete();
 				break;
