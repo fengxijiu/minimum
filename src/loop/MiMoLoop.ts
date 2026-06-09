@@ -32,7 +32,7 @@ import { countMessagesTokens } from "../utils/token-counter.js";
 import { healMessages } from "./healing.js";
 import { buildAssistantMessage, buildSyntheticAssistantMessage } from "./messages.js";
 import { ReadTracker, isEditTool, isReadTool } from "./ReadTracker.js";
-import { SnapshotManager } from "./SnapshotManager.js";
+import { AgentGitStore, GitSnapshotManager } from "../git/index.js";
 import type { ConfirmationGate, ChoicePayload } from "../tools/choice/ConfirmationGate.js";
 
 /** Minimal interface for session persistence — avoids importing SessionManager directly. */
@@ -242,7 +242,7 @@ export class MiMoLoop {
 	private stormBreaker: StormBreaker;
 	private capacity: CapacityController;
 	private readTracker: ReadTracker;
-	private snapshotManager: SnapshotManager;
+	private snapshotManager!: GitSnapshotManager;
 	private steerQueue: string[] = [];
 	/** True when a steer was consumed this turn (avoids double-submit). */
 	private steerConsumed = false;
@@ -288,7 +288,7 @@ export class MiMoLoop {
 		);
 		this.capacity = new CapacityController(config.capacity);
 		this.readTracker = new ReadTracker();
-		this.snapshotManager = new SnapshotManager();
+		// snapshotManager is lazily initialized in run() using AgentGitStore
 	}
 
 	/** Seed the loop with a prior conversation history (e.g. after /load). */
@@ -300,6 +300,11 @@ export class MiMoLoop {
 	 * 主执行循环 — 参考 Reasonix 的 step()
 	 */
 	async *run(userInput: string): AsyncGenerator<LoopEvent> {
+		if (!this.snapshotManager) {
+			const _gitStore = await AgentGitStore.resolve(this.config.workingDirectory);
+			const _runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+			this.snapshotManager = new GitSnapshotManager(_gitStore, _runId, "loop");
+		}
 		this.abortController = new AbortController();
 		this.state.running = true;
 		this.state.startTime = Date.now();
