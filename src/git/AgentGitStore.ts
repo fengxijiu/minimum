@@ -41,11 +41,11 @@ export class AgentGitStore {
       const gitDir = path.join(shadowBase, ".git");
       await fs.mkdir(shadowBase, { recursive: true });
       try {
-        await execFileAsync("git", ["init", "--separate-git-dir", gitDir, abs], {
-          cwd: abs,
-        });
-      } catch {
-        // Already initialised — ignore.
+        await execFileAsync("git", ["init", "--bare", gitDir], {});
+      } catch (err) {
+        // Only ignore the error if gitDir was created anyway (concurrent init race).
+        const exists = await fs.stat(gitDir).then(() => true).catch(() => false);
+        if (!exists) throw err;
       }
       return new AgentGitStore({ gitDir, workTree: abs });
     }
@@ -54,7 +54,7 @@ export class AgentGitStore {
   /** Run a git command with `GIT_DIR` and `GIT_WORK_TREE` set. */
   private async git(
     args: string[],
-    opts?: { env?: NodeJS.ProcessEnv; input?: string },
+    opts?: { env?: NodeJS.ProcessEnv; input?: string; raw?: boolean },
   ): Promise<string> {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
@@ -70,6 +70,6 @@ export class AgentGitStore {
         ? { input: opts.input } as object
         : {}),
     });
-    return stdout.trim();
+    return opts?.raw ? stdout : stdout.trim();
   }
 }

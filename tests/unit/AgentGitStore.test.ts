@@ -13,6 +13,9 @@ beforeEach(() => {
 
 afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
+  const slug = tmpDir.replace(/[:\\/]/g, "-").replace(/^-+/, "");
+  const shadowBase = path.join(os.homedir(), ".minimum", "shadow", slug);
+  fs.rmSync(shadowBase, { recursive: true, force: true });
 });
 
 describe("AgentGitStore.resolve", () => {
@@ -25,8 +28,10 @@ describe("AgentGitStore.resolve", () => {
 
   it("creates a shadow repo when not inside a git repo", async () => {
     const store = await AgentGitStore.resolve(tmpDir);
-    expect(store.config.gitDir).toContain(".minimum");
-    expect(store.config.gitDir).toContain("shadow");
+    const slug = tmpDir.replace(/[:\\/]/g, "-").replace(/^-+/, "");
+    const expected = path.join(os.homedir(), ".minimum", "shadow", slug, ".git");
+    expect(store.config.gitDir).toBe(expected);
+    expect(store.config.workTree).toBe(tmpDir);
     expect(fs.existsSync(store.config.gitDir)).toBe(true);
   });
 });
