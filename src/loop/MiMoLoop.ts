@@ -301,9 +301,9 @@ export class MiMoLoop {
 	 */
 	async *run(userInput: string): AsyncGenerator<LoopEvent> {
 		if (!this.snapshotManager) {
-			const _gitStore = await AgentGitStore.resolve(this.config.workingDirectory);
-			const _runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-			this.snapshotManager = new GitSnapshotManager(_gitStore, _runId, "loop");
+			const gitStore = await AgentGitStore.resolve(this.config.workingDirectory);
+			const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+			this.snapshotManager = new GitSnapshotManager(gitStore, runId, "loop");
 		}
 		this.abortController = new AbortController();
 		this.state.running = true;

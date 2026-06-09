@@ -20,6 +20,9 @@ export class GitSnapshotManager {
 
   constructor(
     private readonly store: AgentGitStore,
+    // Reserved for Phase 2 (audit refs): will namespace snapshots under
+    // refs/minimum/<runId>/<taskId> to enable crash-recovery reconstruction.
+    // Not used in Phase 1's blob-only storage.
     private readonly runId: RunId,
     private readonly taskId: TaskId,
   ) {}

@@ -226,9 +226,9 @@ export class WorkerLoop {
 		// rollbacks from task A can't undo task B's edits when they run in
 		// parallel via the dynamic harness. The instance lives only for the duration
 		// of this call.
-		const _gitStore = await AgentGitStore.resolve(this.projectRoot);
-		const _runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-		const snapshots = new GitSnapshotManager(_gitStore, _runId, input.contract.taskId);
+		const gitStore = await AgentGitStore.resolve(this.projectRoot);
+		const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+		const snapshots = new GitSnapshotManager(gitStore, runId, input.contract.taskId);
 
 		const messages: ChatMessage[] = [
 			{ role: "system", content: input.systemPrompt },

@@ -19,7 +19,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
-  const slug = tmpDir.replace(/[:\\/]/g, "-").replace(/^-+/, "");
+  const slug = tmpDir.replace(/[/\\:]/g, "-").replace(/^-+/, "");
   const shadowBase = path.join(os.homedir(), ".minimum", "shadow", slug);
   fs.rmSync(shadowBase, { recursive: true, force: true });
 });

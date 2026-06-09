@@ -9,7 +9,7 @@ const execFileAsync = promisify(execFile);
 
 /** Replaces `:`, `\`, `/` with `-` and strips leading dashes. */
 function slugifyPath(p: string): string {
-  return p.replace(/[:\\/]/g, "-").replace(/^-+/, "");
+  return p.replace(/[/\\:]/g, "-").replace(/^-+/, "");
 }
 
 export class AgentGitStore {
