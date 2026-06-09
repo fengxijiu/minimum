@@ -76,7 +76,7 @@ export interface WorkerExecutor {
 		contract: TaskContract,
 		filteredTools: string[],
 		repair?: SchemaRepairRequest,
-		runOpts?: { mode?: WorkerRunMode },
+		runOpts?: { mode?: WorkerRunMode; signal?: AbortSignal },
 	): Promise<string | WorkerExecutionResult>;
 }
 
@@ -85,6 +85,7 @@ export interface TaskRunnerOptions {
 	executor: WorkerExecutor;
 	refreshScheduler?: MemoryIndexRefreshScheduler;
 	retryBackoff?: Partial<RetryBackoffOptions>;
+	signal?: AbortSignal;
 }
 
 interface RetryBackoffOptions {
@@ -156,10 +157,22 @@ export async function runTask(
 	const persona = getPersona(contract.personaId);
 	const filteredTools = filterAllowedTools(persona.toolAllowlist, persona);
 
+	if (opts.signal?.aborted) {
+		return {
+			...base,
+			status: "skipped",
+			report: "<status>skipped</status><summary>Aborted before execution</summary>",
+			memoryCandidateBody: undefined,
+			errors: ["aborted"],
+			skipReason: "aborted",
+			durationMs: Date.now() - start,
+		};
+	}
+
 	let execution: WorkerExecutionResult;
 	try {
 		execution = normalizeWorkerExecution(
-			await opts.executor.run(contract, filteredTools),
+			await opts.executor.run(contract, filteredTools, undefined, { signal: opts.signal }),
 		);
 	} catch (err: unknown) {
 		return {
@@ -198,7 +211,7 @@ export async function runTask(
 			);
 		try {
 			execution = normalizeWorkerExecution(
-				await opts.executor.run(contract, filteredTools, repair),
+				await opts.executor.run(contract, filteredTools, repair, { signal: opts.signal }),
 			);
 			rawOutput = execution.text;
 			reportInspection = inspectXmlBlock(rawOutput, "task_report");
@@ -264,12 +277,14 @@ export async function runTaskWithRetry(
 	let lastResult: TaskResult | undefined;
 
 	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+		if (opts.signal?.aborted) break;
 		const result = await runTask(contract, opts);
 		lastResult = result;
 		if (!shouldRetryTaskResult(result)) {
 			return attempt === 1 ? result : { ...result, retryCount: attempt - 1 };
 		}
 		if (attempt < maxAttempts) {
+			if (opts.signal?.aborted) break;
 			await waitForRetryBackoff(attempt, opts.retryBackoff);
 			continue;
 		}

@@ -142,9 +142,10 @@ export class MiMoClient {
 
 		// Retry loop: only the initial HTTP handshake is retried, not streaming.
 		let response!: Response;
-		for (let attempt = 0; attempt < 4; attempt++) {
+		for (let attempt = 0; attempt < 6; attempt++) {
 			if (attempt > 0) {
-				const delay = Math.min(1_000 * 2 ** (attempt - 1), 16_000);
+				const cap = Math.min(2_000 * 2 ** (attempt - 1), 32_000);
+				const delay = Math.round(cap * Math.random());
 				await new Promise<void>((r) => setTimeout(r, delay));
 			}
 			const r = await fetch(`${this.baseUrl}/chat/completions`, {
@@ -161,7 +162,7 @@ export class MiMoClient {
 				response = r;
 				break;
 			}
-			if (!RETRYABLE.has(r.status) || attempt >= 3) {
+			if (!RETRYABLE.has(r.status) || attempt >= 5) {
 				const error = await r.text();
 				throw new MiMoApiError(r.status, error);
 			}

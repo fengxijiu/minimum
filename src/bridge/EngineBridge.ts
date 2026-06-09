@@ -89,13 +89,13 @@ export type UiEvent =
 export function parsePlanFromTodoResult(content: string): UiPlanStep[] | null {
 	const steps: UiPlanStep[] = [];
 	for (const raw of content.split("\n")) {
-		const m = raw.match(/^\[([ ~x])\]\s+(.+)$/);
+		const m = raw.match(/^\[([ >x])\]\s+(.+)$/);
 		if (!m) continue;
 		const mark = m[1];
 		const label = m[2];
 		if (!label) continue;
 		const status: UiPlanStatus =
-			mark === " " ? "pending" : mark === "~" ? "in_progress" : "completed";
+			mark === " " ? "pending" : mark === ">" ? "in_progress" : "completed";
 		steps.push({ label, status });
 	}
 	return steps.length ? steps : null;

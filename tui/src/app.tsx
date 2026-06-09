@@ -900,7 +900,7 @@ export function App({
             iter.next().then((r): Next => ({ aborted: false, result: r as IteratorResult<UiEvent> })),
             abortPromise,
           ]);
-          if (raced.aborted) break;
+          if (raced.aborted) { void iter.return?.(); break; }
           const result = raced.result;
           if (result.done) break;
           const ev = result.value;
@@ -936,6 +936,7 @@ export function App({
                   `${ev.name} called ${stormCount}× with identical args.`,
                   'The model may be stuck in a loop. Try rephrasing your request.',
                 ], hint: '/clear to reset · u to undo last edit' });
+                void iter.return?.();
                 break;
               }
             }

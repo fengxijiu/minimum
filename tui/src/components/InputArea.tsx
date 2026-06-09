@@ -130,7 +130,7 @@ export const InputArea = React.memo(function InputArea({
   const [histIdx, setHistIdx] = useState(-1);
   const [savedDraft, setSavedDraft] = useState('');
   const [stash, setStash] = useState('');
-  const [history] = useState<string[]>(() => loadHistory().map(h => h.text));
+  const historyRef = useRef<string[]>(loadHistory().map(h => h.text));
   const prevPermPendingRef = useRef(false);
   const prevChoicePendingRef = useRef(false);
   useEffect(() => {
@@ -141,7 +141,6 @@ export const InputArea = React.memo(function InputArea({
     if (!prevChoicePendingRef.current && isChoiceNow) setChoiceSel(0);
     prevChoicePendingRef.current = isChoiceNow;
   }, [pending]);
-  const promptHistoryRef = useRef<string[]>([]);
   const historyIdxRef = useRef(-1);
   const inputRef = useRef('');
   // Timestamp of the last Ctrl+C press; a second press within DOUBLE_CTRLC_MS
@@ -188,23 +187,24 @@ export const InputArea = React.memo(function InputArea({
   }, [fileItems, clampedSel, setInput]);
 
   const stepHistory = useCallback((dir: -1 | 1): boolean => {
-    if (!history.length) return false;
+    const hist = historyRef.current;
+    if (!hist.length) return false;
     setHistIdx(prev => {
       if (prev === -1) {
         if (dir === 1) return -1;
         setSavedDraft(inputRef.current);
-        const next = history.length - 1;
-        setInput(history[next]!);
+        const next = hist.length - 1;
+        setInput(hist[next]!);
         return next;
       }
       const next = prev + dir;
-      if (next < 0) { setInput(history[0]!); return 0; }
-      if (next >= history.length) { setInput(savedDraft); return -1; }
-      setInput(history[next]!);
+      if (next < 0) { setInput(hist[0]!); return 0; }
+      if (next >= hist.length) { setInput(savedDraft); return -1; }
+      setInput(hist[next]!);
       return next;
     });
     return true;
-  }, [history, savedDraft, setInput]);
+  }, [savedDraft, setInput]);
 
   const handleChange = useCallback((v: string) => {
     if (v === '?' && inputRef.current === '') { dispatch({ type: 'help.toggle' }); return; }
@@ -242,7 +242,7 @@ export const InputArea = React.memo(function InputArea({
     const trimmed = text.trim();
     if (!trimmed) return;
 
-    promptHistoryRef.current.push(trimmed);
+    historyRef.current = [...historyRef.current, trimmed];
     historyIdxRef.current = -1;
     setHistIdx(-1);
     setSavedDraft('');
@@ -313,7 +313,7 @@ export const InputArea = React.memo(function InputArea({
     }
 
     if (key.ctrl && input === 'p') {
-      const hist = promptHistoryRef.current;
+      const hist = historyRef.current;
       if (!hist.length) return;
       const idx = Math.min(historyIdxRef.current + 1, hist.length - 1);
       historyIdxRef.current = idx;
@@ -321,9 +321,10 @@ export const InputArea = React.memo(function InputArea({
       return;
     }
     if (key.ctrl && input === 'n') {
+      const hist = historyRef.current;
       const idx = Math.max(historyIdxRef.current - 1, -1);
       historyIdxRef.current = idx;
-      setInput(idx >= 0 ? promptHistoryRef.current[idx]! : '');
+      setInput(idx >= 0 ? hist[idx]! : '');
       return;
     }
 
