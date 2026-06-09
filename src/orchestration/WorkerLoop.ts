@@ -3,7 +3,7 @@ import type {
 	IStreamingClient,
 	IToolHost,
 } from "../loop/MiMoLoop.js";
-import { AgentGitStore, GitSnapshotManager } from "../git/index.js";
+import { AgentGitStore, GitSnapshotManager, RunAuditStore } from "../git/index.js";
 import {
 	computeTurnCost,
 	currencyFor,
@@ -366,6 +366,12 @@ export class WorkerLoop {
 			finishReason = "step_limit";
 		}
 		emit({ type: "usage", usage });
+
+		// Fire-and-forget: record task-done checkpoint for run history.
+		void new RunAuditStore(gitStore)
+			.setCheckpoint(runId, `task/${input.contract.taskId}/done`)
+			.catch(() => {}); // audit failure must never affect task outcome
+
 		return {
 			text: finalContent,
 			usage,
