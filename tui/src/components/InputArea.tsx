@@ -133,26 +133,41 @@ export const InputArea = React.memo(function InputArea({
   const [history] = useState<string[]>(() => loadHistory().map(h => h.text));
   const prevPermPendingRef = useRef(false);
   const prevChoicePendingRef = useRef(false);
+  const choiceDraftRef = useRef<string | null>(null);
+  const promptHistoryRef = useRef<string[]>([]);
+  const historyIdxRef = useRef(-1);
+  const inputRef = useRef('');
+  const setInput = useCallback((v: string) => {
+    inputRef.current = v;
+    setInputValue(v);
+  }, []);
   useEffect(() => {
     const isPermNow = pending === 'permission';
     if (!prevPermPendingRef.current && isPermNow) setPermSel(0);
     prevPermPendingRef.current = isPermNow;
     const isChoiceNow = pending === 'choice';
-    if (!prevChoicePendingRef.current && isChoiceNow) setChoiceSel(0);
+    if (!prevChoicePendingRef.current && isChoiceNow) {
+      setChoiceSel(0);
+      // CHANGED: choice gate must preempt any draft so the confirmation UI is visible.
+      if (inputRef.current) {
+        choiceDraftRef.current = inputRef.current;
+        setInput('');
+      } else {
+        choiceDraftRef.current = null;
+      }
+    }
+    // CHANGED: restore the pre-choice draft after the gate resolves if the user
+    // has not already typed a new input.
+    if (prevChoicePendingRef.current && !isChoiceNow && choiceDraftRef.current !== null && !inputRef.current) {
+      setInput(choiceDraftRef.current);
+      choiceDraftRef.current = null;
+    }
     prevChoicePendingRef.current = isChoiceNow;
-  }, [pending]);
-  const promptHistoryRef = useRef<string[]>([]);
-  const historyIdxRef = useRef(-1);
-  const inputRef = useRef('');
+  }, [pending, setInput]);
   // Timestamp of the last Ctrl+C press; a second press within DOUBLE_CTRLC_MS
   // is treated as confirmation to abort the in-flight turn. Process exit on
   // Ctrl+C is blocked at the Ink layer (exitOnCtrlC: false in cli.tsx).
   const lastCtrlCRef = useRef(0);
-
-  const setInput = useCallback((v: string) => {
-    inputRef.current = v;
-    setInputValue(v);
-  }, []);
 
   // Derive overlay from ref for zero-lag overlay detection
   const liveInput = inputValue; // use state for memoization stability
@@ -391,7 +406,7 @@ export const InputArea = React.memo(function InputArea({
       {!helpOpen && overlay === 'cmd' ? <CommandPalette items={cmdItems} selected={clampedSel} /> : null}
       {!helpOpen && overlay === 'file' ? <FilePicker items={fileItems} selected={clampedSel} /> : null}
       {!helpOpen && pending === 'permission' && !inputValue ? <PermissionChoiceBar selected={permSel} /> : null}
-      {!helpOpen && pending === 'choice' && choiceRequest && !inputValue ? <ChoiceBar request={choiceRequest} selected={choiceSel} /> : null}
+      {!helpOpen && pending === 'choice' && choiceRequest ? <ChoiceBar request={choiceRequest} selected={choiceSel} /> : null}
       <Prompt
         value={inputValue}
         onChange={handleChange}

@@ -157,16 +157,11 @@ describe("createPlannerBridge", () => {
 		expect(userMessage).toContain("Decision: APPROVED_TO_W4");
 	});
 
-<<<<<<< HEAD
 	it("uses master planner deliver input for the final brief", async () => {
-=======
-	it("passes structured memory candidate evidence and target hints to finalize", async () => {
->>>>>>> 936136802deda67312072e6f66cbb3da77b6ee28
 		const calls: any[] = [];
 		const client: CompletionClient = {
 			async *streamChat(options) {
 				calls.push(options);
-<<<<<<< HEAD
 				yield { type: "content", content: FINAL_BRIEF };
 			},
 		};
@@ -183,17 +178,23 @@ describe("createPlannerBridge", () => {
 		const systemMessage = calls[0]!.messages.find((m: any) => m.role === "system")!.content;
 		const userMessage = calls[0]!.messages.find((m: any) => m.role === "user")!.content;
 		expect(systemMessage).not.toContain("You summarize the outcome of a completed multi-agent run");
-		expect(userMessage).toContain("# W4 Final Delivery Input");
-		expect(userMessage).toContain("## Original User Request");
-		expect(userMessage).toContain("## Status Reason");
-		expect(userMessage).toContain("## Leaf Deliverable Task IDs");
-		expect(userMessage).toContain("## Actual Written Business Files");
+		expect(userMessage).toContain("# W4 Delivery Summary");
+		expect(userMessage).toContain("## Original Request");
+		expect(userMessage).toContain("## Status");
+		expect(userMessage).toContain("## Task Outcomes");
+		expect(userMessage).toContain("## Written Files");
 		expect(userMessage).toContain("src/upload.ts");
 		expect(userMessage).toContain("## Known Issues");
 		expect(userMessage).toContain("missing screenshots");
-		expect(userMessage).toContain("## Finalize Governance Report");
+		expect(userMessage).toContain("## Memory Governance");
 		expect(userMessage).toContain("<final_brief>");
-=======
+	});
+
+	it("passes structured memory candidate evidence and target hints to finalize", async () => {
+		const calls: any[] = [];
+		const client: CompletionClient = {
+			async *streamChat(options) {
+				calls.push(options);
 				yield { type: "content", content: FINALIZE };
 			},
 		};
@@ -221,7 +222,76 @@ describe("createPlannerBridge", () => {
 		expect(userMessage).toContain("architecture.md");
 		expect(userMessage).toContain("backend.md");
 		expect(userMessage).toContain("Finalize now.");
->>>>>>> 936136802deda67312072e6f66cbb3da77b6ee28
+	});
+
+	it("uses stage-scoped master planner prompts for compile, refine, auditPlan, and finalize", async () => {
+		const calls: any[] = [];
+		const client: CompletionClient = {
+			async *streamChat(options) {
+				calls.push(options);
+				const systemText = options.messages.find((m: any) => m.role === "system")?.content ?? "";
+				if (systemText.includes("## DAG Output (W0 coarse compile)")) {
+					yield { type: "content", content: DAG };
+					return;
+				}
+				if (systemText.includes("## Refine Output (W0.5)")) {
+					yield { type: "content", content: REFINE };
+					return;
+				}
+				if (systemText.includes("## Plan Audit (W2-plan)")) {
+					yield { type: "content", content: '<plan_audit>{"decision":"APPROVED","corrections":[],"reason":"ok"}</plan_audit>' };
+					return;
+				}
+				yield { type: "content", content: FINALIZE };
+			},
+		};
+		const planner = createPlannerBridge(client);
+
+		await planner.compile("build upload", "MEM");
+		await planner.refine({ epicId: "e", phases: [] }, [], "MEM");
+		await planner.auditPlan!({
+			taskId: "T2-1",
+			persona: "code_executor",
+			objective: "implement upload",
+			allowedGlobs: ["src/upload.ts"],
+			acceptance: ["returns 201"],
+			nonGoals: [],
+			upstreamArtifacts: "T0-1.file_list",
+			plan: "<execution_plan>files_to_change:\n- src/upload.ts</execution_plan>",
+		});
+		await planner.finalize([], [], "CANONICAL MEMORY");
+
+		const compileSys = calls[0]!.messages.find((m: any) => m.role === "system")!.content;
+		const refineSys = calls[1]!.messages.find((m: any) => m.role === "system")!.content;
+		const auditSys = calls[2]!.messages.find((m: any) => m.role === "system")!.content;
+		const finalizeSys = calls[3]!.messages.find((m: any) => m.role === "system")!.content;
+
+		expect(compileSys).toContain("## DAG Output (W0 coarse compile)");
+		expect(compileSys).toContain("Contract-First Planning");
+		expect(compileSys).toContain("Subagent Task Assignment for Minimum");
+		expect(compileSys).not.toContain("## Refine Output (W0.5)");
+		expect(compileSys).not.toContain("## Finalize Output (W4)");
+		expect(compileSys).not.toContain("Finalize Merge Gate");
+
+		expect(refineSys).toContain("## Refine Output (W0.5)");
+		expect(refineSys).toContain("Contract-First Planning");
+		expect(refineSys).toContain("Subagent Task Assignment for Minimum");
+		expect(refineSys).not.toContain("## DAG Output (W0 coarse compile)");
+		expect(refineSys).not.toContain("## Finalize Output (W4)");
+		expect(refineSys).not.toContain("Finalize Merge Gate");
+
+		expect(auditSys).toContain("## Plan Audit (W2-plan)");
+		expect(auditSys).not.toContain("## DAG Output (W0 coarse compile)");
+		expect(auditSys).not.toContain("## Refine Output (W0.5)");
+		expect(auditSys).not.toContain("Contract-First Planning");
+		expect(auditSys).not.toContain("Finalize Merge Gate");
+
+		expect(finalizeSys).toContain("## Finalize Output (W4)");
+		expect(finalizeSys).toContain("Finalize Merge Gate");
+		expect(finalizeSys).toContain("Memory Governance");
+		expect(finalizeSys).not.toContain("## DAG Output (W0 coarse compile)");
+		expect(finalizeSys).not.toContain("## Refine Output (W0.5)");
+		expect(finalizeSys).not.toContain("Contract-First Planning");
 	});
 });
 

@@ -15,6 +15,7 @@ const PILL: Record<SessionState, { label: string; color: string }> = {
 const MODE_BADGE: Record<ApprovalMode, { label: string; color: string }> = {
   'read-only': { label: 'read-only', color: theme.warn },
   'auto-edit': { label: 'auto-edit', color: theme.accent },
+  'aware': { label: 'aware', color: theme.accent2 },
   'full-auto': { label: 'full-auto', color: '#4dff91' },
 };
 
@@ -27,7 +28,7 @@ const Key = React.memo(function Key({ k, label }: { k: string; label: string }) 
   );
 });
 
-export const StatusBar = React.memo(function StatusBar({ state, approvalMode, ctxUsed, ctxMax, hint, usage, mcpLoading }: {
+export const StatusBar = React.memo(function StatusBar({ state, approvalMode, ctxUsed, ctxMax, hint, usage, mcpLoading, showAwareApproval = true }: {
   state: SessionState;
   approvalMode?: ApprovalMode;
   ctxUsed: number;
@@ -35,9 +36,12 @@ export const StatusBar = React.memo(function StatusBar({ state, approvalMode, ct
   hint?: string;
   usage?: UsageInfo;
   mcpLoading?: { ready: number; total: number } | null;
+  showAwareApproval?: boolean;
 }) {
   const pill = PILL[state];
-  const badge = approvalMode ? MODE_BADGE[approvalMode] : null;
+  const badge = approvalMode && (approvalMode !== 'aware' || showAwareApproval)
+    ? MODE_BADGE[approvalMode]
+    : null;
 
   // Keys shift with state, mirroring the design's per-state status bar.
   const keys =

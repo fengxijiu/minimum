@@ -15,6 +15,7 @@ import {
 import type { MemoryCandidate, MergeDecision } from "../memory/governance/types.js";
 import type { PersonaId } from "../personas/Persona.js";
 import { getPersona } from "../personas/PersonaRegistry.js";
+import { truncateToTokens } from "../utils/token-counter.js";
 import { compileCoarse, classifyTaskType } from "./TaskCompiler.js";
 import type { CoarseDag, TaskContract, TaskInputs } from "./TaskContract.js";
 import { DynamicHarness } from "./DynamicHarness.js";
@@ -932,7 +933,13 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 			if (parsed.ok) {
 				refinement = parsed.entries;
 				refinementParsed = true;
-				await writeInlineContextPacks(opts.projectRoot, dag.epicId, refinement, args.refreshScheduler);
+				await writeInlineContextPacks(
+					opts.projectRoot,
+					dag.epicId,
+					refinement,
+					args.refreshScheduler,
+					routePolicy.granularityCaps.contextPackMaxTokens,
+				);
 				refinements.push(...refinement.values());
 			} else {
 				knownIssues.push(`W0.5 refine parse failed for ${dag.epicId}: ${parsed.error}`);
@@ -1908,14 +1915,16 @@ async function writeInlineContextPacks(
 	epicId: string,
 	refinement: Map<string, RefinementEntry>,
 	refreshScheduler: MemoryIndexRefreshScheduler,
+	maxTokens: number,
 ): Promise<void> {
 	for (const entry of refinement.values()) {
 		const text = entry.contextPack?.trim();
 		if (!text) continue;
 
 		const filePath = contextPackPath(projectRoot, epicId, entry.taskId);
+		const boundedText = truncateToTokens(text, maxTokens);
 		await fs.mkdir(path.dirname(filePath), { recursive: true });
-		await fs.writeFile(filePath, text.endsWith("\n") ? text : `${text}\n`, "utf-8");
+		await fs.writeFile(filePath, boundedText.endsWith("\n") ? boundedText : `${boundedText}\n`, "utf-8");
 		entry.contextPackPath = filePath;
 	}
 	refreshScheduler.markDirty("W0.5:contextPacks");

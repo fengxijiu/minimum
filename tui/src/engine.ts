@@ -129,7 +129,7 @@ export type ChatHistoryMessage = { role: string; content: string; tool_calls?: u
 export interface Runner {
   send(input: string): AsyncIterable<UiEvent>;
   resolvePermission?(id: string, decision: ApprovalDecision): void;
-  setApprovalMode?(mode: 'read-only' | 'auto-edit' | 'full-auto' | 'suggest' | 'never'): void;
+  setApprovalMode?(mode: 'read-only' | 'auto-edit' | 'aware' | 'full-auto' | 'suggest' | 'never'): void;
   /** Return the engine's current conversation history for session persistence. */
   getHistory?(): ChatHistoryMessage[];
   /** Seed the engine with a prior conversation history (used by /load). */
@@ -448,9 +448,16 @@ type GatePayload = {
 export class TuiConfirmationGate {
   private active: ((v: GateVerdict) => void) | null = null;
   private queue: Array<{ payload: GatePayload; resolve: (v: GateVerdict) => void }> = [];
+  private mode: "manual" | "aware" = "manual";
   onShow: ((payload: GatePayload) => void) | null = null;
 
+  setMode(mode: "manual" | "aware"): void {
+    this.mode = mode;
+  }
+
   ask(payload: GatePayload): Promise<GateVerdict> {
+    const automated = this.getAutomatedVerdict(payload);
+    if (automated) return Promise.resolve(automated);
     return new Promise<GateVerdict>((resolve) => {
       this.queue.push({ payload, resolve });
       this.showNext();
@@ -478,6 +485,31 @@ export class TuiConfirmationGate {
     if (!next) return;
     this.active = next.resolve;
     this.onShow?.(next.payload);
+  }
+
+  private getAutomatedVerdict(payload: GatePayload): GateVerdict | null {
+    if (this.mode !== "aware") return null;
+    const optionIds = new Set(payload.options.map((option) => option.id));
+    const question = payload.question;
+    if (question === "确认 DAG，进入 Build？" && optionIds.has("continue_w23")) {
+      return { type: "pick", optionId: "continue_w23" };
+    }
+    if (question === "Accept 解析失败，如何恢复？") {
+      const retry = payload.options.find((option) => option.id === "retry_w35");
+      if (retry && !retry.summary?.includes("已重试一次")) {
+        return { type: "pick", optionId: "retry_w35" };
+      }
+      if (optionIds.has("approve_to_w4")) {
+        return { type: "pick", optionId: "approve_to_w4" };
+      }
+    }
+    if (question === "Accept 需要人工确认，如何继续？" && optionIds.has("approve_to_w4")) {
+      return { type: "pick", optionId: "approve_to_w4" };
+    }
+    if (question.startsWith("Accept 修复上限") && optionIds.has("continue_repair")) {
+      return { type: "pick", optionId: "continue_repair" };
+    }
+    return null;
   }
 }
 
@@ -607,7 +639,7 @@ export async function createEngineRunner(
     const runner: Runner = {
       send: (input: string) => bridge.send(input),
       resolvePermission: (id, decision) => bridge.resolvePermission(id, decision),
-      setApprovalMode: (mode) => approvalManager.setMode(mode),
+      setApprovalMode: (mode) => approvalManager.setMode(mode === "aware" ? "auto-edit" : mode),
       getHistory: () => bridge.getHistory(),
       loadHistory: (msgs) => bridge.loadHistory(msgs),
       getSessionId: () => sessionManager.getCurrentSession()?.id ?? null,
@@ -663,7 +695,7 @@ export async function createEngineRunner(
     if (eng.PipelineBridge) {
       // Share the SAME tools + approvalManager instances with the single-agent
       // loop. This makes the Shift+Tab approvalMode cycle the single source of
-      // truth: flipping read-only / auto-edit / full-auto now actually affects
+      // truth: flipping read-only / auto-edit / aware / full-auto now actually affects
       // both the agent and orchestrate runners.
       //
       // Billing mode is read from the API-key prefix; pricing module already
@@ -685,7 +717,7 @@ export async function createEngineRunner(
       pipelineRunner = {
         send: (input: string) => pipelineBridge.send(input),
         resolvePermission: (id, decision) => pipelineBridge.resolvePermission(id, decision),
-        setApprovalMode: (mode) => approvalManager.setMode(mode),
+        setApprovalMode: (mode) => approvalManager.setMode(mode === "aware" ? "auto-edit" : mode),
         getHistory: () => pipelineBridge.getHistory?.() ?? [],
         loadHistory: (msgs) => pipelineBridge.loadHistory?.(msgs),
         setPlanGateMode: (mode) => pipelineBridge.setPlanGateMode?.(mode),

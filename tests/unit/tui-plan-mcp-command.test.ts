@@ -5,6 +5,24 @@ import { createInitialState } from "../../tui/src/seed.js";
 const base = createInitialState("/proj");
 
 describe("plan and mcp commands", () => {
+	it("/permission rejects aware outside orchestrate mode", () => {
+		const out = runCommand("/permission aware", base);
+		expect(out.kind).toBe("note");
+		if (out.kind === "note") {
+			expect(out.tone).toBe("warn");
+			expect(out.note).toContain('Unknown permission mode "aware"');
+			expect(out.note).toContain("Valid in agent");
+		}
+	});
+
+	it("/permission allows aware in orchestrate mode", () => {
+		const out = runCommand("/permission aware", { ...base, mode: "orchestrate" });
+		expect(out.kind).toBe("patch");
+		if (out.kind === "patch") {
+			expect(out.patch.approvalMode).toBe("aware");
+		}
+	});
+
 	it("/plan drafts routes to draft listing", () => {
 		const out = runCommand("/plan drafts", base);
 		expect(out).toEqual({ kind: "plan.drafts" });

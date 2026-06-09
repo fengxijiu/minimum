@@ -53,7 +53,7 @@ export type Message =
 
 export type SessionState = 'agent' | 'mimo' | 'orchestrate' | 'paused' | 'error';
 
-export type ApprovalMode = 'read-only' | 'auto-edit' | 'full-auto';
+export type ApprovalMode = 'read-only' | 'auto-edit' | 'aware' | 'full-auto';
 
 export type PlanStep = {
   label: string;

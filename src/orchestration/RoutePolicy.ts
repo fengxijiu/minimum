@@ -73,20 +73,30 @@ export function parseRouteHintFromInput(input: string): { cleanInput: string; ro
 	const routeHint: RouteHint = {};
 	for (let i = 0; i < tokens.length; i++) {
 		const token = tokens[i]!;
-		if (token === "--route" && tokens[i + 1]) {
+		// CHANGED: only consume the next token as a hint value when it is not another flag.
+		if (token === "--route" && isHintValueToken(tokens[i + 1])) {
 			routeHint.route = tokens[++i];
 			continue;
 		}
-		if ((token === "--fanout" || token === "--scale") && tokens[i + 1]) {
+		// CHANGED: drop malformed `--route` flags instead of leaking them into the user request.
+		if (token === "--route") continue;
+		// CHANGED: ignore malformed `--scale --route ...` / `--fanout --route ...` sequences.
+		if ((token === "--fanout" || token === "--scale") && isHintValueToken(tokens[i + 1])) {
 			routeHint.scale = tokens[++i];
 			continue;
 		}
+		// CHANGED: drop malformed scale flags instead of keeping them in `cleanInput`.
+		if (token === "--fanout" || token === "--scale") continue;
 		kept.push(token);
 	}
 	return {
 		cleanInput: kept.join(" "),
 		...(routeHint.route || routeHint.scale ? { routeHint } : {}),
 	};
+}
+
+function isHintValueToken(token?: string): token is string {
+	return typeof token === "string" && token.length > 0 && !token.startsWith("--");
 }
 
 export function classifyRoutePolicy(userRequest: string, hint?: RouteHint): RoutePolicy {

@@ -18,7 +18,7 @@
 
 > Minimum 是一个围绕 MiMo API 构建的终端编码助手。它同时提供单 Agent 对话、`/orchestrate` 多角色流水线、审批治理、项目配置、会话命令面板和 `.minimum/` 记忆体系，适合真实代码仓中的持续开发与协作。
 
----
+***
 
 ## 目录
 
@@ -35,7 +35,7 @@
 - [许可证](#许可证)
 - [致谢](#致谢)
 
----
+***
 
 ## 简介
 
@@ -52,32 +52,32 @@
 - 通过 `EngineBridge` / `PipelineBridge` 把后端事件转成可视化 UI 状态
 - 支持 `.minimum/config.json`、`~/.minimum/config.json` 和环境变量混合配置
 
----
+***
 
 ## 能力概览
 
-| 能力 | 当前实现 |
-| --- | --- |
-| 单 Agent 运行 | `MiMoLoop` 处理流式回复、工具调用、验证、修复和上下文折叠 |
-| 多角色编排 | `MiMoPipeline` + `TaskCompiler` + `Refiner` + `WorkerLoop`，按 Plan → Scan → Refine → Build → Accept → Finalize 六阶段推进 |
-| TUI 交互 | 欢迎屏、命令面板、计划条、聊天流、状态栏、流水线进度面板 |
-| 审批治理 | `read-only`、`auto-edit`、`full-auto`，引擎层还保留 `suggest`、`never` |
-| 工具系统 | 文件、搜索、Git、Web、Todo，Shell 可选启用 |
-| 项目初始化 | `/init` 生成 `.minimum/` 配置和记忆目录 |
-| 会话命令 | `/save`、`/load`、`/sessions`、`/new`、`/clear` 等 |
-| 记忆治理 | Manifest、canonical memory、staging、archive、memory index |
+| 能力         | 当前实现                                                                                                                |
+| ---------- | ------------------------------------------------------------------------------------------------------------------- |
+| 单 Agent 运行 | `MiMoLoop` 处理流式回复、工具调用、验证、修复和上下文折叠                                                                                  |
+| 多角色编排      | `MiMoPipeline` + `TaskCompiler` + `Refiner` + `WorkerLoop`，按 Plan → Scan → Refine → Build → Accept → Finalize 六阶段推进 |
+| TUI 交互     | 欢迎屏、命令面板、计划条、聊天流、状态栏、流水线进度面板                                                                                        |
+| 审批治理       | `read-only`、`auto-edit`、`full-auto`，引擎层还保留 `suggest`、`never`                                                        |
+| 工具系统       | 文件、搜索、Git、Web、Todo，Shell 可选启用                                                                                       |
+| 项目初始化      | `/init` 生成 `.minimum/` 配置和记忆目录                                                                                      |
+| 会话命令       | `/save`、`/load`、`/sessions`、`/new`、`/clear` 等                                                                       |
+| 记忆治理       | Manifest、canonical memory、staging、archive、memory index                                                              |
 
----
+***
 
 ## 快速开始
 
 ### 1. 环境要求
 
-| 依赖 | 版本 | 说明 |
-| --- | --- | --- |
-| Node.js | >= 22 | 根引擎构建与运行要求 |
-| npm | 随 Node.js 安装 | 安装依赖、构建和测试 |
-| PowerShell / Bash | 任一 | 分别对应 Windows 与 Linux/macOS 启动脚本 |
+| 依赖                | 版本           | 说明                              |
+| ----------------- | ------------ | ------------------------------- |
+| Node.js           | >= 22        | 根引擎构建与运行要求                      |
+| npm               | 随 Node.js 安装 | 安装依赖、构建和测试                      |
+| PowerShell / Bash | 任一           | 分别对应 Windows 与 Linux/macOS 启动脚本 |
 
 ### 2. 克隆与一键构建
 
@@ -220,7 +220,7 @@ node bin/minimum-ink.js
 
 > 未设置 `MIMO_API_KEY` 时，TUI 会退回 Mock Runner，方便先检查界面、命令面板和项目扫描流程。
 
----
+***
 
 ## 配置
 
@@ -242,7 +242,7 @@ node bin/minimum-ink.js
   "baseUrl": "https://api.xiaomimimo.com/v1",
   "defaultModel": "mimo-v2.5-pro",
   "maxTokens": 131072,
-  "maxSteps": 50,
+  "maxSteps": 200,
   "approvalMode": "suggest",
   "enableReadGuard": true,
   "context": {
@@ -261,41 +261,41 @@ node bin/minimum-ink.js
 
 ### 模型
 
-| 模型 | 说明 |
-| --- | --- |
+| 模型              | 说明                          |
+| --------------- | --------------------------- |
 | `mimo-v2.5-pro` | 默认模型，适合 Agentic 长上下文与复杂编码任务 |
-| `mimo-v2.5` | 标准版，支持图片理解与多模态输入 |
+| `mimo-v2.5`     | 标准版，支持图片理解与多模态输入            |
 
 ### API 端点
 
-| 场景 | URL |
-| --- | --- |
-| 默认 API | `https://api.xiaomimimo.com/v1` |
-| Token Plan China | `https://token-plan-cn.xiaomimimo.com/v1` |
+| 场景                   | URL                                        |
+| -------------------- | ------------------------------------------ |
+| 默认 API               | `https://api.xiaomimimo.com/v1`            |
+| Token Plan China     | `https://token-plan-cn.xiaomimimo.com/v1`  |
 | Token Plan Singapore | `https://token-plan-sgp.xiaomimimo.com/v1` |
-| Token Plan Europe | `https://token-plan-ams.xiaomimimo.com/v1` |
+| Token Plan Europe    | `https://token-plan-ams.xiaomimimo.com/v1` |
 
 ### 审批模式
 
 引擎配置支持以下取值：
 
-| 模式 | 说明 |
-| --- | --- |
-| `read-only` | 只允许低风险读操作 |
+| 模式          | 说明                 |
+| ----------- | ------------------ |
+| `read-only` | 只允许低风险读操作          |
 | `auto-edit` | 文件编辑自动放行，Shell 需确认 |
-| `full-auto` | 全自动执行 |
-| `suggest` | 低风险自动放行，其余等待确认 |
-| `never` | 全部拒绝 |
+| `full-auto` | 全自动执行              |
+| `suggest`   | 低风险自动放行，其余等待确认     |
+| `never`     | 全部拒绝               |
 
 TUI 的 `/permission` 命令当前暴露的是 `read-only`、`auto-edit`、`full-auto` 三档快速切换。
 
 ### 环境变量
 
-| 变量名 | 说明 | 默认行为 |
-| --- | --- | --- |
-| `MIMO_API_KEY` | MiMo API key | 未设置时进入 Mock 模式 |
-| `MIMO_BASE_URL` | 显式 API 端点 | 未设置时按 key 前缀自动推断 |
-| `MIMO_ENABLE_SHELL` | 是否注册 `exec_shell` | `0`，默认关闭 |
+| 变量名                 | 说明                | 默认行为             |
+| ------------------- | ----------------- | ---------------- |
+| `MIMO_API_KEY`      | MiMo API key      | 未设置时进入 Mock 模式   |
+| `MIMO_BASE_URL`     | 显式 API 端点         | 未设置时按 key 前缀自动推断 |
+| `MIMO_ENABLE_SHELL` | 是否注册 `exec_shell` | `0`，默认关闭         |
 
 ### `.minimum/` 目录
 
@@ -307,7 +307,7 @@ TUI 的 `/permission` 命令当前暴露的是 `read-only`、`auto-edit`、`full
 - `.minimum/_archive/`：归档的历史记忆
 - 多个 canonical `*.md` 文件，例如 `project.md`、`architecture.md`、`tests.md`
 
----
+***
 
 ## 运行模式
 
@@ -315,13 +315,13 @@ TUI 的 `/permission` 命令当前暴露的是 `read-only`、`auto-edit`、`full
 
 TUI 当前支持三种主模式：
 
-| 模式 | 说明 |
-| --- | --- |
-| `chat` | 更偏轻量问答与自然对话 |
-| `agent` | 默认工作模式，适合常规编码与工具调用 |
+| 模式            | 说明                                                                |
+| ------------- | ----------------------------------------------------------------- |
+| `chat`        | 更偏轻量问答与自然对话                                                       |
+| `agent`       | 默认工作模式，适合常规编码与工具调用                                                |
 | `orchestrate` | 启动多角色流水线，按 Plan → Scan → Refine → Build → Accept → Finalize 六阶段推进 |
 
-`Tab` / `/mode` 可在模式间切换；状态栏会同步显示当前状态。
+`Tab /mode` 可在模式间切换；状态栏会同步显示当前状态。
 
 ### 单 Agent 引擎
 
@@ -337,14 +337,14 @@ TUI 当前支持三种主模式：
 
 `/orchestrate <request>` 会切换到 `PipelineBridge` + `MiMoPipeline` 路径，按六个阶段依次推进：
 
-| 阶段 | 核心工作 | 关键组件 |
-| --- | --- | --- |
-| **Plan** | 任务分解、合约生成与细化 | `TaskCompiler` → `Refiner` |
-| **Scan** | 仓库扫描、上下文构建、Persona 分配 | `RepoScout` / `ContextBuilder` |
-| **Refine** | 合约细化、门控检查、依赖排序 | `LaunchGate` → `Refiner` |
-| **Build** | Worker 多轮工具调用实现与测试 | `WorkerLoop` + `WaveScheduler` |
-| **Accept** | 评审、验证、Mission Check | `MissionChecker` + `Reviewer` |
-| **Finalize** | 结果汇总、记忆治理、最终交付 | `MemoryGovernor` + pipeline artifacts |
+| 阶段           | 核心工作                  | 关键组件                                  |
+| ------------ | --------------------- | ------------------------------------- |
+| **Plan**     | 任务分解、合约生成与细化          | `TaskCompiler` → `Refiner`            |
+| **Scan**     | 仓库扫描、上下文构建、Persona 分配 | `RepoScout` / `ContextBuilder`        |
+| **Refine**   | 合约细化、门控检查、依赖排序        | `LaunchGate` → `Refiner`              |
+| **Build**    | Worker 多轮工具调用实现与测试    | `WorkerLoop` + `WaveScheduler`        |
+| **Accept**   | 评审、验证、Mission Check   | `MissionChecker` + `Reviewer`         |
+| **Finalize** | 结果汇总、记忆治理、最终交付        | `MemoryGovernor` + pipeline artifacts |
 
 每个阶段由 `PipelineBridge` 把事件转为 TUI 可见状态，`PipelinePanel` 展示六阶段进度条，`SubagentBrief` 展示各 worker 的实时状态。
 
@@ -362,18 +362,18 @@ TUI 当前支持三种主模式：
 
 现在的 Ink 界面由这些区域组成：
 
-| 区域 | 组件 |
-| --- | --- |
-| 顶栏 | `TitleBar` |
-| 计划条 | `PlanStrip` |
+| 区域   | 组件                                                          |
+| ---- | ----------------------------------------------------------- |
+| 顶栏   | `TitleBar`                                                  |
+| 计划条  | `PlanStrip`                                                 |
 | 编排进度 | `PipelinePanel` + `SubagentBrief`（混合面板，展示阶段进度与 worker 实时状态） |
-| 聊天流 | `ChatStream` |
-| 输入区 | `InputArea` |
-| 状态栏 | `StatusBar` |
-| 欢迎页 | `WelcomeScreen` |
-| 命令面板 | `CommandPalette` |
+| 聊天流  | `ChatStream`                                                |
+| 输入区  | `InputArea`                                                 |
+| 状态栏  | `StatusBar`                                                 |
+| 欢迎页  | `WelcomeScreen`                                             |
+| 命令面板 | `CommandPalette`                                            |
 
----
+***
 
 ## 内置工具
 
@@ -381,29 +381,28 @@ TUI 当前支持三种主模式：
 
 当前 `tui/src/engine.ts` 会注册以下工具：
 
-| 工具名 | 作用 |
-| --- | --- |
-| `read_file` | 读取文件 |
-| `list_directory` | 列目录 |
-| `write_file` | 写入或覆盖文件 |
-| `edit_file` | 搜索替换式编辑 |
-| `apply_patch` | hunk 级补丁编辑 |
-| `grep` | 文本 / 代码搜索 |
-| `glob` | 文件匹配 |
-| `git` | Git 信息查询与操作 |
-| `web_fetch` | 拉取网页内容 |
-| `todo_write` | 写入任务列表 |
-| `exec_shell` | Shell 执行，需 `MIMO_ENABLE_SHELL=1` |
+| 工具名              | 作用          |
+| ---------------- | ----------- |
+| `read_file`      | 读取文件        |
+| `list_directory` | 列目录         |
+| `write_file`     | 写入或覆盖文件     |
+| `edit_file`      | 搜索替换式编辑     |
+| `apply_patch`    | hunk 级补丁编辑  |
+| `grep`           | 文本 / 代码搜索   |
+| `glob`           | 文件匹配        |
+| `git`            | Git 信息查询与操作 |
+| `web_fetch`      | 拉取网页内容      |
+| `todo_write`     | 写入任务列表      |
+| `exec_shell`     | Shell 执行    |
 
 ### 安全边界
 
 - `ApprovalManager` 负责审批决策与习惯缓存
 - `PathPolicyEnforcer` 负责 Persona 的读写范围约束
 - `ToolAllowlistEnforcer` 负责工具白名单与黑名单
-- `exec_shell` 默认不会注册，必须显式启用
 - 多角色流水线下，worker 的可写路径会受到 `TaskContract` 与 Persona 策略双重限制
 
----
+***
 
 ## TUI 命令参考
 
@@ -411,53 +410,59 @@ TUI 当前支持三种主模式：
 
 ### 会话命令
 
-| 命令 | 别名 | 说明 |
-| --- | --- | --- |
-| `/new` | `reset` | 开启新会话并清空暂存状态 |
-| `/save [name]` | - | 保存当前会话 |
-| `/load <name>` | - | 加载会话 |
-| `/sessions` | `ls` | 查看已保存会话 |
-| `/quit` | `exit` `q` | 退出 Minimum |
+| 命令             | 别名         | 说明           |
+| -------------- | ---------- | ------------ |
+| `/new`         | `reset`    | 开启新会话并清空暂存状态 |
+| `/save [name]` | -          | 保存当前会话       |
+| `/load <name>` | -          | 加载会话         |
+| `/sessions`    | `ls`       | 查看已保存会话      |
+| `/quit`        | `exit` `q` | 退出 Minimum   |
 
 ### 上下文命令
 
-| 命令 | 别名 | 说明 |
-| --- | --- | --- |
-| `/compact` | - | 查看上下文折叠 / 压缩状态 |
-| `/context` | `ctx` | 查看上下文窗口使用量 |
-| `/undo` | - | 撤销最后一次暂存编辑 |
-| `/redo` | - | 重做已撤销编辑 |
-| `/memory` | `mem` | 查看项目记忆路径提示 |
+| 命令         | 别名    | 说明             |
+| ---------- | ----- | -------------- |
+| `/compact` | -     | 查看上下文折叠 / 压缩状态 |
+| `/context` | `ctx` | 查看上下文窗口使用量     |
+| `/undo`    | -     | 撤销最后一次暂存编辑     |
+| `/redo`    | -     | 重做已撤销编辑        |
+| `/memory`  | `mem` | 查看项目记忆路径提示     |
 
 ### 视图命令
 
-| 命令 | 别名 | 说明 |
-| --- | --- | --- |
-| `/copy` | - | 复制最后一条助手回复 |
-| `/diff` | - | 切换 / 查看当前 diff 显示状态 |
-| `/plan` | - | 显示当前计划摘要 |
-| `/mode <agent|chat|orchestrate>` | - | 切换运行模式 |
-| `/orchestrate <request>` | `pipeline` `orch` | 启动多角色流水线，Plan → Scan → Refine → Build → Accept → Finalize |
-| `/clear` | `cls` | 清空聊天流 |
-| `/verbose` | `v` | 切换详细输出 |
+| 命令                       | 别名                | 说明                                                        | <br /> | <br /> |
+| ------------------------ | ----------------- | --------------------------------------------------------- | :----- | :----- |
+| `/copy`                  | -                 | 复制最后一条助手回复                                                | <br /> | <br /> |
+| `/diff`                  | -                 | 切换 / 查看当前 diff 显示状态                                       | <br /> | <br /> |
+| `/plan`                  | -                 | 显示当前计划摘要                                                  | <br /> | <br /> |
+| \`/mode \<agent          | chat              | orchestrate>\`                                            | -      | 切换运行模式 |
+| `/orchestrate <request>` | `pipeline` `orch` | 启动多角色流水线，Plan → Scan → Refine → Build → Accept → Finalize | <br /> | <br /> |
+
+可选路由提示：
+
+- `--route <route>`：显式指定编排路线，例如 `audit_review`、`implementation`、`debug_fix`
+- `--scale <small|medium|large|auto>`：显式指定 fanout 规模
+- 示例：`/orchestrate --route audit_review --scale large audit dead code across the repo`
+  \| `/clear` | `cls` | 清空聊天流 |
+  \| `/verbose` | `v` | 切换详细输出 |
 
 ### 系统命令
 
-| 命令 | 别名 | 说明 |
-| --- | --- | --- |
-| `/permission <mode>` | `approval` `appr` `perm` | 切换审批模式 |
-| `/editmode <mode>` | - | 切换编辑模式：`review` / `auto` / `yolo` |
-| `/run <cmd>` | - | 请求运行 Shell 命令 |
-| `/mcp` | - | 查看 MCP 服务状态 |
-| `/status` | - | 查看会话摘要 |
-| `/tools` | - | 列出当前已注册工具 |
-| `/model` | - | 显示当前模型 |
-| `/skill` | - | 查看技能命令入口 |
-| `/config` | `cfg` | 查看当前配置摘要 |
-| `/init` | - | 初始化当前项目的 `.minimum/` |
-| `/help` | `?` | 显示帮助 |
+| 命令                   | 别名                       | 说明                                |
+| -------------------- | ------------------------ | --------------------------------- |
+| `/permission <mode>` | `approval` `appr` `perm` | 切换审批模式                            |
+| `/editmode <mode>`   | -                        | 切换编辑模式：`review` / `auto` / `yolo` |
+| `/run <cmd>`         | -                        | 请求运行 Shell 命令                     |
+| `/mcp`               | -                        | 查看 MCP 服务状态                       |
+| `/status`            | -                        | 查看会话摘要                            |
+| `/tools`             | -                        | 列出当前已注册工具                         |
+| `/model`             | -                        | 显示当前模型                            |
+| `/skill`             | -                        | 查看技能命令入口                          |
+| `/config`            | `cfg`                    | 查看当前配置摘要                          |
+| `/init`              | -                        | 初始化当前项目的 `.minimum/`              |
+| `/help`              | `?`                      | 显示帮助                              |
 
----
+***
 
 ## MCP
 
@@ -504,19 +509,19 @@ minimum/
 
 ### 核心模块
 
-| 模块 | 职责 |
-| --- | --- |
-| `MiMoClient` | 管理 MiMo API 调用与 base URL 解析 |
-| `MiMoLoop` | 单 Agent 主循环 |
-| `MiMoPipeline` | 多角色流水线执行器 |
+| 模块                                                                         | 职责                             |
+| -------------------------------------------------------------------------- | ------------------------------ |
+| `MiMoClient`                                                               | 管理 MiMo API 调用与 base URL 解析    |
+| `MiMoLoop`                                                                 | 单 Agent 主循环                    |
+| `MiMoPipeline`                                                             | 多角色流水线执行器                      |
 | `TaskCompiler` / `Refiner` / `TaskRunner` / `WaveScheduler` / `WorkerLoop` | 任务合约、细化、执行、并发调度与 worker 多轮工具循环 |
-| `LaunchGate` / `MissionChecker` | 门控检查：上下文缺口、合约就绪、验收通过 |
-| `ApprovalManager` | 工具风险判断、审批模式、确认缓存 |
-| `ToolRegistry` | 工具注册与统一执行入口 |
-| `ContextManager` | 上下文折叠与 token 管理 |
-| `CodeValidator` / `CompletenessChecker` | 代码验证与完整性检查 |
-| `EngineBridge` / `PipelineBridge` | 把后端事件转换成 `UiEvent` |
-| `MemoryGovernor` / `MemoryManifest` / `MemoryIndex` | canonical memory 与记忆治理 |
+| `LaunchGate` / `MissionChecker`                                            | 门控检查：上下文缺口、合约就绪、验收通过           |
+| `ApprovalManager`                                                          | 工具风险判断、审批模式、确认缓存               |
+| `ToolRegistry`                                                             | 工具注册与统一执行入口                    |
+| `ContextManager`                                                           | 上下文折叠与 token 管理                |
+| `CodeValidator` / `CompletenessChecker`                                    | 代码验证与完整性检查                     |
+| `EngineBridge` / `PipelineBridge`                                          | 把后端事件转换成 `UiEvent`             |
+| `MemoryGovernor` / `MemoryManifest` / `MemoryIndex`                        | canonical memory 与记忆治理         |
 
 ### 运行数据流
 
@@ -531,7 +536,7 @@ minimum/
   -> Ink 组件渲染
 ```
 
----
+***
 
 ## 开发指南
 
@@ -620,7 +625,7 @@ cd ..
 3. 如需新增事件，更新 `tui/src/state/events.ts` 与 `reducer.ts`
 4. 为 TUI reducer、command 或渲染逻辑补测试
 
----
+***
 
 ## 测试
 
@@ -653,13 +658,13 @@ npm run verify
 - 记忆治理与索引
 - TUI reducer、命令、markdown 渲染和 engine bridge
 
----
+***
 
 ## 许可证
 
 [MIT License](LICENSE)
 
----
+***
 
 ## 致谢
 
@@ -667,4 +672,5 @@ npm run verify
 
 同时感谢 [superpowers](https://github.com/obra/superpowers) 在任务分解、计划驱动执行、persona skill 组织和可复用工作流方法上的启发；Minimum-native Superpowers 的整合也受益于这些实践。
 
----
+***
+

@@ -58,6 +58,18 @@ export function renderInlineSkillsForPersona(personaId: string): string {
 	].join("\n");
 }
 
+/** Stage-scoped inline skills for prompts that should not carry the whole bundle. */
+export function renderInlineSkillsForPersonaStage(personaId: string, stage: string): string {
+	const matched = loadMinimumAdaptedSkills().filter(
+		(skill) => skill.personas.includes(personaId) && skillAppliesToStage(skill, stage),
+	);
+	if (!matched.length) return "";
+	return [
+		"# Minimum-native Superpowers Skills",
+		...matched.map((skill) => `\n<!-- minimum-inline-skill:${skill.id} -->\n${skill.body}`),
+	].join("\n");
+}
+
 /**
  * Full bodies of inline skills that match the given objective.
  * Call once per task with the task's objective string;
@@ -119,4 +131,8 @@ function priorityFor(file: string): number {
 	if (file.includes("/review/")) return 80;
 	if (file.includes("/testing/")) return 80;
 	return 50;
+}
+
+function skillAppliesToStage(skill: InlineSkill, stage: string): boolean {
+	return skill.stages.includes("*") || skill.stages.includes(stage);
 }

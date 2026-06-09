@@ -9,15 +9,18 @@ export {
 	type PersonaModel,
 } from "./Persona.js";
 export {
+	buildMasterStagePrompt,
 	getPersona,
 	isToolAllowedForAny,
 	listPersonaIds,
 	listPersonas,
 	loadBaseRules,
+	type MasterPlannerStage,
 } from "./PersonaRegistry.js";
 export {
 	loadMinimumAdaptedSkills,
 	renderInlineSkillsForPersona,
+	renderInlineSkillsForPersonaStage,
 	type InlineSkill,
 } from "./SkillRegistry.js";
 export {

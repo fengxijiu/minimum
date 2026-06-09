@@ -84,6 +84,36 @@ describe("TuiConfirmationGate", () => {
 		expect(verdict).toEqual({ type: "pick", optionId: "continue_w23" });
 	});
 
+	it("auto-resolves W0.5/W3.5 pipeline choices in aware mode", async () => {
+		const gate = new TuiConfirmationGate();
+		gate.setMode("aware");
+		const shown: string[] = [];
+		gate.onShow = (payload) => {
+			shown.push(payload.question);
+		};
+		await expect(
+			gate.ask({
+				question: "确认 DAG，进入 Build？",
+				options: [
+					{ id: "continue_w23", title: "继续 Build" },
+					{ id: "stop_for_human", title: "暂停" },
+				],
+				allowCustom: false,
+			}),
+		).resolves.toEqual({ type: "pick", optionId: "continue_w23" });
+		await expect(
+			gate.ask({
+				question: "Accept 需要人工确认，如何继续？",
+				options: [
+					{ id: "stop_for_human", title: "暂停" },
+					{ id: "approve_to_w4", title: "推进到 Finalize" },
+				],
+				allowCustom: false,
+			}),
+		).resolves.toEqual({ type: "pick", optionId: "approve_to_w4" });
+		expect(shown).toEqual([]);
+	});
+
 	it("queues concurrent asks and shows them one at a time in FIFO order", async () => {
 		const gate = new TuiConfirmationGate();
 		const shown: string[] = [];

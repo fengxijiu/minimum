@@ -7,7 +7,7 @@ import {
 	type Persona,
 	type PersonaId,
 } from "./Persona.js";
-import { renderInlineSkillsForPersona } from "./SkillRegistry.js";
+import { renderInlineSkillsForPersona, renderInlineSkillsForPersonaStage } from "./SkillRegistry.js";
 
 const PROMPTS_DIR = path.join(
 	path.dirname(fileURLToPath(import.meta.url)),
@@ -46,10 +46,62 @@ function buildPersonaPrompt(
 }
 
 function buildMasterPrompt(): string {
-	const role = loadPrompt("master-planner.md");
-	const skills = renderInlineSkillsForPersona("master_planner");
-	const validIds = buildValidPersonaIdsBlock();
-	const parts = [role.trimEnd(), validIds];
+	return buildMasterStagePrompt("full");
+}
+
+export type MasterPlannerStage = "full" | "W0" | "W0.5" | "W2-plan" | "W4";
+
+const MASTER_PROMPT_PARTS = {
+	intro: "master-planner/_intro.md",
+	shared: "master-planner/shared.md",
+	w0: "master-planner/w0.md",
+	w05: "master-planner/w05.md",
+	w4Finalize: "master-planner/w4-finalize.md",
+	w4Delivery: "master-planner/w4-delivery.md",
+	w2Plan: "master-planner/w2-plan.md",
+} as const;
+
+const MASTER_STAGE_PARTS: Record<MasterPlannerStage, readonly string[]> = {
+	full: [
+		MASTER_PROMPT_PARTS.intro,
+		MASTER_PROMPT_PARTS.shared,
+		MASTER_PROMPT_PARTS.w0,
+		MASTER_PROMPT_PARTS.w05,
+		MASTER_PROMPT_PARTS.w4Finalize,
+		MASTER_PROMPT_PARTS.w4Delivery,
+		MASTER_PROMPT_PARTS.w2Plan,
+	],
+	"W0": [
+		MASTER_PROMPT_PARTS.intro,
+		MASTER_PROMPT_PARTS.shared,
+		MASTER_PROMPT_PARTS.w0,
+	],
+	"W0.5": [
+		MASTER_PROMPT_PARTS.intro,
+		MASTER_PROMPT_PARTS.shared,
+		MASTER_PROMPT_PARTS.w05,
+	],
+	"W2-plan": [
+		MASTER_PROMPT_PARTS.intro,
+		MASTER_PROMPT_PARTS.shared,
+		MASTER_PROMPT_PARTS.w2Plan,
+	],
+	"W4": [
+		MASTER_PROMPT_PARTS.intro,
+		MASTER_PROMPT_PARTS.shared,
+		MASTER_PROMPT_PARTS.w4Finalize,
+	],
+};
+
+export function buildMasterStagePrompt(stage: MasterPlannerStage): string {
+	const validIds = stage === "W0" || stage === "W0.5" || stage === "full"
+		? buildValidPersonaIdsBlock()
+		: "";
+	const skills = stage === "full"
+		? renderInlineSkillsForPersona("master_planner")
+		: renderInlineSkillsForPersonaStage("master_planner", stage);
+	const parts = MASTER_STAGE_PARTS[stage].map((file) => loadPrompt(file).trim());
+	if (validIds) parts.push(validIds);
 	if (skills) parts.push(skills);
 	return parts.join("\n\n");
 }
@@ -102,12 +154,12 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		kind: "master",
 		model: "mimo-v2.5-pro",
 		systemPrompt: masterPrompt,
-		toolAllowlist: ["*"],
-		toolDenylist: [],
+		toolAllowlist: ["*", "read_file", "ask_choice"],
+		toolDenylist: ["exec_shell"],
 		pathPolicy: {
 			canWrite: true,
 			alwaysAllowedGlobs: ["**"],
-			forbiddenGlobs: [],
+			forbiddenGlobs: GLOBAL_FORBIDDEN_WRITES,
 		},
 		maxSteps: 200,
 		maxTokens: 131_072,
@@ -222,8 +274,8 @@ function buildPersonas(): Map<PersonaId, Persona> {
 		kind: "worker",
 		model: "mimo-v2.5",
 		systemPrompt: buildPersonaPrompt("code_executor", "code-executor.md", footer),
-		toolAllowlist: ["*"],
-		toolDenylist: [],
+		toolAllowlist: ["*", "read_file"],
+		toolDenylist: ["exec_shell"],
 		pathPolicy: {
 			canWrite: true,
 			alwaysAllowedGlobs: [],

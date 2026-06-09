@@ -14,6 +14,7 @@ import type { TaskContract } from "../../src/orchestration/index.js";
 import type { CoarseDag } from "../../src/orchestration/index.js";
 import type { TaskResult, WorkerExecutor } from "../../src/orchestration/index.js";
 import { listCandidates } from "../../src/memory/governance/index.js";
+import { estimateTokens } from "../../src/utils/token-counter.js";
 import type { ChoicePayload, ChoiceVerdict, ConfirmationGate } from "../../src/tools/choice/ConfirmationGate.js";
 
 // Satisfies code_executor's required blocks so the default impl task (T2-1)
@@ -847,6 +848,82 @@ Reason:
 		expect(events.some((e) => e.type === "pipeline_choice" && (e as any).choiceId === "auto_rerun_refine")).toBe(true);
 	});
 
+	it("reruns W0.5 refine when audit_review route policy detects coarse reviewer tasks", async () => {
+		const reviewTasks = Array.from({ length: 6 }, (_, index) => ({
+			id: `R${index + 1}`,
+			persona: "reviewer",
+			objective: `review domain ${index + 1}`,
+			parallelGroup: "review",
+			dependsOn: ["T0-1"],
+			needsRefine: true,
+		}));
+		const auditDag = JSON.stringify({
+			epic: "repo_audit",
+			phases: [
+				{ id: "P0", name: "scan", tasks: [
+					{ id: "T0-1", persona: "repo_scout", objective: "scan repo", parallelGroup: "scan", dependsOn: [], needsRefine: false },
+				]},
+				{ id: "P1", name: "review", tasks: reviewTasks },
+				{ id: "P2", name: "docs", tasks: [
+					{ id: "D1", persona: "docs", objective: "write report", parallelGroup: "docs", dependsOn: reviewTasks.map((task) => task.id), needsRefine: true },
+				]},
+			],
+		});
+		const refinedReviewerTasks = Array.from({ length: 6 }, (_, index) => ({
+			taskId: `R${index + 1}`,
+			allowedGlobs: [`src/domain-${index + 1}/**`],
+			acceptance: [`domain ${index + 1}`],
+			blockedCondition: "blocked if scoped files are unavailable",
+		}));
+		const refineFeedbacks: Array<string | undefined> = [];
+		let refineCalls = 0;
+		const planner = stubPlanner({
+			compile: async () => `<task_dag>${auditDag}</task_dag>`,
+			refine: async (_dag, _perception, _memory, _catalog, feedback) => {
+				refineCalls++;
+				refineFeedbacks.push(feedback);
+				if (refineCalls === 1) {
+					return `<refine>${JSON.stringify({
+						tasks: [
+							{ taskId: "R1", allowedGlobs: ["src/utils/**", "src/mcp/**"], acceptance: ["dead exports", "MCP wiring", "stale docs", "TUI conflicts"], blockedCondition: "blocked if files are unavailable" },
+							...refinedReviewerTasks.slice(1),
+							{ taskId: "D1", allowedGlobs: ["docs/**"], acceptance: ["write report"], blockedCondition: "blocked if reviewer report is unavailable" },
+						],
+					})}</refine>`;
+				}
+				return `<refine>${JSON.stringify({
+					tasks: [
+						...refinedReviewerTasks,
+						{ taskId: "D1", allowedGlobs: ["docs/**"], acceptance: ["write report"], blockedCondition: "blocked if reviewer reports are unavailable" },
+					],
+				})}</refine>`;
+			},
+		});
+		const events: PipelineEvent[] = [];
+		const executor: WorkerExecutor = {
+			run: async (contract) => {
+				if (contract.personaId === "reviewer") return `<task_report><status>ok</status><decision>approve</decision><risk_level>low</risk_level></task_report>`;
+				if (contract.personaId === "docs") return `<task_report><status>ok</status><summary>report written</summary></task_report>`;
+				return OK_WITH_FILE_LIST;
+			},
+		};
+
+		const result = await runPipeline("repo-wide dead code conflict audit", {
+			projectRoot: dir,
+			planner,
+			executor,
+			onEvent: (e) => events.push(e),
+			choiceGate: continueGate(),
+			routeHint: { route: "audit_review", scale: "large" },
+		});
+
+		expect(result.ok).toBe(true);
+		expect(refineCalls).toBe(2);
+		expect(refineFeedbacks[1]).toContain("coarse-task-risk");
+		expect(refineFeedbacks[1]).toContain("reviewer_scope_too_broad");
+		expect(events.some((e) => e.type === "pipeline_choice" && (e as any).reason === "coarse-task-risk")).toBe(true);
+	});
+
 	it("writes inline refine contextPack and passes its path to the worker", async () => {
 		const contextPack = "# Context Pack: T2-1\n\n## Goal\nImplement upload.";
 		const seenContextPacks = new Map<string, string | undefined>();
@@ -882,6 +959,45 @@ Reason:
 		expect(contextPath).toBeTruthy();
 		expect(contextPath).toContain(path.join(".minimum", "tasks", "image_upload", "context-packs", "T2-1.md"));
 		expect(fs.readFileSync(contextPath!, "utf-8")).toContain("Implement upload.");
+	});
+
+	it("bounds inline refine contextPack by the route policy context cap", async () => {
+		const contextPack = `# Context Pack: T2-1\n\n${"x".repeat(20_000)}\nTAIL_SHOULD_BE_TRUNCATED`;
+		const seenContextPacks = new Map<string, string | undefined>();
+		const executor: WorkerExecutor = {
+			run: async (contract) => {
+				seenContextPacks.set(contract.taskId, contract.inputs.contextPack);
+				return OK;
+			},
+		};
+		const planner = stubPlanner({
+			refine: async () =>
+				`<refine>${JSON.stringify({
+					tasks: [
+						{
+							taskId: "T2-1",
+							allowedGlobs: ["src/upload.ts"],
+							acceptance: ["returns 201"],
+							contextPack,
+						},
+					],
+				})}</refine>`,
+		});
+
+		const result = await runPipeline("image upload backend", {
+			projectRoot: dir,
+			planner,
+			executor,
+			choiceGate: continueGate(),
+			routeHint: { route: "implementation", scale: "small" },
+		});
+
+		expect(result.ok).toBe(true);
+		const contextPath = seenContextPacks.get("T2-1");
+		expect(contextPath).toBeTruthy();
+		const written = fs.readFileSync(contextPath!, "utf-8");
+		expect(estimateTokens(written)).toBeLessThanOrEqual(3_005);
+		expect(written).not.toContain("TAIL_SHOULD_BE_TRUNCATED");
 	});
 
 	it("loops W3.5 repair tasks back through W1/W0.5/W2/3 once", async () => {

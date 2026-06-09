@@ -14,7 +14,7 @@ import type {
 } from "../loop/MiMoLoop.js";
 import type { BillingMode } from "../clients/MiMoPricing.js";
 import type { ICodeValidator } from "../types/validator.js";
-import { getPersona } from "../personas/PersonaRegistry.js";
+import { buildMasterStagePrompt, getPersona, type MasterPlannerStage } from "../personas/PersonaRegistry.js";
 import { loadProjectSkillPrompt, loadGrantedSkillPrompt } from "../personas/PersonaSkillMap.js";
 import { renderGrantableCatalog, type GrantableCatalog } from "./CapabilityCatalog.js";
 import type { ChatMessage } from "../types/common.js";
@@ -94,11 +94,12 @@ export function createPlannerBridge(
 	const master = getPersona("master_planner");
 	const contextBuilder = getPersona("context_builder");
 	const missionCheckerPrompt = loadInlinePrompt("mission_checker.md");
-	const sys = async (objective?: string): Promise<ChatMessage> => {
+	const sys = async (stage: MasterPlannerStage, objective?: string): Promise<ChatMessage> => {
 		const projectSkills = opts.projectRoot
-			? await loadProjectSkillPrompt({ projectRoot: opts.projectRoot, personaId: "master_planner", stage: "W1", objective })
+			? await loadProjectSkillPrompt({ projectRoot: opts.projectRoot, personaId: "master_planner", stage, objective })
 			: "";
-		return { role: "system", content: projectSkills ? `${master.systemPrompt}\n\n${projectSkills}` : master.systemPrompt };
+		const basePrompt = buildMasterStagePrompt(stage);
+		return { role: "system", content: projectSkills ? `${basePrompt}\n\n${projectSkills}` : basePrompt };
 	};
 	const missionSys = (): ChatMessage => ({ role: "system", content: missionCheckerPrompt });
 	const max = opts.maxTokens ?? master.maxTokens;
@@ -107,7 +108,7 @@ export function createPlannerBridge(
 		compile: async (userRequest, memoryPrefix, feedback) => {
 			const routePolicyText = opts.routePolicy ? `\n\n${renderRoutePolicyForPlanner(opts.routePolicy)}` : "";
 			const messages: ChatMessage[] = [
-				await sys(userRequest),
+				await sys("W0", userRequest),
 				{
 					role: "user",
 					content: `${memoryPrefix}\n\n# User Request\n${userRequest}${routePolicyText}\n\nCompile the coarse task DAG now. Output a single <task_dag> block.`,
@@ -151,7 +152,7 @@ export function createPlannerBridge(
 			return collectText(
 				client,
 				[
-					await sys(),
+					await sys("W0.5"),
 					{
 						role: "user",
 						content: userContent.join("\n\n"),
@@ -213,7 +214,7 @@ export function createPlannerBridge(
 			];
 			return collectText(
 				client,
-				[await sys(), { role: "user", content: userContent.join("\n\n") }],
+				[await sys("W2-plan"), { role: "user", content: userContent.join("\n\n") }],
 				max,
 			);
 		},
@@ -221,7 +222,7 @@ export function createPlannerBridge(
 			collectText(
 				client,
 				[
-					await sys(),
+					await sys("W4"),
 					{
 						role: "user",
 						content: [

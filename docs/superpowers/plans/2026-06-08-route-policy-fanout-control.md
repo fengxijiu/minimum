@@ -56,7 +56,7 @@
 - Modify: `src/personas/prompts/master-planner.md`
 - Modify: `tests/unit/personas.test.ts`
 
-- [ ] **Step 1: Write failing prompt tests**
+- [x] **Step 1: Write failing prompt tests**
 
 Add assertions under the existing `master_planner prompt` describe block:
 
@@ -88,7 +88,7 @@ it("defines audit_review scoped scout and reviewer fan-out rules", () => {
 });
 ```
 
-- [ ] **Step 2: Run the failing tests**
+- [x] **Step 2: Run the failing tests**
 
 Run:
 
@@ -98,7 +98,7 @@ npm test -- tests/unit/personas.test.ts
 
 Expected: FAIL because the new route policy text is not present.
 
-- [ ] **Step 3: Add the policy prompt**
+- [x] **Step 3: Add the policy prompt**
 
 In `src/personas/prompts/master-planner.md`, add a section before or inside the existing workload/fan-out policy:
 
@@ -159,7 +159,7 @@ Final docs consolidation depends on completed reviewer reports.
   reviewer reports exist.
 ```
 
-- [ ] **Step 4: Run prompt tests**
+- [x] **Step 4: Run prompt tests**
 
 Run:
 
@@ -178,7 +178,7 @@ Expected: PASS for the new prompt assertions.
 - Modify: `src/orchestration/index.ts`
 - Test: `tests/unit/route-policy.test.ts`
 
-- [ ] **Step 1: Write failing route policy tests**
+- [x] **Step 1: Write failing route policy tests**
 
 Create `tests/unit/route-policy.test.ts`:
 
@@ -233,7 +233,7 @@ describe("RoutePolicy", () => {
 });
 ```
 
-- [ ] **Step 2: Run the failing tests**
+- [x] **Step 2: Run the failing tests**
 
 Run:
 
@@ -243,7 +243,7 @@ npm test -- tests/unit/route-policy.test.ts
 
 Expected: FAIL because `RoutePolicy.ts` does not exist.
 
-- [ ] **Step 3: Implement `RoutePolicy.ts`**
+- [x] **Step 3: Implement `RoutePolicy.ts`**
 
 Create `src/orchestration/RoutePolicy.ts`:
 
@@ -464,7 +464,7 @@ export function renderRoutePolicyForPlanner(policy: RoutePolicy): string {
 }
 ```
 
-- [ ] **Step 4: Export the module**
+- [x] **Step 4: Export the module**
 
 Add to `src/orchestration/index.ts`:
 
@@ -480,7 +480,7 @@ export {
 } from "./RoutePolicy.js";
 ```
 
-- [ ] **Step 5: Run route policy tests**
+- [x] **Step 5: Run route policy tests**
 
 Run:
 
@@ -500,7 +500,7 @@ Expected: PASS.
 - Modify: `src/orchestration/MiMoPipeline.ts`
 - Test: add focused tests if a TUI command parser helper exists; otherwise cover through bridge/pipeline unit tests.
 
-- [ ] **Step 1: Extract route flags from `/orchestrate` input**
+- [x] **Step 1: Extract route flags from `/orchestrate` input**
 
 Add a helper near the TUI command handling code:
 
@@ -531,11 +531,11 @@ function parseOrchestrateFlags(input: string): {
 }
 ```
 
-- [ ] **Step 2: Pass route hints into `PipelineBridge`**
+- [x] **Step 2: Pass route hints into `PipelineBridge`**
 
 Extend the call path so `/orchestrate --route audit_review --fanout large ...` sends the clean user request and route hint to the pipeline runner. The final `effectiveInput` must not include the flags.
 
-- [ ] **Step 3: Add pipeline option types**
+- [x] **Step 3: Add pipeline option types**
 
 In `src/orchestration/MiMoPipeline.ts`, extend `PipelineOptions`:
 
@@ -549,7 +549,7 @@ export interface PipelineOptions {
 }
 ```
 
-- [ ] **Step 4: Run focused smoke test**
+- [x] **Step 4: Run focused smoke test**
 
 Run:
 
@@ -568,7 +568,7 @@ Expected: prints `ok`.
 - Modify: `src/orchestration/MiMoPipeline.ts`
 - Test: `tests/unit/pipeline-bridge.test.ts` or a new focused planner adapter test
 
-- [ ] **Step 1: Write failing planner adapter test**
+- [x] **Step 1: Write failing planner adapter test**
 
 If `tests/unit/pipeline-bridge.test.ts` is usable after resolving its existing conflict markers, add:
 
@@ -587,7 +587,7 @@ it("injects route policy into planner compile prompts", async () => {
 });
 ```
 
-- [ ] **Step 2: Extend planner bridge options**
+- [x] **Step 2: Extend planner bridge options**
 
 In `src/orchestration/ClientAdapters.ts`:
 
@@ -601,7 +601,7 @@ export interface PlannerBridgeOptions {
 }
 ```
 
-- [ ] **Step 3: Append policy text to compile/refine user content**
+- [x] **Step 3: Append policy text to compile/refine user content**
 
 In `compile`:
 
@@ -618,7 +618,7 @@ if (opts.routePolicy) {
 }
 ```
 
-- [ ] **Step 4: Compute policy in `runPipeline`**
+- [x] **Step 4: Compute policy in `runPipeline`**
 
 At the start of `runPipeline`:
 
@@ -628,7 +628,7 @@ const routePolicy = opts.routePolicy ?? classifyRoutePolicy(userRequest, opts.ro
 
 Pass this policy into the planner created by `PipelineBridge`.
 
-- [ ] **Step 5: Run planner adapter test**
+- [x] **Step 5: Run planner adapter test**
 
 Run:
 
@@ -647,7 +647,7 @@ Expected: PASS if the file is clean. If it still has pre-existing conflict marke
 - Modify: `src/orchestration/MiMoPipeline.ts`
 - Test: `tests/unit/route-policy-validator.test.ts`
 
-- [ ] **Step 1: Write failing validator tests**
+- [x] **Step 1: Write failing validator tests**
 
 Create `tests/unit/route-policy-validator.test.ts`:
 
@@ -722,7 +722,7 @@ describe("RoutePolicyValidator", () => {
 });
 ```
 
-- [ ] **Step 2: Run failing validator tests**
+- [x] **Step 2: Run failing validator tests**
 
 Run:
 
@@ -732,7 +732,7 @@ npm test -- tests/unit/route-policy-validator.test.ts
 
 Expected: FAIL because the validator does not exist.
 
-- [ ] **Step 3: Implement validator**
+- [x] **Step 3: Implement validator**
 
 Create `src/orchestration/RoutePolicyValidator.ts`:
 
@@ -834,7 +834,7 @@ function requiresSameScoutFileList(contract: TaskContract, first: TaskContract):
 }
 ```
 
-- [ ] **Step 4: Run validator tests**
+- [x] **Step 4: Run validator tests**
 
 Run:
 
@@ -852,7 +852,7 @@ Expected: PASS.
 - Modify: `src/orchestration/MiMoPipeline.ts`
 - Test: `tests/unit/mimo-pipeline.test.ts`
 
-- [ ] **Step 1: Write failing pipeline test**
+- [x] **Step 1: Write failing pipeline test**
 
 Add a test that stubs planner compile/refine with an `audit_review large` policy but only one broad reviewer. Expect the refine method to be called again with feedback containing `coarse-task-risk`.
 
@@ -889,7 +889,7 @@ it("reruns refine when audit_review route policy detects coarse reviewer tasks",
 });
 ```
 
-- [ ] **Step 2: Run failing pipeline test**
+- [x] **Step 2: Run failing pipeline test**
 
 Run:
 
@@ -899,7 +899,7 @@ npm test -- tests/unit/mimo-pipeline.test.ts -t "reruns refine when audit_review
 
 Expected: FAIL because the policy validator is not wired into W0.5.
 
-- [ ] **Step 3: Add route policy validation after `refineDag`**
+- [x] **Step 3: Add route policy validation after `refineDag`**
 
 After `allContracts = refined.contracts; refineErrors = refined.errors;` in `MiMoPipeline.ts`:
 
@@ -918,7 +918,7 @@ if (routePolicyIssues.length > 0 && autoRefineRounds < MAX_AUTO_REFINE_ROUNDS) {
 }
 ```
 
-- [ ] **Step 4: Run focused pipeline test**
+- [x] **Step 4: Run focused pipeline test**
 
 Run:
 
@@ -937,7 +937,7 @@ Expected: PASS.
 - Modify: `src/orchestration/DynamicHarness.ts`
 - Test: `tests/unit/dynamic-harness.test.ts`
 
-- [ ] **Step 1: Write failing harness test**
+- [x] **Step 1: Write failing harness test**
 
 Add:
 
@@ -966,7 +966,7 @@ it("uses route policy persona caps instead of hardcoded cap 5", async () => {
 });
 ```
 
-- [ ] **Step 2: Extend harness options**
+- [x] **Step 2: Extend harness options**
 
 In `src/orchestration/DagHarness.ts`:
 
@@ -979,7 +979,7 @@ export interface DagHarnessOptions {
 }
 ```
 
-- [ ] **Step 3: Build persona caps from policy or registry**
+- [x] **Step 3: Build persona caps from policy or registry**
 
 In `DynamicHarness.ts`:
 
@@ -999,7 +999,7 @@ function personaCapFor(personaId: string, options?: DagHarnessOptions): number {
 
 Replace the hardcoded `personaCaps` object with a lookup inside `canLaunch`.
 
-- [ ] **Step 4: Make reviewer registry cap practical**
+- [x] **Step 4: Make reviewer registry cap practical**
 
 In `src/personas/PersonaRegistry.ts`, update reviewer:
 
@@ -1009,7 +1009,7 @@ parallelism: { soloPerWave: false, maxConcurrent: 2 },
 
 Route policy can raise it to `3` for `audit_review large`.
 
-- [ ] **Step 5: Run dynamic harness tests**
+- [x] **Step 5: Run dynamic harness tests**
 
 Run:
 
@@ -1029,11 +1029,11 @@ Expected: PASS.
 - Modify: `src/memory/governance/ContextPackBuilder.ts` if context pack generation needs policy budget.
 - Test: `tests/unit/worker-loop.test.ts`
 
-- [ ] **Step 1: Preserve current token behavior**
+- [x] **Step 1: Preserve current token behavior**
 
 Do not globally increase `maxTokens`. Keep `persona.maxTokens` as the completion token cap passed to the model. The fan-out improvement should come from narrower tasks and smaller context packs, not from larger coarse contexts.
 
-- [ ] **Step 2: Pass execution depth from route policy**
+- [x] **Step 2: Pass execution depth from route policy**
 
 In `createWorkerExecutor`, when calling `workerLoop.runTask`, add:
 
@@ -1043,7 +1043,7 @@ executionDepth: opts.routePolicy?.executionDepthByPersona[contract.personaId],
 
 Extend `WorkerExecutorOptions` to accept `routePolicy?: RoutePolicy`.
 
-- [ ] **Step 3: Keep `WorkerLoop` budget resolution as source of step limits**
+- [x] **Step 3: Keep `WorkerLoop` budget resolution as source of step limits**
 
 `WorkerLoop` already resolves:
 
@@ -1054,7 +1054,7 @@ const maxSteps = input.maxSteps ?? budget.maxSteps;
 
 Do not pass `persona.maxSteps` unless a later route policy explicitly needs per-task overrides.
 
-- [ ] **Step 4: Apply context pack caps where packs are built**
+- [x] **Step 4: Apply context pack caps where packs are built**
 
 When a context pack is built for a refined task, use:
 
@@ -1070,7 +1070,7 @@ medium: 5000
 large: 6000
 ```
 
-- [ ] **Step 5: Run worker and context-pack tests**
+- [x] **Step 5: Run worker and context-pack tests**
 
 Run:
 
@@ -1087,7 +1087,7 @@ Expected: PASS.
 **Files:**
 - No new source files unless tests expose type errors.
 
-- [ ] **Step 1: Run focused route/fanout suite**
+- [x] **Step 1: Run focused route/fanout suite**
 
 Run:
 
@@ -1097,7 +1097,7 @@ npm test -- tests/unit/route-policy.test.ts tests/unit/route-policy-validator.te
 
 Expected: PASS for the focused suite.
 
-- [ ] **Step 2: Run TUI smoke import**
+- [x] **Step 2: Run TUI smoke import**
 
 Run:
 
@@ -1107,7 +1107,7 @@ npx tsx -e "import('./tui/src/app.tsx').then(() => console.log('ok'))"
 
 Expected: prints `ok`.
 
-- [ ] **Step 3: Run typecheck**
+- [x] **Step 3: Run typecheck**
 
 Run:
 
@@ -1117,7 +1117,7 @@ npm run typecheck
 
 Expected: May fail because the current worktree already has unrelated type issues in files such as `src/bridge/PipelineBridge.ts`, `src/orchestration/DynamicHarness.ts`, and `src/orchestration/index.ts`. Do not fix unrelated issues unless the user asks; report them separately.
 
-- [ ] **Step 4: Handle existing test blocker**
+- [x] **Step 4: Handle existing test blocker**
 
 Before relying on `tests/unit/pipeline-bridge.test.ts`, inspect and resolve the pre-existing conflict markers around the test file if the user explicitly allows that cleanup. Otherwise, keep route policy prompt injection covered by a new clean unit test.
 

@@ -1,4 +1,5 @@
 import type { AppState, ApprovalMode, Message, PlanStep, Permission, FileEntry } from './types.js';
+import { getAvailableApprovalModes } from './approval-modes.js';
 import { loadLearnedSkillsSync } from '../../dist/skills/LearnedSkillLoader.js';
 
 export interface SkillEntry {
@@ -108,7 +109,7 @@ export const COMMANDS: TuiCommand[] = [
   { name: 'diff',   desc: 'Toggle inline diff blocks',      category: 'view' },
   { name: 'plan',   desc: 'Plan a task or manage drafts', category: 'view', usage: '/plan [task | on | off | gate <off|code_personas|all_writes> | drafts | preview <id> | import <id> | reject <id>]' },
   { name: 'mode',   desc: 'Switch mode: agent / chat / orchestrate', category: 'view', usage: '/mode <agent|chat|orchestrate>' },
-  { name: 'orchestrate', desc: 'Run the multi-persona pipeline', category: 'view', usage: '/orchestrate <request>', aliases: ['pipeline', 'orch'] },
+  { name: 'orchestrate', desc: 'Run the multi-persona pipeline (optional: --route / --scale)', category: 'view', usage: '/orchestrate [--route <route>] [--scale <small|medium|large|auto>] <request>', aliases: ['pipeline', 'orch'] },
   { name: 'pet',    desc: 'Toggle liliMiMO mascot',         category: 'view' },
   { name: 'clear',  desc: 'Clear the chat stream',          category: 'view', aliases: ['cls'] },
   { name: 'verbose', desc: 'Toggle verbose mode',           category: 'view', aliases: ['v'] },
@@ -297,7 +298,7 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
     case 'orchestrate': {
       const request = args.join(' ').trim();
       if (!request) {
-        return { kind: 'note', note: 'Usage: /orchestrate <request>', tone: 'warn' };
+        return { kind: 'note', note: 'Usage: /orchestrate [--route <route>] [--scale <small|medium|large|auto>] <request>', tone: 'warn' };
       }
       return { kind: 'pipeline', text: request };
     }
@@ -420,16 +421,23 @@ export function runCommand(raw: string, state: AppState, ctx: CommandContext = {
     }
 
     case 'permission': {
-      const MODES: ApprovalMode[] = ['read-only', 'auto-edit', 'full-auto'];
+      const MODES = getAvailableApprovalModes(state.mode);
       const current = state.approvalMode;
+      const currentIndex = MODES.indexOf(current);
+      const cycleFrom = currentIndex >= 0 ? currentIndex : MODES.indexOf('auto-edit');
       const target = (args[0] as ApprovalMode | undefined) ??
-        MODES[(MODES.indexOf(current) + 1) % MODES.length]!;
+        MODES[(cycleFrom + 1) % MODES.length]!;
       if (!MODES.includes(target)) {
-        return { kind: 'note', note: `Unknown permission mode "${target}". Valid: ${MODES.join(' | ')}`, tone: 'warn' };
+        return {
+          kind: 'note',
+          note: `Unknown permission mode "${target}". Valid in ${state.mode}: ${MODES.join(' | ')}`,
+          tone: 'warn',
+        };
       }
       const labels: Record<ApprovalMode, string> = {
         'read-only': 'read-only — writes blocked',
         'auto-edit': 'auto-edit — file writes allowed, shell needs confirmation',
+        'aware': 'aware — auto-edit + pipeline W0.5/W3.5 auto decisions',
         'full-auto': 'full-auto — unrestricted',
       };
       return { kind: 'patch', patch: { approvalMode: target }, note: `Permission mode → ${labels[target]}.`, tone: 'ok' };

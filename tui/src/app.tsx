@@ -13,6 +13,7 @@ import { createInitialState } from './seed.js';
 import {
   runCommand, type CommandOutcome, type CommandContext,
 } from './commands.js';
+import { getAvailableApprovalModes, normalizeApprovalMode } from './approval-modes.js';
 import { LearnCommandService } from '../../dist/learn/LearnCommandService.js';
 import { PlanCommandService } from '../../dist/plans/PlanCommandService.js';
 import { loadLearnedSkillsSync } from '../../dist/skills/LearnedSkillLoader.js';
@@ -209,10 +210,11 @@ const ChatZone = React.memo(function ChatZone({
 
 /** StatusBar zone — only re-renders on status/usage changes. */
 const StatusZone = React.memo(function StatusZone({
-  statusState, approvalMode, ctxUsed, ctxMax, hint, usage, mcpLoading,
+  statusState, approvalMode, ctxUsed, ctxMax, hint, usage, mcpLoading, showAwareApproval,
 }: {
   statusState: SessionState; approvalMode?: ApprovalMode;
   ctxUsed: number; ctxMax: number; hint: string; usage: UsageInfo; mcpLoading: AppState['mcpLoading'];
+  showAwareApproval: boolean;
 }) {
   return (
     <StatusBar
@@ -223,6 +225,7 @@ const StatusZone = React.memo(function StatusZone({
       hint={hint}
       usage={usage}
       mcpLoading={mcpLoading}
+      showAwareApproval={showAwareApproval}
     />
   );
 });
@@ -479,7 +482,10 @@ export function App({
         return;
       case 'patch':
         if (o.patch.approvalMode) {
-          runner.setApprovalMode?.(o.patch.approvalMode);
+          // CHANGED: "aware" is a TUI-level pipeline mode; tool approvals still
+          // map to auto-edit while choiceGate auto-resolves W0.5/W3.5 prompts.
+          runner.setApprovalMode?.(o.patch.approvalMode === 'aware' ? 'auto-edit' : o.patch.approvalMode);
+          choiceGate?.setMode(o.patch.approvalMode === 'aware' ? 'aware' : 'manual');
         }
         if (o.patch.messages) dispatch({ type: 'messages.clear' });
         for (const msg of o.patch.messages ?? []) {
@@ -751,7 +757,7 @@ export function App({
         return;
       }
     }
-  }, [exit, dispatch, pipelineRunner, refreshSharedChatHistory, restoreSession, runner]);
+  }, [choiceGate, exit, dispatch, pipelineRunner, refreshSharedChatHistory, restoreSession, runner]);
 
   // Track which runner owns the currently in-flight turn so permission
   // resolutions route to the right side. EngineBridge and PipelineBridge each
@@ -814,10 +820,11 @@ export function App({
       runner.resolvePermission?.(perm.id, { approved: true, reason: 'user approved always' });
     }
     runner.setApprovalMode?.('full-auto');
+    choiceGate?.setMode('manual');
     dispatch({ type: 'pending.clear' });
     dispatch({ type: 'approval.change', mode: 'full-auto' });
     dispatch({ type: 'system.push', text: `Always allowing — switched to full-auto.`, tone: 'ok' });
-  }, [dispatch]);
+  }, [choiceGate, dispatch]);
 
   const pickChoice = useCallback((optionId: string) => {
     choiceGate?.resolve({ type: 'pick', optionId });
@@ -1122,21 +1129,25 @@ export function App({
     if (ac && !ac.signal.aborted) ac.abort();
   }, []);
 
-  // Shift+Tab cycles through the three user-facing permission modes. The full
+  // Shift+Tab cycles through the four user-facing permission modes. The full
   // ApprovalMode union also includes "suggest" and "never" but those are
   // command-driven (/perm ...) corners, not part of the keyboard cycle.
-  const APPROVAL_CYCLE: ReadonlyArray<ApprovalMode> = useMemo(
-    () => ['read-only', 'auto-edit', 'full-auto'],
-    [],
-  );
+  const applyApprovalMode = useCallback((mode: ApprovalMode) => {
+    // CHANGED: "aware" is a TUI-level pipeline mode; tool approvals still map
+    // to auto-edit while choiceGate auto-resolves W0.5/W3.5 confirmations.
+    runner.setApprovalMode?.(mode === 'aware' ? 'auto-edit' : mode);
+    choiceGate?.setMode(mode === 'aware' ? 'aware' : 'manual');
+  }, [runner, choiceGate]);
   const cycleApprovalMode = useCallback(() => {
+    const cycle = getAvailableApprovalModes(stateRef.current.mode);
     const cur = stateRef.current.approvalMode;
-    const idx = APPROVAL_CYCLE.indexOf(cur);
-    const next = APPROVAL_CYCLE[(idx + 1) % APPROVAL_CYCLE.length] ?? 'auto-edit';
-    runner.setApprovalMode?.(next);
+    const idx = cycle.indexOf(cur);
+    const cycleFrom = idx >= 0 ? idx : cycle.indexOf('auto-edit');
+    const next = cycle[(cycleFrom + 1) % cycle.length] ?? 'auto-edit';
+    applyApprovalMode(next);
     dispatch({ type: 'approval.change', mode: next });
     dispatch({ type: 'toast.show', text: `Permission: ${next}`, tone: 'info', ttlMs: 2000 });
-  }, [APPROVAL_CYCLE, runner, dispatch]);
+  }, [applyApprovalMode, dispatch]);
 
   const prepareRunner = useCallback((targetRunner: Runner | undefined) => {
     if (!targetRunner) return;
@@ -1241,6 +1252,19 @@ export function App({
     if (!targetRunner) return;
     handoffToRunner(targetRunner);
   }, [sMode, sTurnInProgress, pipelineRunner, runner, handoffToRunner]);
+
+  useEffect(() => {
+    const normalizedMode = normalizeApprovalMode(sMode, sApprovalMode);
+    if (normalizedMode === sApprovalMode) return;
+    applyApprovalMode(normalizedMode);
+    dispatch({ type: 'approval.change', mode: normalizedMode });
+    dispatch({
+      type: 'toast.show',
+      text: `Permission: ${normalizedMode} (aware is only available in orchestrate mode)`,
+      tone: 'info',
+      ttlMs: 2500,
+    });
+  }, [sMode, sApprovalMode, applyApprovalMode, dispatch]);
 
   // ── Keep the live (repainting) region minimal ───────────────────────
   // Continuously commit the longest *settled* prefix of messages into the
@@ -1432,6 +1456,7 @@ export function App({
         approvalMode={sApprovalMode}
         ctxUsed={sCtxUsed}
         ctxMax={sCtxMax}
+        showAwareApproval={sMode === 'orchestrate'}
         hint={[
           sMessages.length > 0 && `${sMessages.length}msg`,
           sEdits.length > 0 && `${sEdits.length} staged`,
@@ -1507,7 +1532,7 @@ async function runInit(cwd: string, dispatch: Dispatch, args?: string[]) {
     baseUrl,
     defaultModel: 'mimo-v2.5-pro',
     maxTokens: 131072,
-    maxSteps: 50,
+    maxSteps: 200,
     approvalMode: 'suggest',
     enableReadGuard: true,
     context:      { foldThreshold: 0.70, aggressiveThreshold: 0.75, tailFraction: 0.25 },
