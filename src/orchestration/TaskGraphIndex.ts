@@ -210,6 +210,10 @@ export class TaskGraphIndex {
 			this.status.set(taskId, "pending");
 		}
 	}
+	/** @returns ids of every task currently held in the deferred set. */
+	getDeferredIds(): string[] {
+		return [...this.blockedByDeferred];
+	}
 
 	/** @returns count of tasks that are still pending / ready / scheduled / running. */
 	get pendingCount(): number {

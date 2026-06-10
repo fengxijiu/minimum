@@ -102,6 +102,28 @@ describe("DynamicHarness", () => {
 		expect(events.some((e) => e.type === "write_lock_wait")).toBe(true);
 	});
 
+	it("skips write-lock serialisation when worktree isolation is on", async () => {
+		const { executor, peak } = trackingExecutor();
+		// Same overlapping glob as the serialisation test, but each task now runs in
+		// its own worktree — write locks are skipped so both run concurrently.
+		const a = mkContract({ taskId: "T1", pathPolicy: { allowedGlobs: ["src/shared.ts"], forbiddenGlobs: [] } });
+		const b = mkContract({ taskId: "T2", pathPolicy: { allowedGlobs: ["src/shared.ts"], forbiddenGlobs: [] } });
+
+		const events: HarnessEvent[] = [];
+		const results = await new DynamicHarness().runToCompletion([a, b], {
+			projectRoot: dir,
+			executor,
+			worktreeIsolation: true,
+			onEvent: (e) => events.push(e),
+		});
+
+		// Isolation skips write locks → overlapping globs run in parallel.
+		expect(peak()).toBe(2);
+		expect(results.filter((r) => r.status === "ok")).toHaveLength(2);
+		// No write-lock contention is surfaced because the gate is disabled.
+		expect(events.some((e) => e.type === "write_lock_wait")).toBe(false);
+	});
+
 	it("runs independent tasks with disjoint write globs in parallel", async () => {
 		const { executor, peak } = trackingExecutor();
 		const a = mkContract({ taskId: "T1", pathPolicy: { allowedGlobs: ["src/a.ts"], forbiddenGlobs: [] } });

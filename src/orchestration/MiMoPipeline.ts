@@ -205,6 +205,9 @@ export interface PipelineOptions {
 	/** Optional routing metadata forwarded by PipelineBridge. */
 	routeHint?: RouteHint;
 	routePolicy?: RoutePolicy;
+	/** When true, worker tasks run in isolated git worktrees; the scheduler then
+	 *  skips write-lock serialisation. Forwarded by PipelineBridge from MiMoConfig. */
+	worktreeIsolation?: boolean;
 	/** Optional W2-plan gate mode forwarded by PipelineBridge. */
 	planMode?: PlanMode;
 	/** Optional cap for W2-plan revision rounds. */
@@ -1100,6 +1103,8 @@ async function runWaves(
 	const allResults = await harness.runToCompletion(contracts, {
 		projectRoot: opts.projectRoot,
 		executor: opts.executor,
+		...(opts.routePolicy && { routePolicy: opts.routePolicy }),
+		...(opts.worktreeIsolation && { worktreeIsolation: true }),
 		onEvent: (event) => {
 			emit({ type: "harness", event });
 			const result = adaptHarnessEventToTaskResult(event, contractsById);

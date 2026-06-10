@@ -1,6 +1,7 @@
 import type { TaskContract } from "./TaskContract.js";
 import type { HarnessEvent } from "./HarnessEvent.js";
 import type { TaskRunnerOptions, TaskResult } from "./TaskRunner.js";
+import type { RoutePolicy } from "./RoutePolicy.js";
 
 /**
  * DagHarness — unified scheduler interface for executing a set of TaskContracts.
@@ -14,6 +15,11 @@ import type { TaskRunnerOptions, TaskResult } from "./TaskRunner.js";
 export interface DagHarnessOptions extends TaskRunnerOptions {
 	/** Called for every harness event (lifecycle, task transitions, etc.). */
 	onEvent?: (event: HarnessEvent) => void;
+	/** Optional route-level scheduling policy for persona concurrency caps. */
+	routePolicy?: RoutePolicy;
+	/** When true, each task runs in its own git worktree, so the scheduler skips
+	 *  write-lock serialisation and lets overlapping-glob tasks run in parallel. */
+	worktreeIsolation?: boolean;
 }
 
 export interface DagHarness {

@@ -78,7 +78,13 @@ export class ResourceManager {
 		allowedGlobs: string[],
 		needsShell?: boolean,
 		needsInstall?: boolean,
-	): { ok: true } | { ok: false; reasons: Array<{ type: string; detail: string }> } {
+	):
+		| { ok: true }
+		| {
+				ok: false;
+				reasons: Array<{ type: string; detail: string }>;
+				writeConflicts: Array<{ taskId: string; glob: string }>;
+		  } {
 		const reasons: Array<{ type: string; detail: string }> = [];
 
 		// 1. Global concurrency
@@ -121,7 +127,7 @@ export class ResourceManager {
 			if (!this.config.skipWriteLocks && writeConflicts.length === 0) {
 				this.writeLocks.unlock(taskId);
 			}
-			return { ok: false, reasons };
+			return { ok: false, reasons, writeConflicts };
 		}
 
 		this.globalActive++;

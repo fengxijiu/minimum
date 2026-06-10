@@ -422,6 +422,7 @@ export class PipelineBridge {
 			planner,
 			executor,
 			routePolicy,
+			...(this.opts.worktreeIsolation && { worktreeIsolation: true }),
 			...(routeHint && { routeHint }),
 			onEvent: push,
 			choiceGate: this.opts.choiceGate,
