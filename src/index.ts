@@ -16,6 +16,7 @@ export * from "./loop/index.js";
 export { MiMoClient, resolveBaseUrl } from "./clients/MiMoClient.js";
 export type {
 	MiMoClientOptions,
+	MiMoApiConcurrencyConfig,
 	ChatOptions,
 	ChatResponse,
 } from "./clients/MiMoClient.js";

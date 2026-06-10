@@ -6,6 +6,7 @@ export type {
 	ValidationConfig,
 	CompletenessConfig,
 	MemoryConfig,
+	ApiConcurrencyConfig,
 } from "./MiMoConfig.js";
 export { DEFAULT_MIMO_CONFIG, mergeConfig } from "./MiMoConfig.js";
 export {
