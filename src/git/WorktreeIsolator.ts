@@ -33,6 +33,9 @@ export class WorktreeIsolator {
    * Returns the worktree path (the directory the task should use as its root).
    */
   async create(taskId: string, baseSha: string): Promise<string> {
+    if (this.entries.has(taskId)) {
+      throw new Error(`WorktreeIsolator: task "${taskId}" already has a worktree`);
+    }
     const worktreePath = path.join(
       os.tmpdir(),
       `minimum-wt-${taskId.replace(/[^a-zA-Z0-9-]/g, "_")}-${Date.now()}`,
@@ -64,6 +67,7 @@ export class WorktreeIsolator {
       return { sha: null, changedFiles: [] };
     }
     const changed = await this.store.listChangedFiles(baseSha, sha);
+    // Applies changed files to the main working tree (store.config.workTree).
     await this.store.applyCommitFiles(sha, baseSha, this.store.config.workTree);
     return { sha, changedFiles: changed.map((f) => f.path) };
   }
@@ -77,6 +81,7 @@ export class WorktreeIsolator {
     if (!entry) return;
     this.entries.delete(taskId);
     await this.store.removeWorktree(entry.worktreePath, /* force */ true);
+    // Safety net: removeWorktree --force swallows errors; ensure directory is gone.
     await fs.rm(entry.worktreePath, { recursive: true, force: true }).catch(() => {});
   }
 }

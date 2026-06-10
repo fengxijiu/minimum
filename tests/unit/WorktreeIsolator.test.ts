@@ -45,6 +45,20 @@ describe("WorktreeIsolator.create", () => {
       await isolator.discard("task-1");
     }
   });
+
+  it("throws when create is called twice for the same taskId", async () => {
+    const store = await AgentGitStore.resolve(tmpDir);
+    const baseSha = await makeBaseCommit(store);
+    const isolator = new WorktreeIsolator(store);
+    await isolator.create("task-dup", baseSha);
+    try {
+      await expect(
+        isolator.create("task-dup", baseSha),
+      ).rejects.toThrow('task "task-dup" already has a worktree');
+    } finally {
+      await isolator.discard("task-dup");
+    }
+  });
 });
 
 describe("WorktreeIsolator.commitAndApply", () => {
