@@ -713,6 +713,7 @@ export async function createEngineRunner(
         model: userConfig.defaultModel ?? 'mimo-v2.5-pro',
         billingMode,
         ...(userConfig.capabilityGrants && { capabilityGrants: userConfig.capabilityGrants }),
+        ...(userConfig.worktreeIsolation && { worktreeIsolation: true }),
       });
       pipelineRunner = {
         send: (input: string) => pipelineBridge.send(input),

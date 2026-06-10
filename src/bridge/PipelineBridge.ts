@@ -55,6 +55,9 @@ export interface PipelineBridgeOptions {
 	capabilityGrants?: { enabled?: boolean; denylistSkills?: string[]; denylistMcpTools?: string[] };
 	/** W2-plan audit gate: which write tasks must propose+get a plan approved before executing. */
 	planMode?: PlanMode;
+	/** When true, each worker task runs in an isolated git worktree; writes are
+	 *  routed there and applied back to projectRoot on completion. From MiMoConfig. */
+	worktreeIsolation?: boolean;
 	/** Cap on REVISE round-trips for the W2-plan gate (default 2). */
 	maxPlanRevisions?: number;
 	/** Static route hint used when the caller wants to force a path for every send. */
@@ -304,6 +307,7 @@ export class PipelineBridge {
 			...(this.opts.validator && { validator: this.opts.validator }),
 			...(this.opts.model && { model: this.opts.model }),
 			...(this.opts.billingMode && { billingMode: this.opts.billingMode }),
+			...(this.opts.worktreeIsolation && { worktreeIsolation: true }),
 			onWorkerEvent: (contract, ev) => {
 				let snap = progress.get(contract.taskId);
 				if (!snap) {

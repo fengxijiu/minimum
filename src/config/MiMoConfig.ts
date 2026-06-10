@@ -1,5 +1,6 @@
 import type { ToolRateLimitOption } from "../tools/limits/ToolRateLimiter.js";
 import type { McpServerConfig } from "../mcp/types.js";
+import type { MiMoApiConcurrencyConfig } from "../clients/MiMoClient.js";
 
 /**
  * MiMoConfig — 统一配置类型。
@@ -90,6 +91,8 @@ export interface MemoryConfig {
 	};
 }
 
+export interface ApiConcurrencyConfig extends MiMoApiConcurrencyConfig {}
+
 export interface MiMoConfig {
 	/** MiMo API key（来自 `init` 注册的全局配置，env MIMO_API_KEY 优先） */
 	apiKey?: string;
@@ -107,6 +110,8 @@ export interface MiMoConfig {
 	enableReadGuard?: boolean;
 	/** plan mode：只读规划，禁止变异工具（默认 false） */
 	planMode?: boolean;
+	/** worktree 隔离：每个 worker 任务在独立 git worktree 中执行，完成后再把变更应用回 projectRoot（默认 false） */
+	worktreeIsolation?: boolean;
 	/** 单步工具调用超时阈值（毫秒）。超时后弹出 ask_choice 询问用户是否继续/关闭。0 禁用（默认 0）。 */
 	toolTimeoutMs?: number;
 	/**
@@ -130,6 +135,7 @@ export interface MiMoConfig {
 	completeness?: CompletenessConfig;
 	/** 单代理长期记忆配置 */
 	memory?: MemoryConfig;
+	apiConcurrency?: ApiConcurrencyConfig;
 	/** 工具调用限流配置(false 关闭,缺省使用 ToolRateLimiter 的内置默认)*/
 	rateLimit?: ToolRateLimitOption;
 	/** Shell 工具配置(exec_shell + run_background 等的默认值)*/
@@ -162,6 +168,7 @@ export const DEFAULT_MIMO_CONFIG: Required<MiMoConfig> = {
 	budgetUsd: 0,
 	enableReadGuard: true,
 	planMode: false,
+	worktreeIsolation: false,
 	toolTimeoutMs: 0,
 	approvalMode: "suggest",
 	context: {
@@ -205,6 +212,11 @@ export const DEFAULT_MIMO_CONFIG: Required<MiMoConfig> = {
 			enabled: true,
 		},
 	},
+	apiConcurrency: {
+		maxConcurrent: 0,
+		throttleOn429MaxConcurrent: 20,
+		throttleWindowMs: 60_000,
+	},
 	rateLimit: {},
 	shell: {
 		timeoutSec: 60,
@@ -232,6 +244,8 @@ export function mergeConfig(user: MiMoConfig = {}): Required<MiMoConfig> {
 		enableReadGuard:
 			user.enableReadGuard ?? DEFAULT_MIMO_CONFIG.enableReadGuard,
 		planMode: user.planMode ?? DEFAULT_MIMO_CONFIG.planMode,
+		worktreeIsolation:
+			user.worktreeIsolation ?? DEFAULT_MIMO_CONFIG.worktreeIsolation,
 		toolTimeoutMs: user.toolTimeoutMs ?? DEFAULT_MIMO_CONFIG.toolTimeoutMs,
 		approvalMode: user.approvalMode ?? DEFAULT_MIMO_CONFIG.approvalMode,
 		context: { ...DEFAULT_MIMO_CONFIG.context, ...user.context },
@@ -254,6 +268,10 @@ export function mergeConfig(user: MiMoConfig = {}): Required<MiMoConfig> {
 				...DEFAULT_MIMO_CONFIG.memory.compaction,
 				...user.memory?.compaction,
 			},
+		},
+		apiConcurrency: {
+			...DEFAULT_MIMO_CONFIG.apiConcurrency,
+			...user.apiConcurrency,
 		},
 		rateLimit:
 			user.rateLimit === false
