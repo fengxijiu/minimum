@@ -138,7 +138,7 @@ read-only 任务（`allowedGlobs` 为空）不参与冲突，可正常并行。
 
 ---
 
-# Round 4 — F1 + F2 落地 & 移除 Wave 模式
+# Round 4 — F1 + F2 落地 & 移除旧调度模式
 
 ## F1 — Launch Gate 接入 DynamicHarness（§5.2 Artifact Gate）✅
 
@@ -154,13 +154,13 @@ read-only 任务（`allowedGlobs` 为空）不参与冲突，可正常并行。
 
 新增测试：F1 缺 artifact → defer（含 `resource_wait` + `queue_idle`）、artifact 齐备 → 运行、F2 degraded → fallback 放行。
 
-## 移除 Wave 模式 ✅
+## 移除旧调度模式 ✅
 
-- 删除 `WaveHarness.ts`、`WaveScheduler.ts`、`tests/unit/wave-scheduler.test.ts`。
-- `MiMoPipeline`：去掉 `harnessMode` 选项；`runWaves` → `runDag`，恒用 `DynamicHarness`（静态 import）。`WaveEvent` 类型迁入 `MiMoPipeline`（作为 TUI 进度协议的稳定线格式，PipelineBridge 翻译器不变）。
+- 删除旧调度器文件及对应测试。
+- `MiMoPipeline`：去掉 `harnessMode` 选项；统一由 `DynamicHarness` 发出 `HarnessEvent`。
 - `index.ts` 去除 `WaveHarness` / `schedule` / `ScheduleOptions` 导出；`HarnessEvent` 删除无人 emit 的 `wave_start` / `wave_complete`。
 - `DagHarness` / 其它注释里的 WaveScheduler/WaveHarness 引用一并清理。
-- `TaskGraph.ts`（`buildWaves` / `partitionByParallelGroup`）**保留**——它是有独立测试的 DAG 工具（环检测/分层/glob 冲突），非执行"模式"。
+- `TaskGraph.ts` 的静态 DAG 分层工具**保留**——仅用于环检测/分层/glob 冲突，不再代表运行时模式。
 
 ## 回归
 
@@ -168,4 +168,4 @@ read-only 任务（`allowedGlobs` 为空）不参与冲突，可正常并行。
 
 ## Verdict (Round 4)
 
-✅ **Approve** — F1/F2 落地并加测试，Wave 执行路径已移除，DynamicHarness 成为唯一调度器。
+✅ **Approve** — F1/F2 落地并加测试，旧执行路径已移除，DynamicHarness 成为唯一调度器。

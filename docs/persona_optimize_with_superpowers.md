@@ -363,7 +363,7 @@ A task is dispatchable only if:
 - acceptance criteria are observable
 - ContextPack source is known
 - dependency order provides required evidence
-- no same-wave writer overlaps writable files
+- no same-batch writer overlaps writable files
 - reviewer task exists when behavior changes
 
 ## Review Gate Rule

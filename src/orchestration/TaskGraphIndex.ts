@@ -211,10 +211,6 @@ export class TaskGraphIndex {
 		}
 	}
 
-	getDeferredIds(): string[] {
-		return [...this.blockedByDeferred].sort((a, b) => this.comparePriority(a, b));
-	}
-
 	/** @returns count of tasks that are still pending / ready / scheduled / running. */
 	get pendingCount(): number {
 		let c = 0;

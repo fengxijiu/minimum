@@ -110,8 +110,8 @@ export interface WorkerLoopOptions {
 	validator?: ICodeValidator;
 	/**
 	 * When true, each task gets an isolated git worktree.
-	 * Changes are committed and applied back to `projectRoot` after completion.
-	 * Phase 4: lifecycle hooks only — actual write routing requires Phase 5.
+	 * All LLM tool writes are routed to the worktree path; on completion the
+	 * changes are committed and applied back to `projectRoot`.
 	 */
 	worktreeIsolation?: boolean;
 }
@@ -240,6 +240,7 @@ export class WorkerLoop {
 
 		// Worktree isolation lifecycle — create before task, commit+apply after.
 		let worktreeBaseSha: string | null = null;
+		let activeWorktreePath: string | undefined;
 		const isolator = this.worktreeIsolation
 			? new WorktreeIsolator(gitStore)
 			: null;
@@ -255,10 +256,11 @@ export class WorkerLoop {
 					);
 					await gitStore.setRef("refs/minimum/init", worktreeBaseSha);
 				}
-				await isolator.create(input.contract.taskId, worktreeBaseSha);
+				activeWorktreePath = await isolator.create(input.contract.taskId, worktreeBaseSha);
 			} catch {
 				// Worktree creation failed — proceed without isolation.
 				worktreeBaseSha = null;
+				activeWorktreePath = undefined;
 			}
 		}
 
@@ -338,6 +340,7 @@ export class WorkerLoop {
 					snapshots,
 					emit,
 					pendingStaticCompileCommands,
+					activeWorktreePath,
 				);
 				usage.toolCalls += 1;
 
@@ -534,7 +537,9 @@ export class WorkerLoop {
 		snapshots: GitSnapshotManager,
 		emit: (e: WorkerEvent) => void,
 		pendingStaticCompileCommands: Set<string>,
+		worktreePath?: string,
 	): Promise<ExecuteOutcome> {
+		const effectiveRoot = worktreePath ?? this.projectRoot;
 		const name = call.function.name;
 
 		// Defense-in-depth: the model can hallucinate a tool name that isn't in
@@ -571,7 +576,7 @@ export class WorkerLoop {
 			const decision = checkWrite(targetPath, {
 				persona,
 				contract,
-				projectRoot: this.projectRoot,
+				projectRoot: effectiveRoot,
 			});
 			if (!decision.ok) {
 				return { kind: "denied", reason: decision.reason };
@@ -582,12 +587,12 @@ export class WorkerLoop {
 		// within the contract's allowed paths before execution.
 		if (name === "install_dependency") {
 			const { dependencyWriteTargets } = await import("../tools/shell/InstallDependencyTool.js");
-			const writeTargets = dependencyWriteTargets(args, this.projectRoot);
+			const writeTargets = dependencyWriteTargets(args, effectiveRoot);
 			for (const target of writeTargets) {
 				const decision = checkWrite(target, {
 					persona,
 					contract,
-					projectRoot: this.projectRoot,
+					projectRoot: effectiveRoot,
 				});
 				if (!decision.ok) {
 					return {
@@ -629,7 +634,7 @@ export class WorkerLoop {
 		// We snapshot even when no validator is wired so future runs with one
 		// would still be able to restore (cheap — one fs.readFile per file).
 		if (isWrite && targetPath) {
-			await snapshots.snapshot(targetPath, this.projectRoot);
+			await snapshots.snapshot(targetPath, effectiveRoot);
 		}
 
 		// Execute the tool itself.
@@ -637,7 +642,7 @@ export class WorkerLoop {
 		try {
 			const result = await this.tools.execute(call, {
 				...(signal !== undefined && { signal }),
-				workingDirectory: this.projectRoot,
+				workingDirectory: effectiveRoot,
 			});
 			executed = {
 				content: result.content,
@@ -669,7 +674,7 @@ export class WorkerLoop {
 			if (validation && !validation.passed) {
 				const restored = await snapshots.restore(
 					targetPath,
-					this.projectRoot,
+					effectiveRoot,
 				);
 				const issues = validation.checks.filter((c) => !c.passed);
 				const diagLines = issues

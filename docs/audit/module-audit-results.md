@@ -23,7 +23,7 @@ All 54 audit items checked. **54/54 pass.** Two bugs found and fixed during the 
 |---|------|--------|-------|
 | B1 | `MiMoLoop` — `skillsSystemContent` wired | ✅ Pass | Field in `MiMoLoopConfig`; `refreshSkillsContext()` called in `run()` after `refreshMemoryPrelude()`. Sentinel-based replace pattern matches memory prelude |
 | B2 | `EngineBridge` — all UiEvent kinds handled, approval/permission loop correct | ✅ Pass | `mapLoopEvent()` covers all 16 LoopEvent types. Approval loop uses `askUser()`/`resolvePermission()` with pending queue + `Promise.race` |
-| B3 | `PipelineBridge` — sends UiEvents for W0–W4 + W3.5 phases | ✅ Pass | `translatePipelineEvent` handles `phase_start`, `memory_loaded`, `dag_compiled`, `wave`, `refine_done`, `finalize_done`, `pipeline_complete`, `pipeline_error` |
+| B3 | `PipelineBridge` — sends UiEvents for W0–W4 + W3.5 phases | ✅ Pass | `translatePipelineEvent` handles `phase_start`, `memory_loaded`, `dag_compiled`, `harness`, `refine_done`, `finalize_done`, `pipeline_complete`, `pipeline_error` |
 | B4 | `createMiMoStack` — all builtins registered | ✅ Pass | 11 builtins: TodoWriteTool, ApplyPatchTool, ChoiceTool, ExecShellTool, RunBackgroundTool, JobOutputTool, WaitForJobTool, StopJobTool, ListJobsTool, SymbolsTool, CodeQueryTool |
 | B5 | TUI `engine.ts` — runner interface fully implemented, `skillsSystemContent` wired | ✅ Pass | All 8 Runner methods implemented; `loop.configure({ skillsSystemContent })` called after `createMiMoStack` |
 

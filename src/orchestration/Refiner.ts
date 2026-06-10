@@ -13,7 +13,7 @@ import type {
 /**
  * Refiner — the W0.5 second pass.
  *
- * After Wave 1 (perception), the master re-examines tasks marked
+ * After the W1 perception stage, the master re-examines tasks marked
  * `needs_refine` and emits a `<refine>` block that supplies the concrete
  * `allowedGlobs` (and optionally forbiddenGlobs / acceptance / constraints)
  * that were left "TBD-after-refine" at coarse-compile time. This module

@@ -65,7 +65,7 @@ export interface TaskContract {
 	outputSchema: OutputSchema;
 
 	/**
-	 * Tasks sharing a parallelGroup run concurrently in the same Wave.
+	 * Tasks sharing a parallelGroup run concurrently in the same scheduler batch.
 	 * ContractValidator + TaskGraph guarantee disjoint allowedGlobs within
 	 * a group so two writers never touch the same file.
 	 */

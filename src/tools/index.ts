@@ -9,7 +9,7 @@ export {
 	DEFAULT_MAX_RESULT_BYTES,
 } from "./truncateResult.js";
 
-// Wave 1 新增
+// 工具链新增
 export {
 	ToolRateLimiter,
 	normalizeToolRateLimitConfig,
