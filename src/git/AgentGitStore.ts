@@ -218,6 +218,23 @@ export class AgentGitStore {
     }
   }
 
+  /**
+   * Return commit SHAs reachable from `ref` in reverse-chronological order.
+   * Returns an empty array if the ref does not exist or the repo is empty.
+   */
+  async gitLog(ref: string, maxCount?: number): Promise<string[]> {
+    try {
+      const args = ["log", "--format=%H"];
+      if (maxCount !== undefined) args.push(`--max-count=${maxCount}`);
+      args.push(ref);
+      const output = await this.git(args);
+      if (!output) return [];
+      return output.split("\n").filter(Boolean);
+    } catch {
+      return [];
+    }
+  }
+
   /** Stores a blob in the object store, returns its sha. */
   async storeBlob(content: string): Promise<string> {
     return this.git(["hash-object", "-w", "--stdin"], { input: content });

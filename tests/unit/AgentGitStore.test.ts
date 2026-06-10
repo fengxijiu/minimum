@@ -134,3 +134,61 @@ describe("AgentGitStore.commitTree trailers + forEachRef", () => {
     expect(result).toEqual([]);
   });
 });
+
+describe("AgentGitStore.gitLog", () => {
+  it("returns SHAs in reverse-chronological order", async () => {
+    execFileSync("git", ["init"], { cwd: tmpDir });
+    execFileSync("git", ["config", "user.email", "t@t"], { cwd: tmpDir });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: tmpDir });
+    const store = await AgentGitStore.resolve(tmpDir);
+
+    const sha1 = await store.commitTree(
+      [{ relativePath: "a.txt", content: "a" }],
+      "first",
+      {},
+    );
+    await store.setRef("refs/minimum/run-log/test", sha1);
+
+    const sha2 = await store.commitTree(
+      [{ relativePath: "b.txt", content: "b" }],
+      "second",
+      { parent: sha1 },
+    );
+    await store.setRef("refs/minimum/run-log/test", sha2);
+
+    const log = await store.gitLog("refs/minimum/run-log/test");
+    expect(log).toHaveLength(2);
+    expect(log[0]).toBe(sha2); // most recent first
+    expect(log[1]).toBe(sha1);
+  });
+
+  it("returns empty array for a missing ref", async () => {
+    execFileSync("git", ["init"], { cwd: tmpDir });
+    const store = await AgentGitStore.resolve(tmpDir);
+    expect(await store.gitLog("refs/minimum/does-not-exist")).toEqual([]);
+  });
+
+  it("respects maxCount", async () => {
+    execFileSync("git", ["init"], { cwd: tmpDir });
+    execFileSync("git", ["config", "user.email", "t@t"], { cwd: tmpDir });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: tmpDir });
+    const store = await AgentGitStore.resolve(tmpDir);
+
+    let parent: string | undefined;
+    const shas: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      const sha = await store.commitTree(
+        [{ relativePath: `f${i}.txt`, content: `${i}` }],
+        `commit ${i}`,
+        { parent },
+      );
+      parent = sha;
+      shas.push(sha);
+    }
+    await store.setRef("refs/minimum/run-log/many", parent!);
+
+    const log = await store.gitLog("refs/minimum/run-log/many", 3);
+    expect(log).toHaveLength(3);
+    expect(log[0]).toBe(shas[4]); // most recent
+  });
+});
