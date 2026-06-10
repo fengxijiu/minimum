@@ -260,11 +260,11 @@ export class AgentGitStore {
     worktreePath: string,
     message: string,
   ): Promise<string | null> {
-    await execFileAsync("git", ["-C", worktreePath, "add", "-A"]);
+    await execFileAsync("git", ["-C", worktreePath, "add", "-A"], { maxBuffer: 64 * 1024 * 1024 });
 
     let hasStagedChanges = false;
     try {
-      await execFileAsync("git", ["-C", worktreePath, "diff", "--cached", "--quiet"]);
+      await execFileAsync("git", ["-C", worktreePath, "diff", "--cached", "--quiet"], { maxBuffer: 64 * 1024 * 1024 });
     } catch {
       hasStagedChanges = true;
     }
@@ -279,8 +279,9 @@ export class AgentGitStore {
     };
     await execFileAsync("git", ["-C", worktreePath, "commit", "-m", message], {
       env: identityEnv,
+      maxBuffer: 64 * 1024 * 1024,
     });
-    const { stdout } = await execFileAsync("git", ["-C", worktreePath, "rev-parse", "HEAD"]);
+    const { stdout } = await execFileAsync("git", ["-C", worktreePath, "rev-parse", "HEAD"], { maxBuffer: 64 * 1024 * 1024 });
     return stdout.trim();
   }
 
@@ -293,21 +294,17 @@ export class AgentGitStore {
     toSha: string,
   ): Promise<Array<{ path: string; deleted: boolean }>> {
     if (fromSha === toSha) return [];
-    try {
-      const output = await this.git(["diff", "--name-status", fromSha, toSha]);
-      if (!output) return [];
-      return output
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => {
-          const tab = line.indexOf("\t");
-          const status = line.slice(0, tab);
-          const filePath = line.slice(tab + 1);
-          return { path: filePath, deleted: status === "D" };
-        });
-    } catch {
-      return [];
-    }
+    const output = await this.git(["diff", "--name-status", fromSha, toSha]);
+    if (!output) return [];
+    return output
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => {
+        const tab = line.indexOf("\t");
+        const status = line.slice(0, tab);
+        const filePath = line.slice(tab + 1);
+        return { path: filePath, deleted: status === "D" };
+      });
   }
 
   /**
@@ -324,6 +321,8 @@ export class AgentGitStore {
       if (deleted) {
         await fs.unlink(fullPath).catch(() => {});
       } else {
+        // NOTE: readFileAtCommit returns a string; binary files would be corrupted.
+        // Acceptable for Phase 4 which handles text-only TypeScript source tasks.
         const content = await this.readFileAtCommit(commitSha, relativePath);
         if (content !== null) {
           await fs.mkdir(path.dirname(fullPath), { recursive: true });
