@@ -135,6 +135,141 @@ describe("AgentGitStore.commitTree trailers + forEachRef", () => {
   });
 });
 
+describe("AgentGitStore worktree primitives", () => {
+  // We track worktree paths to clean them up even if tests fail
+  const worktrees: string[] = [];
+
+  afterEach(async () => {
+    for (const wt of worktrees) {
+      fs.rmSync(wt, { recursive: true, force: true });
+    }
+    worktrees.length = 0;
+  });
+
+  async function makeStoreWithCommit(): Promise<{
+    store: AgentGitStore;
+    baseSha: string;
+  }> {
+    execFileSync("git", ["init"], { cwd: tmpDir });
+    execFileSync("git", ["config", "user.email", "t@t"], { cwd: tmpDir });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: tmpDir });
+    const store = await AgentGitStore.resolve(tmpDir);
+    const baseSha = await store.commitTree(
+      [{ relativePath: "seed.txt", content: "seed" }],
+      "initial",
+    );
+    // We need a real branch/HEAD so that git worktree add works.
+    // Set the ref so the main repo has a HEAD.
+    await store.setRef("refs/heads/main", baseSha);
+    // Also update HEAD to point to that branch:
+    // Actually for git worktree add we just need the SHA, not HEAD.
+    // But git requires the repo to have at least one commit reachable from HEAD
+    // or we pass the SHA directly. Passing SHA + --detach works fine.
+    return { store, baseSha };
+  }
+
+  it("addWorktree creates an isolated working tree checked out at baseSha", async () => {
+    const { store, baseSha } = await makeStoreWithCommit();
+    const wt = path.join(os.tmpdir(), `minimum-wt-test-${Date.now()}`);
+    worktrees.push(wt);
+    await store.addWorktree(wt, baseSha);
+    expect(fs.existsSync(path.join(wt, "seed.txt"))).toBe(true);
+    expect(fs.readFileSync(path.join(wt, "seed.txt"), "utf-8")).toBe("seed");
+    await store.removeWorktree(wt, true);
+  });
+
+  it("removeWorktree with force does not throw if worktree already gone", async () => {
+    const { store, baseSha } = await makeStoreWithCommit();
+    const wt = path.join(os.tmpdir(), `minimum-wt-rm-${Date.now()}`);
+    worktrees.push(wt);
+    await store.addWorktree(wt, baseSha);
+    await store.removeWorktree(wt, true);
+    // Second call should not throw
+    await expect(store.removeWorktree(wt, true)).resolves.toBeUndefined();
+  });
+
+  it("captureWorktreeChanges returns null when worktree is clean", async () => {
+    const { store, baseSha } = await makeStoreWithCommit();
+    const wt = path.join(os.tmpdir(), `minimum-wt-clean-${Date.now()}`);
+    worktrees.push(wt);
+    await store.addWorktree(wt, baseSha);
+    const sha = await store.captureWorktreeChanges(wt, "no-op");
+    expect(sha).toBeNull();
+    await store.removeWorktree(wt, true);
+  });
+
+  it("captureWorktreeChanges commits new files and returns a SHA", async () => {
+    const { store, baseSha } = await makeStoreWithCommit();
+    const wt = path.join(os.tmpdir(), `minimum-wt-cap-${Date.now()}`);
+    worktrees.push(wt);
+    await store.addWorktree(wt, baseSha);
+    fs.writeFileSync(path.join(wt, "result.txt"), "task output", "utf-8");
+    const sha = await store.captureWorktreeChanges(wt, "task: add result");
+    expect(sha).toMatch(/^[0-9a-f]{40}$/);
+    const content = await store.readFileAtCommit(sha!, "result.txt");
+    expect(content).toBe("task output");
+    await store.removeWorktree(wt, true);
+  });
+
+  it("listChangedFiles returns empty array for identical SHAs", async () => {
+    const { store, baseSha } = await makeStoreWithCommit();
+    const result = await store.listChangedFiles(baseSha, baseSha);
+    expect(result).toEqual([]);
+  });
+
+  it("listChangedFiles detects added and deleted files", async () => {
+    const { store, baseSha } = await makeStoreWithCommit();
+    const wt = path.join(os.tmpdir(), `minimum-wt-diff-${Date.now()}`);
+    worktrees.push(wt);
+    await store.addWorktree(wt, baseSha);
+    fs.writeFileSync(path.join(wt, "new.ts"), "export {};", "utf-8");
+    fs.unlinkSync(path.join(wt, "seed.txt"));
+    const toSha = await store.captureWorktreeChanges(wt, "mutate");
+    const files = await store.listChangedFiles(baseSha, toSha!);
+    const paths = files.map((f) => f.path);
+    const deleted = files.filter((f) => f.deleted).map((f) => f.path);
+    expect(paths).toContain("new.ts");
+    expect(paths).toContain("seed.txt");
+    expect(deleted).toContain("seed.txt");
+    expect(deleted).not.toContain("new.ts");
+    await store.removeWorktree(wt, true);
+  });
+
+  it("applyCommitFiles writes new files and removes deleted files in targetRoot", async () => {
+    const { store, baseSha } = await makeStoreWithCommit();
+    const wt = path.join(os.tmpdir(), `minimum-wt-apply-${Date.now()}`);
+    worktrees.push(wt);
+    await store.addWorktree(wt, baseSha);
+    fs.writeFileSync(path.join(wt, "out.ts"), "export const x = 1;", "utf-8");
+    fs.unlinkSync(path.join(wt, "seed.txt"));
+    const toSha = await store.captureWorktreeChanges(wt, "produce output");
+
+    const target = fs.mkdtempSync(path.join(os.tmpdir(), "minimum-apply-"));
+    fs.writeFileSync(path.join(target, "seed.txt"), "old", "utf-8");
+    try {
+      await store.applyCommitFiles(toSha!, baseSha, target);
+      expect(fs.existsSync(path.join(target, "out.ts"))).toBe(true);
+      expect(fs.readFileSync(path.join(target, "out.ts"), "utf-8")).toBe("export const x = 1;");
+      expect(fs.existsSync(path.join(target, "seed.txt"))).toBe(false);
+    } finally {
+      fs.rmSync(target, { recursive: true, force: true });
+    }
+    await store.removeWorktree(wt, true);
+  });
+
+  it("applyCommitFiles is a no-op when commitSha === baseSha", async () => {
+    const { store, baseSha } = await makeStoreWithCommit();
+    const target = fs.mkdtempSync(path.join(os.tmpdir(), "minimum-noop-"));
+    try {
+      // Should not throw and should not modify target
+      await store.applyCommitFiles(baseSha, baseSha, target);
+      expect(fs.readdirSync(target)).toEqual([]);
+    } finally {
+      fs.rmSync(target, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("AgentGitStore.gitLog", () => {
   it("returns SHAs in reverse-chronological order", async () => {
     execFileSync("git", ["init"], { cwd: tmpDir });

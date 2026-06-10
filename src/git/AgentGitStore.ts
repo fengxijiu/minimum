@@ -235,6 +235,104 @@ export class AgentGitStore {
     }
   }
 
+  /** Creates a git worktree at `worktreePath` checked out at `baseSha`. */
+  async addWorktree(worktreePath: string, baseSha: string): Promise<void> {
+    await this.git(["worktree", "add", "--detach", worktreePath, baseSha]);
+  }
+
+  /** Removes a worktree. Swallows errors (worktree may already be gone). */
+  async removeWorktree(worktreePath: string, force?: boolean): Promise<void> {
+    const args = ["worktree", "remove", worktreePath];
+    if (force) args.push("--force");
+    try {
+      await this.git(args);
+    } catch {
+      // Swallow: worktree may already be gone
+    }
+  }
+
+  /**
+   * Stages all changes in the worktree and commits them.
+   * Returns the commit SHA or null if no changes.
+   * Uses `execFileAsync` directly (not `this.git()`) to operate in the worktree context.
+   */
+  async captureWorktreeChanges(
+    worktreePath: string,
+    message: string,
+  ): Promise<string | null> {
+    await execFileAsync("git", ["-C", worktreePath, "add", "-A"]);
+
+    let hasStagedChanges = false;
+    try {
+      await execFileAsync("git", ["-C", worktreePath, "diff", "--cached", "--quiet"]);
+    } catch {
+      hasStagedChanges = true;
+    }
+    if (!hasStagedChanges) return null;
+
+    const identityEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      GIT_AUTHOR_NAME: "minimum-agent",
+      GIT_AUTHOR_EMAIL: "agent@minimum.local",
+      GIT_COMMITTER_NAME: "minimum-agent",
+      GIT_COMMITTER_EMAIL: "agent@minimum.local",
+    };
+    await execFileAsync("git", ["-C", worktreePath, "commit", "-m", message], {
+      env: identityEnv,
+    });
+    const { stdout } = await execFileAsync("git", ["-C", worktreePath, "rev-parse", "HEAD"]);
+    return stdout.trim();
+  }
+
+  /**
+   * Lists files that differ between two commits.
+   * Returns empty array for identical SHAs.
+   */
+  async listChangedFiles(
+    fromSha: string,
+    toSha: string,
+  ): Promise<Array<{ path: string; deleted: boolean }>> {
+    if (fromSha === toSha) return [];
+    try {
+      const output = await this.git(["diff", "--name-status", fromSha, toSha]);
+      if (!output) return [];
+      return output
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => {
+          const tab = line.indexOf("\t");
+          const status = line.slice(0, tab);
+          const filePath = line.slice(tab + 1);
+          return { path: filePath, deleted: status === "D" };
+        });
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Reads changed files from a commit and writes/deletes them in `targetRoot`.
+   */
+  async applyCommitFiles(
+    commitSha: string,
+    baseSha: string,
+    targetRoot: string,
+  ): Promise<void> {
+    const changed = await this.listChangedFiles(baseSha, commitSha);
+    for (const { path: relativePath, deleted } of changed) {
+      const fullPath = path.join(targetRoot, relativePath);
+      if (deleted) {
+        await fs.unlink(fullPath).catch(() => {});
+      } else {
+        const content = await this.readFileAtCommit(commitSha, relativePath);
+        if (content !== null) {
+          await fs.mkdir(path.dirname(fullPath), { recursive: true });
+          await fs.writeFile(fullPath, content, "utf-8");
+        }
+      }
+    }
+  }
+
   /** Stores a blob in the object store, returns its sha. */
   async storeBlob(content: string): Promise<string> {
     return this.git(["hash-object", "-w", "--stdin"], { input: content });
