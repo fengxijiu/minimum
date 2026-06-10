@@ -24,6 +24,12 @@ export interface ResourceConfig {
 	personaCaps: Partial<Record<PersonaId, number>>;
 	/** Max concurrent shell/install commands across all tasks. */
 	shellMax: number;
+	/**
+	 * When true, skip WriteLockManager gating entirely.
+	 * Use this when worktree isolation guarantees each task has its own
+	 * filesystem tree and concurrent writes cannot corrupt each other.
+	 */
+	skipWriteLocks?: boolean;
 }
 
 const DEFAULT_CONFIG: ResourceConfig = {
@@ -88,13 +94,16 @@ export class ResourceManager {
 			reasons.push({ type: "persona_concurrency", detail: `${personaId} limit reached (${personaActive}/${personaCap})` });
 		}
 
-		// 3. Write locks
-		const writeConflicts = this.writeLocks.tryLock(taskId, allowedGlobs);
-		if (writeConflicts.length > 0) {
-			reasons.push({
-				type: "write_lock",
-				detail: `blocked by ${writeConflicts.map(w => `${w.taskId} (${w.glob})`).join(", ")}`,
-			});
+		// 3. Write locks (skip when worktree isolation is active)
+		let writeConflicts: Array<{ taskId: string; glob: string }> = [];
+		if (!this.config.skipWriteLocks) {
+			writeConflicts = this.writeLocks.tryLock(taskId, allowedGlobs);
+			if (writeConflicts.length > 0) {
+				reasons.push({
+					type: "write_lock",
+					detail: `blocked by ${writeConflicts.map(w => `${w.taskId} (${w.glob})`).join(", ")}`,
+				});
+			}
 		}
 
 		// 4. Install lock
@@ -108,8 +117,10 @@ export class ResourceManager {
 		}
 
 		if (reasons.length > 0) {
-			// Roll back write lock attempt
-			if (writeConflicts.length === 0) this.writeLocks.unlock(taskId);
+			// Roll back write lock attempt if we actually acquired one
+			if (!this.config.skipWriteLocks && writeConflicts.length === 0) {
+				this.writeLocks.unlock(taskId);
+			}
 			return { ok: false, reasons };
 		}
 
@@ -124,7 +135,9 @@ export class ResourceManager {
 	 * Release all resources held by a task.
 	 */
 	release(taskId: string, personaId: string, needsShell?: boolean, needsInstall?: boolean): void {
-		this.writeLocks.unlock(taskId);
+		if (!this.config.skipWriteLocks) {
+			this.writeLocks.unlock(taskId);
+		}
 		this.globalActive = Math.max(0, this.globalActive - 1);
 		const count = this.personaActive.get(personaId) ?? 0;
 		this.personaActive.set(personaId, Math.max(0, count - 1));
