@@ -7,15 +7,15 @@ import { groupBy } from "../utils/collections.js";
 import type { CoarseDag, CoarseTask, TaskContract } from "./TaskContract.js";
 
 /**
- * TaskGraph — toposort the DAG and slice into Waves for the scheduler.
+ * TaskGraph — toposort the DAG and slice it into scheduler batches.
  *
- * Wave = set of tasks with all dependencies satisfied by earlier waves AND
- * disjoint allowedGlobs within their parallelGroup. Tasks with cyclic
+ * A batch is a set of tasks whose dependencies are already satisfied and whose
+ * writable globs remain disjoint within each parallelGroup. Tasks with cyclic
  * dependencies cause `build()` to throw; the master must recompile.
  */
 
-export interface WaveSlot {
-	waveIndex: number;
+export interface TaskBatch {
+	batchIndex: number;
 	tasks: TaskContract[];
 }
 
@@ -25,17 +25,17 @@ export interface BuildOptions {
 }
 
 export interface BuildResult {
-	waves: WaveSlot[];
+	batches: TaskBatch[];
 	/** Validation errors per task; empty if validate=false or all valid. */
 	errors: Array<{ taskId: string; errors: string[] }>;
 }
 
 /**
- * Build wave slices from a fully-resolved contract list.
+ * Build scheduler batches from a fully-resolved contract list.
  * Throws on cycles. Returns validation errors as soft failures so the caller
  * can decide whether to abort or surface them as BLOCKED_INVALID_CONTRACT.
  */
-export function buildWaves(
+export function buildTaskBatches(
 	contracts: TaskContract[],
 	opts: BuildOptions = { validate: true },
 ): BuildResult {
@@ -84,19 +84,19 @@ export function buildWaves(
 		}
 	}
 
-	const waves: WaveSlot[] = [];
+	const batches: TaskBatch[] = [];
 	let frontier = contracts
 		.filter((c) => indegree.get(c.taskId) === 0)
 		.map((c) => c.taskId)
 		.sort();
 
 	let scheduled = 0;
-	let waveIndex = 0;
+	let batchIndex = 0;
 	while (frontier.length > 0) {
 		const tasks = frontier.map((id) => byId.get(id)!);
-		waves.push({ waveIndex, tasks });
+		batches.push({ batchIndex, tasks });
 		scheduled += tasks.length;
-		waveIndex++;
+		batchIndex++;
 
 		const next: string[] = [];
 		for (const id of frontier) {
@@ -118,14 +118,14 @@ export function buildWaves(
 		);
 	}
 
-	return { waves, errors };
+	return { batches, errors };
 }
 
-/** Group tasks within a wave by parallelGroup — scheduler uses this to bound concurrency. */
+/** Group tasks within a batch by parallelGroup — scheduler uses this to bound concurrency. */
 export function partitionByParallelGroup(
-	wave: WaveSlot,
+	batch: TaskBatch,
 ): Map<string, TaskContract[]> {
-	return groupBy(wave.tasks, (t) => t.parallelGroup);
+	return groupBy(batch.tasks, (t) => t.parallelGroup);
 }
 
 /** Flatten a coarse DAG into a plain task list (master_planner output). */

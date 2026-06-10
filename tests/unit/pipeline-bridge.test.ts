@@ -182,7 +182,7 @@ describe("createPlannerBridge", () => {
 		expect(userMessage).toContain("## Original Request");
 		expect(userMessage).toContain("## Status");
 		expect(userMessage).toContain("## Task Outcomes");
-		expect(userMessage).toContain("## Written Files");
+		expect(userMessage).toContain("## Written Files (1)");
 		expect(userMessage).toContain("src/upload.ts");
 		expect(userMessage).toContain("## Known Issues");
 		expect(userMessage).toContain("missing screenshots");
@@ -222,76 +222,6 @@ describe("createPlannerBridge", () => {
 		expect(userMessage).toContain("architecture.md");
 		expect(userMessage).toContain("backend.md");
 		expect(userMessage).toContain("Finalize now.");
-	});
-
-	it("uses stage-scoped master planner prompts for compile, refine, auditPlan, and finalize", async () => {
-		const calls: any[] = [];
-		const client: CompletionClient = {
-			async *streamChat(options) {
-				calls.push(options);
-				const systemText = options.messages.find((m: any) => m.role === "system")?.content ?? "";
-				if (systemText.includes("## DAG Output (W0 coarse compile)")) {
-					yield { type: "content", content: DAG };
-					return;
-				}
-				if (systemText.includes("## Refine Output (W0.5)")) {
-					yield { type: "content", content: REFINE };
-					return;
-				}
-				if (systemText.includes("## Plan Audit (W2-plan)")) {
-					yield { type: "content", content: '<plan_audit>{"decision":"APPROVED","corrections":[],"reason":"ok"}</plan_audit>' };
-					return;
-				}
-				yield { type: "content", content: FINALIZE };
-			},
-		};
-		const planner = createPlannerBridge(client);
-
-		await planner.compile("build upload", "MEM");
-		await planner.refine({ epicId: "e", phases: [] }, [], "MEM");
-		await planner.auditPlan!({
-			taskId: "T2-1",
-			persona: "code_executor",
-			objective: "implement upload",
-			allowedGlobs: ["src/upload.ts"],
-			acceptance: ["returns 201"],
-			nonGoals: [],
-			upstreamArtifacts: "T0-1.file_list",
-			plan: "<execution_plan>files_to_change:\n- src/upload.ts</execution_plan>",
-		});
-		await planner.finalize([], [], "CANONICAL MEMORY");
-
-		const compileSys = calls[0]!.messages.find((m: any) => m.role === "system")!.content;
-		const refineSys = calls[1]!.messages.find((m: any) => m.role === "system")!.content;
-		const auditSys = calls[2]!.messages.find((m: any) => m.role === "system")!.content;
-		const finalizeSys = calls[3]!.messages.find((m: any) => m.role === "system")!.content;
-
-		expect(compileSys).toContain("## DAG Output (W0 coarse compile)");
-		expect(compileSys).toContain("Contract-First Planning");
-		expect(compileSys).toContain("Subagent Task Assignment for Minimum");
-		expect(compileSys).not.toContain("## Refine Output (W0.5)");
-		expect(compileSys).not.toContain("## Finalize Output (W4)");
-		expect(compileSys).not.toContain("Finalize Merge Gate");
-
-		expect(refineSys).toContain("## Refine Output (W0.5)");
-		expect(refineSys).toContain("Contract-First Planning");
-		expect(refineSys).toContain("Subagent Task Assignment for Minimum");
-		expect(refineSys).not.toContain("## DAG Output (W0 coarse compile)");
-		expect(refineSys).not.toContain("## Finalize Output (W4)");
-		expect(refineSys).not.toContain("Finalize Merge Gate");
-
-		expect(auditSys).toContain("## Plan Audit (W2-plan)");
-		expect(auditSys).not.toContain("## DAG Output (W0 coarse compile)");
-		expect(auditSys).not.toContain("## Refine Output (W0.5)");
-		expect(auditSys).not.toContain("Contract-First Planning");
-		expect(auditSys).not.toContain("Finalize Merge Gate");
-
-		expect(finalizeSys).toContain("## Finalize Output (W4)");
-		expect(finalizeSys).toContain("Finalize Merge Gate");
-		expect(finalizeSys).toContain("Memory Governance");
-		expect(finalizeSys).not.toContain("## DAG Output (W0 coarse compile)");
-		expect(finalizeSys).not.toContain("## Refine Output (W0.5)");
-		expect(finalizeSys).not.toContain("Contract-First Planning");
 	});
 });
 
@@ -364,12 +294,11 @@ describe("translatePipelineEvent", () => {
 		expect(parseFailure[0]!.kind).not.toBe("error");
 	});
 
-	it("maps a task_done wave event to a tool_result", () => {
+	it("maps a task_done harness event to a tool_result", () => {
 		const out = translatePipelineEvent({
-			type: "wave",
+			type: "harness",
 			event: {
 				type: "task_done",
-				waveIndex: 0,
 				result: { taskId: "T1", personaId: "code_executor", status: "ok", report: "", memoryCandidateBody: undefined, errors: [], durationMs: 1 },
 			},
 		});
@@ -378,10 +307,9 @@ describe("translatePipelineEvent", () => {
 
 	it("maps blocked task_done to a warning notice instead of a failed tool_result", () => {
 		const out = translatePipelineEvent({
-			type: "wave",
+			type: "harness",
 			event: {
 				type: "task_done",
-				waveIndex: 0,
 				result: { taskId: "T1", personaId: "code_executor", status: "blocked", report: "missing T0-1.file_list", memoryCandidateBody: undefined, errors: [], durationMs: 1 },
 			},
 		});
@@ -392,10 +320,9 @@ describe("translatePipelineEvent", () => {
 
 	it("maps errored task_done to detailed error content", () => {
 		const out = translatePipelineEvent({
-			type: "wave",
+			type: "harness",
 			event: {
 				type: "task_done",
-				waveIndex: 0,
 				result: {
 					taskId: "T1",
 					personaId: "code_executor",
@@ -578,7 +505,7 @@ describe("PipelineBridge", () => {
 
 	it("streams pipeline UiEvents and ends with done:true", async () => {
 		// compile, (perception worker), refine, (impl worker), mission check, finalize
-		const client = scriptedClient([DAG, WORKER, REFINE, WORKER, MISSION, FINALIZE]);
+		const client = scriptedClient([DAG, WORKER, REFINE, WORKER, MISSION, FINALIZE, FINAL_BRIEF]);
 		const bridge = new PipelineBridge(client, { projectRoot: dir, choiceGate: new ScriptedChoiceGate() });
 		const events: UiEvent[] = [];
 		for await (const e of bridge.send("build an upload endpoint")) events.push(e);
@@ -586,7 +513,7 @@ describe("PipelineBridge", () => {
 		const phases = events.filter((e) => e.kind === "pipeline").map((e) => (e as any).phase);
 		expect(phases).toContain("W0");
 		expect(phases).toContain("W3.5");
-		expect(phases).toContain("W4");
+		expect(phases).toContain("scheduler");
 		const last = events[events.length - 1]!;
 		expect(last).toEqual({ kind: "done", success: true });
 	});
@@ -601,7 +528,7 @@ describe("PipelineBridge", () => {
 	});
 
 	it("stores and reloads top-level orchestrate history", async () => {
-		const client = scriptedClient([DAG, WORKER, REFINE, WORKER, MISSION, FINALIZE]);
+		const client = scriptedClient([DAG, WORKER, REFINE, WORKER, MISSION, FINALIZE, FINAL_BRIEF]);
 		const bridge = new PipelineBridge(client, { projectRoot: dir, choiceGate: new ScriptedChoiceGate() });
 		for await (const _ of bridge.send("build an upload endpoint")) {
 			/* drain */
@@ -610,7 +537,7 @@ describe("PipelineBridge", () => {
 		expect(history.at(-2)).toMatchObject({ role: "user", content: "build an upload endpoint" });
 		expect(history.at(-1)).toMatchObject({ role: "assistant" });
 
-		const resumed = new PipelineBridge(scriptedClient([DAG, WORKER, REFINE, WORKER, MISSION, FINALIZE]), {
+		const resumed = new PipelineBridge(scriptedClient([DAG, WORKER, REFINE, WORKER, MISSION, FINALIZE, FINAL_BRIEF]), {
 			projectRoot: dir,
 			choiceGate: new ScriptedChoiceGate(),
 		});

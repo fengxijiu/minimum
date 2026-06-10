@@ -1,6 +1,7 @@
 export { MiMoClient, resolveBaseUrl } from "./MiMoClient.js";
 export type {
 	MiMoClientOptions,
+	MiMoApiConcurrencyConfig,
 	ChatOptions,
 	ChatResponse,
 } from "./MiMoClient.js";

@@ -80,6 +80,10 @@ export function createMiMoStack(
 	}
 
 	// Validator — 根据 validation 配置决定启用哪些 checker
+	if (typeof (client as { setApiConcurrency?: (apiConcurrency: typeof cfg.apiConcurrency) => void }).setApiConcurrency === "function") {
+		(client as { setApiConcurrency: (apiConcurrency: typeof cfg.apiConcurrency) => void }).setApiConcurrency(cfg.apiConcurrency);
+	}
+
 	const enabledCheckers: string[] = [];
 	if (cfg.validation.enabled) {
 		if (cfg.validation.syntax) enabledCheckers.push("syntax");

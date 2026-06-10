@@ -377,6 +377,9 @@ export interface WorkerExecutorOptions {
 	/** Forwarded to WorkerLoop for cost/currency labelling. */
 	model?: string;
 	billingMode?: BillingMode;
+	/** When true, each task runs in an isolated git worktree; tool writes route
+	 *  there and are applied back to projectRoot on completion. */
+	worktreeIsolation?: boolean;
 	/** Optional event sink — fired for each tool call, result, and final usage roll-up. */
 	onWorkerEvent?: (
 		contract: TaskContract,
@@ -416,6 +419,7 @@ export function createWorkerExecutor(
 			projectRoot,
 			...(opts.model !== undefined && { model: opts.model }),
 			...(opts.billingMode !== undefined && { billingMode: opts.billingMode }),
+			...(opts.worktreeIsolation !== undefined && { worktreeIsolation: opts.worktreeIsolation }),
 		})
 		: undefined;
 

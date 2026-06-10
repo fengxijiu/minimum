@@ -61,6 +61,12 @@ function mergeProjectOverGlobal(
 			...(pm.compaction ? { compaction: { ...gm.compaction, ...pm.compaction } } : {}),
 		};
 	}
+	if (project.apiConcurrency) {
+		out.apiConcurrency = {
+			...global.apiConcurrency,
+			...project.apiConcurrency,
+		};
+	}
 	return out;
 }
 

@@ -13,6 +13,12 @@ export {
 	type WorkerExecutorOptions,
 } from "./ClientAdapters.js";
 export {
+	classifyRoutePolicy,
+	parseRouteHintFromInput,
+	type RouteHint,
+	type RoutePolicy,
+} from "./RoutePolicy.js";
+export {
 	buildArtifactMap,
 	evaluateLaunchGate,
 	hasNonBlockingDirective,
@@ -21,6 +27,7 @@ export {
 	type GateDecision,
 	type GateIssue,
 } from "./LaunchGate.js";
+export { type PlanMode } from "./PlanGate.js";
 export {
 	STAGE_ORDER,
 	stageDisplay,
@@ -39,7 +46,6 @@ export {
 	type PipelineOptions,
 	type PipelinePhase,
 	type PipelineResult,
-	type WaveEvent,
 	type FinalDeliveryInput,
 	type PlannerBridge,
 } from "./MiMoPipeline.js";
@@ -80,26 +86,12 @@ export {
 	type CompileSuccess,
 } from "./TaskCompiler.js";
 export {
-	classifyRoutePolicy,
-	normalizeRouteHint,
-	parseRouteHintFromInput,
-	renderRoutePolicyForPlanner,
-	type FanoutScale,
-	type OrchestrationRoute,
-	type RouteHint,
-	type RoutePolicy,
-} from "./RoutePolicy.js";
-export {
-	validateAgainstRoutePolicy,
-	type RoutePolicyIssue,
-} from "./RoutePolicyValidator.js";
-export {
-	buildWaves,
+	buildTaskBatches,
 	flattenCoarse,
 	partitionByParallelGroup,
 	type BuildOptions,
 	type BuildResult,
-	type WaveSlot,
+	type TaskBatch,
 } from "./TaskGraph.js";
 export type {
 	CoarseDag,
@@ -121,7 +113,6 @@ export {
 	type WorkerExecutionResult,
 	type WorkerExecutor,
 } from "./TaskRunner.js";
-export type { PlanMode } from "./PlanGate.js";
 export type { DagHarness, DagHarnessOptions } from "./DagHarness.js";
 export type { HarnessEvent, WorkerInternalEvent } from "./HarnessEvent.js";
 export { DynamicHarness } from "./DynamicHarness.js";

@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { MiMoClient } from "../../src/clients/MiMoClient.js";
 import { createMiMoStack } from "../../src/config/createMiMoStack.js";
 import { loadMiMoConfig, mergeConfig } from "../../src/config/index.js";
 import { MockClient } from "../helpers/MockClient.js";
@@ -114,9 +115,36 @@ describe("loadMiMoConfig", () => {
 	it("returns {} when no config file exists anywhere", async () => {
 		expect(await loadMiMoConfig(dir)).toEqual({});
 	});
+
+	it("project apiConcurrency config deeply overrides the global config", async () => {
+		fs.mkdirSync(path.join(home, ".minimum"), { recursive: true });
+		fs.writeFileSync(
+			path.join(home, ".minimum", "config.json"),
+			JSON.stringify({
+				apiConcurrency: {
+					maxConcurrent: 40,
+					throttleOn429MaxConcurrent: 20,
+					throttleWindowMs: 120000,
+				},
+			}),
+		);
+		fs.mkdirSync(path.join(dir, ".minimum"), { recursive: true });
+		fs.writeFileSync(
+			path.join(dir, ".minimum", "config.json"),
+			JSON.stringify({
+				apiConcurrency: { throttleOn429MaxConcurrent: 12 },
+			}),
+		);
+
+		const cfg = await loadMiMoConfig(dir);
+
+		expect(cfg.apiConcurrency?.maxConcurrent).toBe(40);
+		expect(cfg.apiConcurrency?.throttleOn429MaxConcurrent).toBe(12);
+		expect(cfg.apiConcurrency?.throttleWindowMs).toBe(120000);
+	});
 });
 
-describe("mergeConfig memory", () => {
+describe("mergeConfig", () => {
 	it("applies memory defaults", () => {
 		const cfg = mergeConfig({});
 
@@ -141,6 +169,37 @@ describe("mergeConfig memory", () => {
 		expect(cfg.memory.writeback?.autoMergeProject).toBe(true);
 		expect(cfg.memory.writeback?.autoMergeGlobal).toBe(true);
 		expect(cfg.memory.compaction?.enabled).toBe(true);
+	});
+
+	it("defaults worktreeIsolation to false", () => {
+		const cfg = mergeConfig({});
+		expect(cfg.worktreeIsolation).toBe(false);
+	});
+
+	it("respects an explicit worktreeIsolation override", () => {
+		const cfg = mergeConfig({ worktreeIsolation: true });
+		expect(cfg.worktreeIsolation).toBe(true);
+	});
+
+	it("applies api concurrency defaults", () => {
+		const cfg = mergeConfig({});
+
+		expect(cfg.apiConcurrency.maxConcurrent).toBe(0);
+		expect(cfg.apiConcurrency.throttleOn429MaxConcurrent).toBe(20);
+		expect(cfg.apiConcurrency.throttleWindowMs).toBe(60000);
+	});
+
+	it("deep merges user api concurrency overrides", () => {
+		const cfg = mergeConfig({
+			apiConcurrency: {
+				maxConcurrent: 64,
+				throttleWindowMs: 15000,
+			},
+		});
+
+		expect(cfg.apiConcurrency.maxConcurrent).toBe(64);
+		expect(cfg.apiConcurrency.throttleOn429MaxConcurrent).toBe(20);
+		expect(cfg.apiConcurrency.throttleWindowMs).toBe(15000);
 	});
 });
 
@@ -191,5 +250,24 @@ describe("createMiMoStack", () => {
 		});
 
 		expect(stack.memoryManager).toBeUndefined();
+	});
+
+	it("applies apiConcurrency config onto a MiMoClient instance", () => {
+		const tools = new ToolRegistry();
+		const client = new MiMoClient({ apiKey: "sk-test", baseUrl: "https://example.test" });
+
+		createMiMoStack(client, tools, process.cwd(), {
+			apiConcurrency: {
+				maxConcurrent: 32,
+				throttleOn429MaxConcurrent: 18,
+				throttleWindowMs: 45000,
+			},
+		});
+
+		expect(client.getConfig().apiConcurrency).toEqual({
+			maxConcurrent: 32,
+			throttleOn429MaxConcurrent: 18,
+			throttleWindowMs: 45000,
+		});
 	});
 });

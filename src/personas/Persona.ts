@@ -47,9 +47,9 @@ export interface PathPolicy {
 }
 
 export interface Parallelism {
-	/** If true, only one task with this persona may run per Wave. */
+	/** If true, only one task with this persona may run per scheduler batch. */
 	soloPerWave: boolean;
-	/** Hard cap on concurrent instances within a Wave. */
+	/** Hard cap on concurrent instances within a scheduler batch. */
 	maxConcurrent: number;
 }
 

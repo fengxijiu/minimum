@@ -12,13 +12,13 @@ import {
 	runPipeline,
 	stageName,
 	type CompletionClient,
+	type HarnessEvent,
 	type PipelineEvent,
 	type PipelineResult,
 	type PlanMode,
 	type RouteHint,
 	type RoutePolicy,
 	type TaskResult,
-	type WaveEvent,
 } from "../orchestration/index.js";
 import type { UiEvent } from "./EngineBridge.js";
 import type { ConfirmationGate } from "../tools/choice/ConfirmationGate.js";
@@ -55,6 +55,9 @@ export interface PipelineBridgeOptions {
 	capabilityGrants?: { enabled?: boolean; denylistSkills?: string[]; denylistMcpTools?: string[] };
 	/** W2-plan audit gate: which write tasks must propose+get a plan approved before executing. */
 	planMode?: PlanMode;
+	/** When true, each worker task runs in an isolated git worktree; writes are
+	 *  routed there and applied back to projectRoot on completion. From MiMoConfig. */
+	worktreeIsolation?: boolean;
 	/** Cap on REVISE round-trips for the W2-plan gate (default 2). */
 	maxPlanRevisions?: number;
 	/** Static route hint used when the caller wants to force a path for every send. */
@@ -218,36 +221,28 @@ export class PipelineBridge {
 			} else {
 				for (const ui of translatePipelineEvent(e)) queue.push(ui);
 			}
-			// Wave task_done is the authoritative terminal signal — flip the
-			// per-task status so the TUI can stop drawing it as "running".
-			if (e.type === "wave") {
-				const w = e.event;
-				if (w.type === "task_done") {
-					const snap = progress.get(w.result.taskId);
-					if (snap) {
-						snap.status =
-							w.result.status === "ok"
-								? "done"
-								: w.result.status === "blocked"
-									? "blocked"
-									: "error";
-						snap.updatedAt = Date.now();
-						pushUi({
-							kind: "subagent_progress",
-							taskId: w.result.taskId,
-							personaId: w.result.personaId,
-							objective: snap.objective,
-							step: snap.step,
-							maxSteps: snap.maxSteps,
-							toolCalls: snap.toolCalls,
-							...(snap.lastTool !== undefined && { lastTool: snap.lastTool }),
-							...(snap.lastToolArgs !== undefined && { lastToolArgs: snap.lastToolArgs }),
-							tokens: snap.tokens,
-							cost: snap.cost,
-							currency: snap.currency,
-							status: snap.status,
-						});
-					}
+			// NEW: Harness task terminal events are authoritative for final status.
+			const terminal = getTerminalTaskUpdate(e);
+			if (terminal) {
+				const snap = progress.get(terminal.taskId);
+				if (snap) {
+					snap.status = terminal.status;
+					snap.updatedAt = Date.now();
+					pushUi({
+						kind: "subagent_progress",
+						taskId: terminal.taskId,
+						personaId: terminal.personaId ?? "code_executor",
+						objective: snap.objective,
+						step: snap.step,
+						maxSteps: snap.maxSteps,
+						toolCalls: snap.toolCalls,
+						...(snap.lastTool !== undefined && { lastTool: snap.lastTool }),
+						...(snap.lastToolArgs !== undefined && { lastToolArgs: snap.lastToolArgs }),
+						tokens: snap.tokens,
+						cost: snap.cost,
+						currency: snap.currency,
+						status: snap.status,
+					});
 				}
 			}
 			wake();
@@ -312,6 +307,7 @@ export class PipelineBridge {
 			...(this.opts.validator && { validator: this.opts.validator }),
 			...(this.opts.model && { model: this.opts.model }),
 			...(this.opts.billingMode && { billingMode: this.opts.billingMode }),
+			...(this.opts.worktreeIsolation && { worktreeIsolation: true }),
 			onWorkerEvent: (contract, ev) => {
 				let snap = progress.get(contract.taskId);
 				if (!snap) {
@@ -340,8 +336,8 @@ export class PipelineBridge {
 						break;
 					}
 					case "tool_result":
-						// Tool result keeps lastTool but updates timestamp; status hint
-						// from a non-ok result is left to the wave task_done signal.
+						// Tool result keeps lastTool but updates timestamp; terminal
+						// status still comes from the harness task completion events.
 						// A clean result commits the pending write.
 						pendingWriteByTask.delete(contract.taskId);
 						break;
@@ -581,8 +577,8 @@ export function translatePipelineEvent(e: PipelineEvent): UiEvent[] {
 			return [
 				{ kind: "notice", text: `DAG: ${e.epicId} (${e.taskCount} tasks)`, tone: "ok" },
 			];
-		case "wave":
-			return translateWaveEvent(e.event);
+		case "harness":
+			return translateHarnessEvent(e.event);
 		case "refine_done":
 			return [
 				{
@@ -662,26 +658,26 @@ export function translatePipelineEvent(e: PipelineEvent): UiEvent[] {
 	}
 }
 
-function translateWaveEvent(w: WaveEvent): UiEvent[] {
-	switch (w.type) {
-		case "wave_start":
-			return [{ kind: "pipeline", phase: "wave", label: `wave ${w.waveIndex}`, detail: `${w.taskCount} task(s)` }];
+function translateHarnessEvent(event: HarnessEvent): UiEvent[] {
+	switch (event.type) {
+		case "harness_start":
+			return [{ kind: "pipeline", phase: "scheduler", label: "dynamic queue", detail: `${event.taskCount} task(s)` }];
 		case "task_done":
-			if (w.result.status === "ok") {
+			if (event.result.status === "ok") {
 				return [
 					{
 						kind: "tool_result",
-						name: `${w.result.taskId} (${w.result.personaId})`,
+						name: `${event.result.taskId} (${event.result.personaId})`,
 						ok: true,
 						content: "ok",
 					},
 				];
 			}
-			if (w.result.status === "blocked") {
+			if (event.result.status === "blocked") {
 				return [
 					{
 						kind: "notice",
-						text: `blocked: ${w.result.taskId} (${w.result.personaId}) - ${summarizeTaskResult(w.result)}`,
+						text: `blocked: ${event.result.taskId} (${event.result.personaId}) - ${summarizeTaskResult(event.result)}`,
 						tone: "warn",
 					},
 				];
@@ -689,14 +685,71 @@ function translateWaveEvent(w: WaveEvent): UiEvent[] {
 			return [
 				{
 					kind: "error",
-					text: formatTaskError(w.result),
+					text: formatTaskError(event.result),
 				},
 			];
-		case "stage_pause":
-			return [{ kind: "notice", text: `paused: ${w.reason}`, tone: "warn" }];
+		case "task_blocked":
+			return [
+				{
+					kind: "notice",
+					text: `blocked: ${event.result.taskId} (${event.result.personaId}) - ${summarizeTaskResult(event.result)}`,
+					tone: "warn",
+				},
+			];
+		case "task_failed":
+			return [
+				{
+					kind: "error",
+					text: formatTaskError(event.result),
+				},
+			];
+		case "task_skipped":
+			return [{ kind: "notice", text: `skipped: ${event.taskId} - ${event.reason}`, tone: "warn" }];
+		case "queue_idle":
+			return [
+				{
+					kind: "notice",
+					text: `paused: queue idle (${event.pending} pending, ${event.blocked} blocked, ${event.deferred} deferred)`,
+					tone: "warn",
+				},
+			];
 		default:
 			return [];
 	}
+}
+
+function getTerminalTaskUpdate(
+	event: PipelineEvent,
+): { taskId: string; personaId?: string; status: "done" | "blocked" | "error" } | undefined {
+	if (event.type !== "harness") return undefined;
+	if (event.event.type === "task_done") {
+		return {
+			taskId: event.event.result.taskId,
+			personaId: event.event.result.personaId,
+			status: event.event.result.status === "ok" ? "done" : event.event.result.status === "blocked" ? "blocked" : "error",
+		};
+	}
+	if (event.event.type === "task_blocked") {
+		return {
+			taskId: event.event.result.taskId,
+			personaId: event.event.result.personaId,
+			status: "blocked",
+		};
+	}
+	if (event.event.type === "task_failed") {
+		return {
+			taskId: event.event.result.taskId,
+			personaId: event.event.result.personaId,
+			status: "error",
+		};
+	}
+	if (event.event.type === "task_skipped") {
+		return {
+			taskId: event.event.taskId,
+			status: "blocked",
+		};
+	}
+	return undefined;
 }
 
 /**

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-	buildWaves,
+	buildTaskBatches,
 	classifyTaskType,
 	compileCoarse,
 	partitionByParallelGroup,
@@ -229,22 +229,22 @@ describe("classifyTaskType", () => {
 	});
 });
 
-describe("buildWaves", () => {
-	it("schedules independent tasks in wave 0", () => {
+describe("buildTaskBatches", () => {
+	it("schedules independent tasks in batch 0", () => {
 		const a = mkContract({ taskId: "T1", pathPolicy: { allowedGlobs: ["a.ts"], forbiddenGlobs: [] } });
 		const b = mkContract({ taskId: "T2", pathPolicy: { allowedGlobs: ["b.ts"], forbiddenGlobs: [] } });
-		const { waves, errors } = buildWaves([a, b]);
+		const { batches, errors } = buildTaskBatches([a, b]);
 		expect(errors).toEqual([]);
-		expect(waves).toHaveLength(1);
-		expect(waves[0]!.tasks.map((t) => t.taskId).sort()).toEqual(["T1", "T2"]);
+		expect(batches).toHaveLength(1);
+		expect(batches[0]!.tasks.map((t) => t.taskId).sort()).toEqual(["T1", "T2"]);
 	});
 
 	it("respects dependsOn ordering", () => {
 		const a = mkContract({ taskId: "T1", pathPolicy: { allowedGlobs: ["a.ts"], forbiddenGlobs: [] } });
 		const b = mkContract({ taskId: "T2", dependsOn: ["T1"], pathPolicy: { allowedGlobs: ["b.ts"], forbiddenGlobs: [] } });
 		const c = mkContract({ taskId: "T3", dependsOn: ["T2"], pathPolicy: { allowedGlobs: ["c.ts"], forbiddenGlobs: [] } });
-		const { waves } = buildWaves([c, b, a]); // intentionally unsorted input
-		expect(waves.map((w) => w.tasks.map((t) => t.taskId))).toEqual([
+		const { batches } = buildTaskBatches([c, b, a]); // intentionally unsorted input
+		expect(batches.map((w) => w.tasks.map((t) => t.taskId))).toEqual([
 			["T1"], ["T2"], ["T3"],
 		]);
 	});
@@ -252,10 +252,10 @@ describe("buildWaves", () => {
 	it("throws on cycle", () => {
 		const a = mkContract({ taskId: "T1", dependsOn: ["T2"], pathPolicy: { allowedGlobs: ["a.ts"], forbiddenGlobs: [] } });
 		const b = mkContract({ taskId: "T2", dependsOn: ["T1"], pathPolicy: { allowedGlobs: ["b.ts"], forbiddenGlobs: [] } });
-		expect(() => buildWaves([a, b])).toThrow(/cycle/);
+		expect(() => buildTaskBatches([a, b])).toThrow(/cycle/);
 	});
 
-	it("schedules an unrolled code_executor -> test_runner -> code_executor chain across three ordered waves", () => {
+	it("schedules an unrolled code_executor -> test_runner -> code_executor chain across three ordered batches", () => {
 		// Method 1: express the repair loop as distinct task ids chained with
 		// dependsOn (never a back-edge, which would throw). The two code_executor
 		// passes re-edit the same file, so they live in different parallelGroups
@@ -284,9 +284,9 @@ describe("buildWaves", () => {
 			pathPolicy: { allowedGlobs: ["src/upload.ts"], forbiddenGlobs: [] },
 		});
 
-		const { waves, errors } = buildWaves([fix, verify, impl]); // unsorted input
+		const { batches, errors } = buildTaskBatches([fix, verify, impl]); // unsorted input
 		expect(errors).toEqual([]);
-		expect(waves.map((w) => w.tasks.map((t) => t.taskId))).toEqual([
+		expect(batches.map((w) => w.tasks.map((t) => t.taskId))).toEqual([
 			["T2-1"], ["T2-2"], ["T2-3"],
 		]);
 	});
@@ -310,13 +310,13 @@ describe("buildWaves", () => {
 			nonGoals: [],
 			blockedCondition: "",
 		});
-		expect(() => buildWaves([impl, verify], { validate: false })).toThrow(/cycle/);
+		expect(() => buildTaskBatches([impl, verify], { validate: false })).toThrow(/cycle/);
 	});
 
 	it("surfaces validation errors", () => {
 		const bad = mkContract({ objective: "x" }); // too short
-		const { waves, errors } = buildWaves([bad]);
-		expect(waves).toHaveLength(1);
+		const { batches, errors } = buildTaskBatches([bad]);
+		expect(batches).toHaveLength(1);
 		expect(errors.length).toBeGreaterThan(0);
 	});
 
@@ -331,13 +331,13 @@ describe("buildWaves", () => {
 			parallelGroup: "g1",
 			pathPolicy: { allowedGlobs: ["shared.ts"], forbiddenGlobs: [] },
 		});
-		const { errors } = buildWaves([a, b]);
+		const { errors } = buildTaskBatches([a, b]);
 		expect(errors.some((e) => e.taskId === "_glob_conflict")).toBe(true);
 	});
 
 	it("skips validation when validate=false", () => {
 		const bad = mkContract({ objective: "x" });
-		const { errors } = buildWaves([bad], { validate: false });
+		const { errors } = buildTaskBatches([bad], { validate: false });
 		expect(errors).toEqual([]);
 	});
 
@@ -347,7 +347,7 @@ describe("buildWaves", () => {
 			dependsOn: ["T-missing"],
 			pathPolicy: { allowedGlobs: ["a.ts"], forbiddenGlobs: [] },
 		});
-		const { errors } = buildWaves([a]);
+		const { errors } = buildTaskBatches([a]);
 		const dangling = errors.find((e) => e.taskId === "_dangling_dep");
 		expect(dangling).toBeDefined();
 		expect(dangling!.errors[0]).toContain("T-missing");
@@ -355,11 +355,11 @@ describe("buildWaves", () => {
 });
 
 describe("partitionByParallelGroup", () => {
-	it("groups tasks within a wave by parallelGroup", () => {
+	it("groups tasks within a batch by parallelGroup", () => {
 		const a = mkContract({ taskId: "T1", parallelGroup: "frontend" });
 		const b = mkContract({ taskId: "T2", parallelGroup: "backend" });
 		const c = mkContract({ taskId: "T3", parallelGroup: "frontend" });
-		const groups = partitionByParallelGroup({ waveIndex: 0, tasks: [a, b, c] });
+		const groups = partitionByParallelGroup({ batchIndex: 0, tasks: [a, b, c] });
 		expect(groups.get("frontend")!.map((t) => t.taskId)).toEqual(["T1", "T3"]);
 		expect(groups.get("backend")!.map((t) => t.taskId)).toEqual(["T2"]);
 	});
