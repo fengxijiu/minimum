@@ -7,6 +7,7 @@ import { SingleAgentMemoryManager } from "../memory/SingleAgentMemoryManager.js"
 import type { IHookManager } from "../loop/MiMoLoop.js";
 import { ToolCallRepair } from "../repair/ToolCallRepair.js";
 import { SessionManager } from "../session/SessionManager.js";
+import { GitCheckpointManager } from "../session/GitCheckpointManager.js";
 import { ApplyPatchTool } from "../tools/filesystem/ApplyPatchTool.js";
 import { ToolRateLimiter } from "../tools/limits/ToolRateLimiter.js";
 import { TodoWriteTool } from "../tools/todo/TodoWriteTool.js";
@@ -153,7 +154,12 @@ export function createMiMoStack(
 	}
 
 	// SessionManager — automatic session persistence; one instance per stack.
-	const sessionManager = new SessionManager();
+	// Use GitCheckpointManager so checkpoints are stored as git commits under
+	// refs/minimum/<sessionId>/session rather than JSON files.
+	const sessionManager = new SessionManager(
+		undefined,
+		new GitCheckpointManager(workingDirectory),
+	);
 
 	const memoryManager = cfg.memory.enabled
 		? new SingleAgentMemoryManager({

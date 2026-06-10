@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { ChatMessage } from "../types/common.js";
 import { CheckpointManager } from "./CheckpointManager.js";
-import type { SessionState } from "./types.js";
+import type { ICheckpointManager, SessionState } from "./types.js";
 
 export interface LoopMeta {
 	/** Accumulated turn cost in `totalCostCurrency` units (CNY or Credits). */
@@ -21,20 +21,22 @@ export interface LoopMeta {
 
 export class SessionManager {
 	private basePath: string;
-	private checkpointManager: CheckpointManager;
+	private checkpointManager: ICheckpointManager;
 	private currentSession: SessionState | null = null;
 
-	constructor(basePath?: string) {
+	constructor(basePath?: string, checkpointManager?: ICheckpointManager) {
 		// os.homedir() is cross-platform; $HOME alone is empty on Windows and
 		// fell back to a literal "~" subdir of the cwd.
 		this.basePath =
 			basePath || path.join(os.homedir(), ".minimum", "sessions");
-		this.checkpointManager = new CheckpointManager();
+		this.checkpointManager = checkpointManager ?? new CheckpointManager();
 	}
 
 	async initialize(): Promise<void> {
 		await fsPromises.mkdir(this.basePath, { recursive: true });
-		await this.checkpointManager.initialize();
+		if (this.checkpointManager.initialize) {
+			await this.checkpointManager.initialize();
+		}
 	}
 
 	/**
@@ -100,7 +102,9 @@ export class SessionManager {
 			const session = JSON.parse(content) as SessionState;
 
 			this.currentSession = session;
-			this.checkpointManager.setCurrentState(session);
+			if ((this.checkpointManager as any).setCurrentState) {
+				(this.checkpointManager as any).setCurrentState(session);
+			}
 
 			return session;
 		} catch {
