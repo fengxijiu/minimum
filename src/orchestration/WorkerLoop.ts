@@ -3,7 +3,7 @@ import type {
 	IStreamingClient,
 	IToolHost,
 } from "../loop/MiMoLoop.js";
-import { AgentGitStore, GitSnapshotManager, RunAuditStore } from "../git/index.js";
+import { AgentGitStore, GitSnapshotManager, RunAuditStore, WorktreeIsolator } from "../git/index.js";
 import {
 	computeTurnCost,
 	currencyFor,
@@ -108,6 +108,12 @@ export interface WorkerLoopOptions {
 	 * model is fed the diagnostic so it can self-correct.
 	 */
 	validator?: ICodeValidator;
+	/**
+	 * When true, each task gets an isolated git worktree.
+	 * Changes are committed and applied back to `projectRoot` after completion.
+	 * Phase 4: lifecycle hooks only — actual write routing requires Phase 5.
+	 */
+	worktreeIsolation?: boolean;
 }
 
 export interface WorkerRunInput {
@@ -184,6 +190,7 @@ export class WorkerLoop {
 	private readonly model: string;
 	private readonly billingMode: BillingMode;
 	private readonly maxToolResultBytes: number;
+	private readonly worktreeIsolation: boolean;
 
 	constructor(opts: WorkerLoopOptions) {
 		this.client = opts.client;
@@ -194,6 +201,7 @@ export class WorkerLoop {
 		this.model = opts.model ?? "mimo-v2.5-pro";
 		this.billingMode = opts.billingMode ?? "api";
 		this.maxToolResultBytes = opts.maxToolResultBytes ?? DEFAULT_MAX_RESULT_BYTES;
+		this.worktreeIsolation = opts.worktreeIsolation ?? false;
 	}
 
 	async runTask(input: WorkerRunInput): Promise<WorkerRunResult> {
@@ -229,6 +237,30 @@ export class WorkerLoop {
 		const gitStore = await AgentGitStore.resolve(this.projectRoot);
 		const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 		const snapshots = new GitSnapshotManager(gitStore, runId, input.contract.taskId);
+
+		// Worktree isolation lifecycle — create before task, commit+apply after.
+		let worktreeBaseSha: string | null = null;
+		const isolator = this.worktreeIsolation
+			? new WorktreeIsolator(gitStore)
+			: null;
+
+		if (isolator) {
+			try {
+				worktreeBaseSha = await gitStore.readRef("HEAD");
+				if (!worktreeBaseSha) {
+					// Repo has no HEAD (empty) — make a root commit so we have a base SHA.
+					worktreeBaseSha = await gitStore.commitTree(
+						[{ relativePath: ".minimum-init", content: "" }],
+						"chore: initialize minimum object store",
+					);
+					await gitStore.setRef("refs/minimum/init", worktreeBaseSha);
+				}
+				await isolator.create(input.contract.taskId, worktreeBaseSha);
+			} catch {
+				// Worktree creation failed — proceed without isolation.
+				worktreeBaseSha = null;
+			}
+		}
 
 		const messages: ChatMessage[] = [
 			{ role: "system", content: input.systemPrompt },
@@ -366,6 +398,18 @@ export class WorkerLoop {
 			finishReason = "step_limit";
 		}
 		emit({ type: "usage", usage });
+
+		// Worktree isolation: commit changes from worktree and apply to main tree.
+		if (isolator && worktreeBaseSha) {
+			void isolator
+				.commitAndApply(
+					input.contract.taskId,
+					worktreeBaseSha,
+					`task(${input.contract.taskId}): apply worktree changes`,
+				)
+				.catch(() => {})
+				.finally(() => isolator.discard(input.contract.taskId).catch(() => {}));
+		}
 
 		// Fire-and-forget: record task-done checkpoint for run history.
 		void new RunAuditStore(gitStore)
