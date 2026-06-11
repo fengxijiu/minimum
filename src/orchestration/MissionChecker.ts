@@ -1,5 +1,5 @@
 import type { PersonaId } from "../personas/Persona.js";
-import { getPersona, listPersonaIds } from "../personas/PersonaRegistry.js";
+import { getPersona, normalizePersonaIdOrAlias } from "../personas/PersonaRegistry.js";
 import type { ArtifactPaths } from "./PipelineArtifactStore.js";
 import type { RefinementEntry } from "./Refiner.js";
 import type { CoarseDag, CoarseTask } from "./TaskContract.js";
@@ -53,8 +53,6 @@ const DECISIONS: MissionDecision[] = [
 	"LOOP_BACK_TO_W1",
 	"NEEDS_HUMAN_CONFIRMATION",
 ];
-
-const VALID_PERSONA_IDS = new Set<PersonaId>(listPersonaIds());
 
 export function compileMissionCheck(text: string): MissionCheckCompileResult {
 	const decision = parseDecision(text);
@@ -288,31 +286,5 @@ function stripWrappingEmphasis(text: string): string {
 }
 
 function normalizePersona(raw: string): PersonaId {
-	const normalized = raw
-		.trim()
-		.toLowerCase()
-		.replace(/[`*]/g, "")
-		.replace(/[\s-]+/g, "_");
-	const aliases: Record<string, PersonaId> = {
-		coder: "code_executor",
-		code: "code_executor",
-		developer: "code_executor",
-		implementation: "code_executor",
-		tester: "test_writer",
-		tests: "test_writer",
-		test: "test_writer",
-		runner: "test_runner",
-		review: "reviewer",
-		reviewer: "reviewer",
-		documentation: "docs",
-		doc: "docs",
-		repo: "repo_scout",
-		scout: "repo_scout",
-		context: "context_builder",
-	};
-	const aliased = aliases[normalized] ?? normalized;
-	if (VALID_PERSONA_IDS.has(aliased as PersonaId) && aliased !== "master_planner") {
-		return aliased as PersonaId;
-	}
-	return "code_executor";
+	return normalizePersonaIdOrAlias(raw) ?? "code_executor";
 }

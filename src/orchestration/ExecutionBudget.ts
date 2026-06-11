@@ -1,3 +1,5 @@
+import { getPersona } from "../personas/PersonaRegistry.js";
+
 export type ExecutionDepth = "fast" | "normal" | "deep";
 
 const BUDGET_TABLE: Record<ExecutionDepth, { maxSteps: number; maxTokens: number }> = {
@@ -6,24 +8,18 @@ const BUDGET_TABLE: Record<ExecutionDepth, { maxSteps: number; maxTokens: number
 	deep: { maxSteps: 100, maxTokens: 96_000 },
 };
 
-const PERSONA_DEFAULT_DEPTH: Record<string, ExecutionDepth> = {
-	master_planner: "normal",
-	vision: "fast",
-	repo_scout: "normal",
-	web_searcher: "fast",
-	context_builder: "fast",
-	code_executor: "normal",
-	test_writer: "normal",
-	test_runner: "fast",
-	runtime_debug: "deep",
-	reviewer: "fast",
-	docs: "fast",
-};
-
 export function resolveExecutionBudget(
 	personaId: string,
 	override?: ExecutionDepth,
 ): { maxSteps: number; maxTokens: number } {
-	const depth = override ?? PERSONA_DEFAULT_DEPTH[personaId] ?? "normal";
+	const depth = override ?? personaDefaultDepth(personaId);
 	return BUDGET_TABLE[depth];
+}
+
+function personaDefaultDepth(personaId: string): ExecutionDepth {
+	try {
+		return getPersona(personaId).orchestration.executionDepth;
+	} catch {
+		return "normal";
+	}
 }

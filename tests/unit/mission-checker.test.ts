@@ -3,6 +3,11 @@ import {
 	compileMissionCheck,
 	loopBackTasksToCoarseTasks,
 } from "../../src/orchestration/index.js";
+import {
+	getPersona,
+	registerPersonaForTesting,
+	type Persona,
+} from "../../src/personas/index.js";
 
 describe("compileMissionCheck", () => {
 	it("parses an approved report", () => {
@@ -104,6 +109,55 @@ Reason:
 			needsRefine: true,
 			allowedGlobs: ["src/api/upload.ts"],
 		});
+	});
+
+	it("maps W3.5 repair aliases through the persona registry", () => {
+		const fake: Persona = {
+			...getPersona("code_executor"),
+			id: "refactor_executor",
+			systemPrompt: "Refactor executor prompt",
+			requiredReportBlocks: [],
+			orchestration: {
+				stage: "implementation",
+				routeRoles: ["implementation"],
+				chainRole: "implement",
+				executionDepth: "normal",
+				planGate: "code_personas",
+				producesArtifacts: [],
+				repairAliases: ["refactor owner"],
+			},
+		};
+		const restore = registerPersonaForTesting(fake);
+		try {
+			const result = compileMissionCheck(`# W3.5 Loop Detection Report
+
+Decision: LOOP_BACK_TO_W1
+
+Reason:
+
+- Needs a scoped refactor.
+
+## 7. Loop-Back Tasks for W1
+
+### Task 1: Refactor upload contract
+
+- Priority: P1
+- Blocking: Yes
+- Reason: Upload contract is inconsistent.
+- Source issue: W3.5 found a contract mismatch.
+- Expected outcome: Upload contract is consistent.
+- Suggested owner agent: refactor owner
+- Allowed globs:
+  - src/upload.ts
+- Acceptance criteria:
+  - Contract is updated.
+`);
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+			expect(result.report.tasks[0]!.personaId).toBe("refactor_executor");
+		} finally {
+			restore();
+		}
 	});
 
 	it("parses human confirmation as a blocking decision", () => {

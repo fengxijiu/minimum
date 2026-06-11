@@ -303,7 +303,7 @@ export async function runTaskWithRetry(
 	opts: TaskRunnerOptions,
 ): Promise<TaskResult> {
 	const start = Date.now();
-	const maxAttempts = contract.personaId === "repo_scout"
+	const maxAttempts = canDegradeToReadonlyFallback(contract.personaId)
 		? RETRYABLE_SCAN_ATTEMPTS
 		: RETRYABLE_WORKER_ATTEMPTS;
 	let lastResult: TaskResult | undefined;
@@ -324,8 +324,8 @@ export async function runTaskWithRetry(
 
 	const retryCount = Math.max(0, maxAttempts - 1);
 	const lastError = summarizeRetryError(lastResult);
-	if (contract.personaId === "repo_scout") {
-		const degradedReason = `repo_scout scan failed after ${maxAttempts} retryable attempt(s)`;
+	if (canDegradeToReadonlyFallback(contract.personaId)) {
+		const degradedReason = `${contract.personaId} scan failed after ${maxAttempts} retryable attempt(s)`;
 		return {
 			taskId: contract.taskId,
 			personaId: contract.personaId,
@@ -354,6 +354,15 @@ export async function runTaskWithRetry(
 		...(lastError && { lastError }),
 		durationMs: Date.now() - start,
 	};
+}
+
+function canDegradeToReadonlyFallback(personaId: PersonaId): boolean {
+	try {
+		const persona = getPersona(personaId);
+		return persona.orchestration.stage === "perception" && persona.orchestration.chainRole === "discover";
+	} catch {
+		return false;
+	}
 }
 
 export function buildReadonlyFallbackAccess(root: string): ReadonlyFallbackAccess {

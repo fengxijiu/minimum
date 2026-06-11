@@ -1,5 +1,5 @@
 import type { PersonaId } from "../personas/Persona.js";
-import { listPersonaIds } from "../personas/PersonaRegistry.js";
+import { listPersonaIds, normalizePersonaIdOrAlias } from "../personas/PersonaRegistry.js";
 import { extractJsonBlock, isObj } from "../utils/guards.js";
 import type { CoarseDag, CoarsePhase, CoarseTask } from "./TaskContract.js";
 
@@ -28,7 +28,6 @@ export interface CompileFailure {
 export type CompileResult = CompileSuccess | CompileFailure;
 
 /** Single source of truth for valid persona ids — derived from the registry. */
-const VALID_PERSONA_IDS = new Set<PersonaId>(listPersonaIds());
 
 /** Extract and parse the <task_dag> block from master_planner output. */
 export function compileCoarse(text: string): CompileResult {
@@ -88,12 +87,6 @@ function validatePhase(
 	return { ok: true, phase: { id: raw.id, name: raw.name, tasks } };
 }
 
-/** Normalize surface variations the LLM commonly emits. Strict semantics
- * only: accept case + dash differences but reject synonyms. */
-function normalizePersona(s: string): string {
-	return s.trim().toLowerCase().replace(/-/g, "_");
-}
-
 function validateTask(
 	raw: unknown,
 	prefix: string,
@@ -104,7 +97,7 @@ function validateTask(
 	const id = raw.id;
 	const rawPersona = raw.persona ?? raw.role;
 	const persona =
-		typeof rawPersona === "string" ? normalizePersona(rawPersona) : undefined;
+		typeof rawPersona === "string" ? normalizePersonaIdOrAlias(rawPersona) : undefined;
 	const objective = raw.objective;
 	const parallelGroup = raw.parallelGroup ?? raw.parallel_group;
 	const dependsOn = raw.dependsOn ?? raw.depends_on ?? [];
@@ -117,11 +110,13 @@ function validateTask(
 
 	if (typeof id !== "string" || !id)
 		return { ok: false, error: `${prefix}.id required` };
-	if (!persona || !VALID_PERSONA_IDS.has(persona as PersonaId))
+	if (!persona) {
+		const validPersonaIds = listPersonaIds();
 		return {
 			ok: false,
-			error: `${prefix}.persona must be one of ${[...VALID_PERSONA_IDS].join(",")} (got ${JSON.stringify(rawPersona)})`,
+			error: `${prefix}.persona must be one of ${validPersonaIds.join(",")} (got ${JSON.stringify(rawPersona)})`,
 		};
+	}
 	if (typeof objective !== "string" || objective.trim().length < 4)
 		return { ok: false, error: `${prefix}.objective must be a non-empty string` };
 	if (typeof parallelGroup !== "string" || !parallelGroup)

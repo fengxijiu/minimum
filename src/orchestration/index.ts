@@ -27,7 +27,12 @@ export {
 	type GateDecision,
 	type GateIssue,
 } from "./LaunchGate.js";
-export { type PlanMode } from "./PlanGate.js";
+export {
+	compilePlanAudit,
+	extractExecutionPlan,
+	needsPlanApproval,
+	type PlanMode,
+} from "./PlanGate.js";
 export {
 	STAGE_ORDER,
 	stageDisplay,
@@ -106,6 +111,7 @@ export type {
 export {
 	extractXmlBlock,
 	runTask,
+	runTaskWithRetry,
 	type SchemaRepairRequest,
 	type TaskResult,
 	type TaskRunnerOptions,

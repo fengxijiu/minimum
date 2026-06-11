@@ -1,9 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
+	buildMasterStagePrompt,
 	GLOBAL_FORBIDDEN_WRITES,
 	getPersona,
+	isPerceptionPersona,
+	isPlanGatedPersona,
+	listPersonasByStage,
 	listPersonaIds,
 	listPersonas,
+	listWorkerPersonas,
+	normalizePersonaIdOrAlias,
+	personaCapForRoute,
+	registerPersonaForTesting,
+	type Persona,
 	type PersonaId,
 } from "../../src/personas/index.js";
 
@@ -31,6 +40,61 @@ describe("PersonaRegistry", () => {
 		const masters = listPersonas().filter((p) => p.kind === "master");
 		expect(masters).toHaveLength(1);
 		expect(masters[0]!.id).toBe("master_planner");
+	});
+
+	it("gives every worker orchestration metadata", () => {
+		for (const p of listWorkerPersonas()) {
+			expect(p.orchestration.stage).toBeTruthy();
+			expect(p.orchestration.chainRole).toBeTruthy();
+			expect(Array.isArray(p.orchestration.routeRoles)).toBe(true);
+			expect(p.orchestration.executionDepth).toMatch(/^(fast|normal|deep)$/);
+			expect(p.orchestration.planGate).toMatch(/^(never|code_personas|all_writes)$/);
+			expect(Array.isArray(p.orchestration.producesArtifacts)).toBe(true);
+			expect(Array.isArray(p.orchestration.repairAliases)).toBe(true);
+		}
+	});
+
+	it("derives stage, plan gate, alias, and route cap helpers from the registry", () => {
+		expect(listPersonasByStage("perception").map((p) => p.id)).toEqual(
+			expect.arrayContaining(["vision", "repo_scout", "web_searcher", "context_builder"]),
+		);
+		expect(isPerceptionPersona("web_searcher")).toBe(true);
+		expect(isPlanGatedPersona("code_executor")).toBe(true);
+		expect(isPlanGatedPersona("test_runner")).toBe(false);
+		expect(normalizePersonaIdOrAlias("developer")).toBe("code_executor");
+		expect(personaCapForRoute("reviewer", "audit_review")).toEqual({ min: 2, max: 10 });
+	});
+
+	it("renders newly registered personas into the dynamic master catalog", () => {
+		const fake: Persona = {
+			...getPersona("reviewer"),
+			id: "contract_reviewer",
+			systemPrompt: "Contract reviewer prompt",
+			requiredReportBlocks: [],
+			parallelism: { soloPerWave: false, maxConcurrent: 4 },
+			orchestration: {
+				stage: "review",
+				routeRoles: ["audit_review"],
+				chainRole: "review",
+				defaultTaskCap: { audit_review: { min: 1, max: 3 } },
+				executionDepth: "fast",
+				planGate: "never",
+				producesArtifacts: ["risk_matrix"],
+				repairAliases: ["contract review"],
+			},
+		};
+		const restore = registerPersonaForTesting(fake);
+		try {
+			expect(getPersona("contract_reviewer").id).toBe("contract_reviewer");
+			expect(normalizePersonaIdOrAlias("contract review")).toBe("contract_reviewer");
+			const catalog = buildMasterStagePrompt("W0");
+			expect(catalog).toContain("contract_reviewer");
+			expect(catalog).toContain("stage: review");
+			expect(catalog).toContain("chainRole: review");
+			expect(catalog).toContain("risk_matrix");
+		} finally {
+			restore();
+		}
 	});
 
 	it("getPersona throws on unknown id", () => {

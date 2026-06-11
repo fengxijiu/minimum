@@ -15,7 +15,7 @@
  *    Task Contract.
  */
 
-export type PersonaId =
+export type BuiltinPersonaId =
 	| "master_planner"
 	| "vision"
 	| "repo_scout"
@@ -27,6 +27,9 @@ export type PersonaId =
 	| "runtime_debug"
 	| "reviewer"
 	| "docs";
+
+/** Built-in ids stay enumerated, while code-registered personas can add ids without changing orchestration modules. */
+export type PersonaId = BuiltinPersonaId | (string & {});
 
 export type PersonaKind = "master" | "worker";
 
@@ -53,6 +56,56 @@ export interface Parallelism {
 	maxConcurrent: number;
 }
 
+export type PersonaStage =
+	| "perception"
+	| "implementation"
+	| "validation"
+	| "diagnosis"
+	| "review"
+	| "delivery"
+	| "support";
+
+export type PersonaChainRole =
+	| "discover"
+	| "design"
+	| "scaffold"
+	| "implement"
+	| "test_author"
+	| "validate"
+	| "debug"
+	| "review"
+	| "document"
+	| "deliver";
+
+export type PersonaRouteRole =
+	| "scan_only"
+	| "direct_edit"
+	| "audit_review"
+	| "implementation"
+	| "debug_fix"
+	| "dependency_config"
+	| "full_pipeline";
+
+export type PersonaExecutionDepth = "fast" | "normal" | "deep";
+
+export type PersonaPlanGate = "never" | "code_personas" | "all_writes";
+
+export interface PersonaTaskCap {
+	min: number;
+	max: number;
+}
+
+export interface PersonaOrchestration {
+	stage: PersonaStage;
+	routeRoles: PersonaRouteRole[];
+	chainRole: PersonaChainRole;
+	defaultTaskCap?: Partial<Record<PersonaRouteRole, PersonaTaskCap>>;
+	executionDepth: PersonaExecutionDepth;
+	planGate: PersonaPlanGate;
+	producesArtifacts: string[];
+	repairAliases: string[];
+}
+
 export interface Persona {
 	id: PersonaId;
 	kind: PersonaKind;
@@ -77,6 +130,7 @@ export interface Persona {
 	 */
 	requiredReportBlocks?: string[];
 	parallelism: Parallelism;
+	orchestration: PersonaOrchestration;
 }
 
 /** Globs every persona is forbidden from writing — the absolute baseline. */

@@ -6,6 +6,11 @@ import {
 	partitionByParallelGroup,
 } from "../../src/orchestration/index.js";
 import type { TaskContract } from "../../src/orchestration/index.js";
+import {
+	getPersona,
+	registerPersonaForTesting,
+	type Persona,
+} from "../../src/personas/index.js";
 
 function mkContract(over: Partial<TaskContract> = {}): TaskContract {
 	return {
@@ -155,7 +160,7 @@ describe("compileCoarse", () => {
 		if (r.ok) expect(r.dag.phases[0]!.tasks[0]!.personaId).toBe("code_executor");
 	});
 
-	it("rejects synonyms with original value in error", () => {
+	it("accepts registry-declared aliases", () => {
 		const dag = `
 <task_dag>
 { "epic": "e", "phases": [ { "id": "P0", "name": "p", "tasks": [
@@ -163,10 +168,22 @@ describe("compileCoarse", () => {
     "parallelGroup": "g", "dependsOn": [], "needsRefine": false } ] } ] }
 </task_dag>`;
 		const r = compileCoarse(dag);
+		expect(r.ok).toBe(true);
+		if (r.ok) expect(r.dag.phases[0]!.tasks[0]!.personaId).toBe("code_executor");
+	});
+
+	it("rejects undeclared synonyms with original value in error", () => {
+		const dag = `
+<task_dag>
+{ "epic": "e", "phases": [ { "id": "P0", "name": "p", "tasks": [
+  { "id": "T0-1", "persona": "programmer", "objective": "test",
+    "parallelGroup": "g", "dependsOn": [], "needsRefine": false } ] } ] }
+</task_dag>`;
+		const r = compileCoarse(dag);
 		expect(r.ok).toBe(false);
 		if (!r.ok) {
 			expect(r.error).toMatch(/persona must be one of/);
-			expect(r.error).toMatch(/got "developer"/);
+			expect(r.error).toMatch(/got "programmer"/);
 		}
 	});
 
@@ -204,6 +221,39 @@ describe("compileCoarse", () => {
 		const r = compileCoarse(dag);
 		expect(r.ok).toBe(true);
 		if (r.ok) expect(r.dag.phases[0]!.tasks[0]!.personaId).toBe("repo_scout");
+	});
+
+	it("accepts a newly registered persona id and its registry alias", () => {
+		const fake: Persona = {
+			...getPersona("reviewer"),
+			id: "contract_reviewer",
+			systemPrompt: "Contract reviewer prompt",
+			requiredReportBlocks: [],
+			orchestration: {
+				stage: "review",
+				routeRoles: ["audit_review"],
+				chainRole: "review",
+				defaultTaskCap: { audit_review: { min: 1, max: 2 } },
+				executionDepth: "fast",
+				planGate: "never",
+				producesArtifacts: [],
+				repairAliases: ["contract review"],
+			},
+		};
+		const restore = registerPersonaForTesting(fake);
+		try {
+			const dag = `
+<task_dag>
+{ "epic": "e", "phases": [ { "id": "P0", "name": "p", "tasks": [
+  { "id": "T0-1", "persona": "contract review", "objective": "audit contracts",
+    "parallelGroup": "g", "dependsOn": [], "needsRefine": false } ] } ] }
+</task_dag>`;
+			const r = compileCoarse(dag);
+			expect(r.ok).toBe(true);
+			if (r.ok) expect(r.dag.phases[0]!.tasks[0]!.personaId).toBe("contract_reviewer");
+		} finally {
+			restore();
+		}
 	});
 });
 
