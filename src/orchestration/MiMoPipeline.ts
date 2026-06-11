@@ -1,5 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { AgentGitStore } from "../git/AgentGitStore.js";
 import {
 	applyFinalize,
 	compileFinalize,
@@ -40,7 +41,7 @@ import {
 	type ArtifactPaths,
 } from "./PipelineArtifactStore.js";
 import { stageLabel, stageName } from "./StageDisplay.js";
-import { extractXmlBlock, type TaskResult, type WorkerExecutor } from "./TaskRunner.js";
+import { extractXmlBlock, type ConflictRecord, type TaskResult, type WorkerExecutor } from "./TaskRunner.js";
 import type { ChoicePayload, ConfirmationGate } from "../tools/choice/ConfirmationGate.js";
 
 /**
@@ -161,6 +162,8 @@ export interface PlannerBridge {
 	 * an empty or malformed result and simply omits the conclusion.
 	 */
 	synthesize(userRequest: string, results: TaskResult[]): Promise<string>;
+	/** W4: 3-way merge a single conflicting file; returns the merged content. */
+	resolveConflict(input: { path: string; base: string | null; ours: string | null; theirs: string | null }): Promise<string>;
 }
 
 /** Pull the Markdown body out of a <conclusion> block, or undefined if absent/empty. */
@@ -208,6 +211,9 @@ export interface PipelineOptions {
 	/** When true, worker tasks run in isolated git worktrees; the scheduler then
 	 *  skips write-lock serialisation. Forwarded by PipelineBridge from MiMoConfig. */
 	worktreeIsolation?: boolean;
+	/** Pipeline-scoped run identifier for worktree chaining. When omitted, the
+	 *  pipeline generates one. Used to seed `refs/minimum/<runId>/integrated`. */
+	runId?: string;
 	/** Optional W2-plan gate mode forwarded by PipelineBridge. */
 	planMode?: PlanMode;
 	/** Optional cap for W2-plan revision rounds. */
@@ -229,6 +235,42 @@ export interface PipelineResult {
 	changedFiles?: string[];
 }
 
+/**
+ * Resolve deferred worktree conflicts at W4 by asking the master agent to
+ * perform a 3-way merge for each conflicting file. Non-binary conflicts get
+ * an LLM merge; binary conflicts keep `ours` and are flagged.
+ */
+export async function applyMasterMergedConflicts(
+	conflicts: ConflictRecord[],
+	deps: { store: AgentGitStore; projectRoot: string; planner: Pick<PlannerBridge, "resolveConflict"> },
+): Promise<Array<{ path: string; ok: boolean; binary?: boolean }>> {
+	const out: Array<{ path: string; ok: boolean; binary?: boolean }> = [];
+	for (const c of conflicts) {
+		if (await deps.store.isBinaryAtCommit(c.taskCommitSha, c.path)) {
+			out.push({ path: c.path, ok: false, binary: true });
+			continue;
+		}
+		const base = await deps.store.readFileAtCommit(c.baseSha, c.path);
+		const theirs = await deps.store.readFileAtCommit(c.taskCommitSha, c.path);
+		const full = path.join(deps.projectRoot, c.path);
+		let ours: string | null;
+		try {
+			ours = await fs.readFile(full, "utf-8");
+		} catch {
+			ours = null;
+		}
+		try {
+			const merged = await deps.planner.resolveConflict({ path: c.path, base, ours, theirs });
+			await fs.mkdir(path.dirname(full), { recursive: true });
+			await fs.writeFile(full, merged, "utf-8");
+			out.push({ path: c.path, ok: true });
+		} catch {
+			out.push({ path: c.path, ok: false });
+		}
+	}
+	return out;
+}
+
 export async function runPipeline(
 	userRequest: string,
 	opts: PipelineOptions,
@@ -244,6 +286,18 @@ export async function runPipeline(
 	artifactPaths.memoryIndex = memoryIndexPath(opts.projectRoot);
 	let maxMissionRepairLoops = opts.maxMissionRepairLoops ?? DEFAULT_MAX_MISSION_REPAIR_LOOPS;
 	let statusReason: PipelineStatusReason = "complete";
+
+	// Seed the run-level integrated ref so isolated worktrees can chain.
+	const runId = opts.runId ?? `run_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+	if (opts.worktreeIsolation) {
+		try {
+			const store = await AgentGitStore.resolve(opts.projectRoot);
+			const head = await store.readRef("HEAD");
+			if (head) await store.setRef(`refs/minimum/${runId}/integrated`, head);
+		} catch {
+			// Non-fatal: integrated-ref seeding failure falls back to HEAD in WorkerLoop.
+		}
+	}
 
 	// ── W0: load memory, compile coarse DAG ──────────────────────────────────
 	emit({ type: "phase_start", phase: "W0", label: stageName("W0") });
@@ -326,6 +380,9 @@ export async function runPipeline(
 					loopIndex: missionLoopIndex,
 					maxRepairLoops: maxMissionRepairLoops,
 					artifactPaths,
+					transactionSummaries: allResults
+						.map((r) => r.transactionSummary)
+						.filter((s): s is NonNullable<typeof s> => s !== undefined),
 				}, missionFeedback);
 			} catch (e) {
 				return fail(emit, "W3.5", e, allResults);
@@ -489,6 +546,24 @@ export async function runPipeline(
 
 	// ── W4: finalize + memory governance ──────────────────────────────────────
 	emit({ type: "phase_start", phase: "W4", label: stageName("W4") });
+
+	// W4 conflict merge: resolve deferred worktree conflicts via master agent.
+	const allConflicts = allResults.flatMap((r) => r.mergeConflicts ?? []);
+	if (allConflicts.length > 0) {
+		try {
+			const store = await AgentGitStore.resolve(opts.projectRoot);
+			const resolved = await applyMasterMergedConflicts(allConflicts, {
+				store,
+				projectRoot: opts.projectRoot,
+				planner: opts.planner,
+			});
+			const okCount = resolved.filter((r) => r.ok).length;
+			emit({ type: "pipeline_error", phase: "W4", error: `merged ${okCount}/${allConflicts.length} conflicting files` });
+		} catch {
+			// Merge failure must not block finalize — conflicts stay unresolved on disk.
+		}
+	}
+
 	const candidates = await listCandidates(opts.projectRoot);
 	let finalizeReport: FinalizeReport | undefined;
 	try {
@@ -1105,6 +1180,7 @@ async function runWaves(
 		executor: opts.executor,
 		...(opts.routePolicy && { routePolicy: opts.routePolicy }),
 		...(opts.worktreeIsolation && { worktreeIsolation: true }),
+		...(opts.runId && { runId: opts.runId }),
 		onEvent: (event) => {
 			emit({ type: "harness", event });
 			const result = adaptHarnessEventToTaskResult(event, contractsById);

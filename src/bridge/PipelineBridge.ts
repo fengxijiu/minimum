@@ -298,6 +298,7 @@ export class PipelineBridge {
 			projectRoot: this.opts.projectRoot,
 			routePolicy,
 		});
+		const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 		const executor = createWorkerExecutor(this.client, {
 			...(this.opts.maxTokens && { maxTokens: this.opts.maxTokens }),
 			projectRoot: this.opts.projectRoot,
@@ -308,6 +309,7 @@ export class PipelineBridge {
 			...(this.opts.model && { model: this.opts.model }),
 			...(this.opts.billingMode && { billingMode: this.opts.billingMode }),
 			...(this.opts.worktreeIsolation && { worktreeIsolation: true }),
+			runId,
 			onWorkerEvent: (contract, ev) => {
 				let snap = progress.get(contract.taskId);
 				if (!snap) {
@@ -423,6 +425,7 @@ export class PipelineBridge {
 			executor,
 			routePolicy,
 			...(this.opts.worktreeIsolation && { worktreeIsolation: true }),
+			runId,
 			...(routeHint && { routeHint }),
 			onEvent: push,
 			choiceGate: this.opts.choiceGate,

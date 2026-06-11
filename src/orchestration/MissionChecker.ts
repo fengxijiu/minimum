@@ -4,6 +4,7 @@ import type { ArtifactPaths } from "./PipelineArtifactStore.js";
 import type { RefinementEntry } from "./Refiner.js";
 import type { CoarseDag, CoarseTask } from "./TaskContract.js";
 import type { TaskResult } from "./TaskRunner.js";
+import type { TransactionSummary } from "../transaction/types.js";
 
 export type MissionDecision =
 	| "APPROVED_TO_W4"
@@ -20,6 +21,8 @@ export interface MissionCheckInput {
 	loopIndex: number;
 	maxRepairLoops: number;
 	artifactPaths: ArtifactPaths;
+	/** Transaction summaries from task execution — validation evidence, repair counts, file touches. */
+	transactionSummaries?: TransactionSummary[];
 }
 
 export interface MissionLoopBackTask {

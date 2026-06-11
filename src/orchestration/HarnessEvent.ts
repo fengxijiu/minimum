@@ -1,5 +1,6 @@
 import type { PersonaId } from "../personas/Persona.js";
 import type { TaskResult } from "./TaskRunner.js";
+import type { TransactionEvent, TransactionSummary } from "../transaction/types.js";
 
 /**
  * HarnessEvent — event stream emitted by {@link DynamicHarness}.
@@ -79,6 +80,10 @@ export type HarnessEvent =
 			diagnostics: Array<{ taskId: string; reason: string }>;
 	  }
 
+	// ── Transaction lifecycle ──────────────────────────────────────────────
+	| { type: "transaction_started"; taskId: string; transactionId: string }
+	| { type: "transaction_completed"; taskId: string; summary: TransactionSummary }
+
 	// ── Worker-internal events (forwarded from WorkerLoop) ─────────────────
 	| {
 			type: "worker_event";
@@ -95,6 +100,7 @@ export type WorkerInternalEvent =
 	| { type: "tool_result"; toolName: string; ok: boolean; content: string }
 	| { type: "tool_denied"; toolName: string; reason: string }
 	| { type: "tool_rolled_back"; toolName: string; path: string; restored: boolean; issues: number }
+	| { type: "transaction_event"; event: TransactionEvent }
 	| { type: "usage"; usage: {
 			totalTokens: number;
 			promptTokens: number;

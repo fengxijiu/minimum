@@ -114,6 +114,9 @@ const testPersona: Persona = {
 const testContract = {
 	taskId: "test-task",
 	grantedMcpTools: [],
+	objective: "test objective",
+	acceptance: [],
+	pathPolicy: { allowedGlobs: [], forbiddenGlobs: [] },
 } as unknown as TaskContract;
 
 describe("WorkerLoop worktree write routing", () => {

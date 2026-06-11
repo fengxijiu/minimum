@@ -28,6 +28,12 @@ import type {
 	ValidationResult,
 } from "../types/validator.js";
 import type { TaskContract } from "./TaskContract.js";
+import type { TransactionEvent, TransactionSummary, RepairBudget } from "../transaction/types.js";
+import { TaskTransaction } from "../transaction/TaskTransaction.js";
+import { resolveFailurePolicy, type PolicyContext } from "../transaction/FailurePolicy.js";
+import { buildRepairFeedback } from "../transaction/RepairFeedbackBuilder.js";
+import { checkCompletionGate, buildGateBlockMessage } from "../transaction/CompletionGate.js";
+import type { ValidationRepairConfig } from "../config/MiMoConfig.js";
 
 const SELF_APPROVING_TOOLS = new Set([
 	"shell_fs_read",
@@ -78,6 +84,7 @@ export type WorkerEvent =
 			restored: boolean;
 			issues: number;
 	  }
+	| { type: "transaction_event"; event: TransactionEvent }
 	| { type: "usage"; usage: WorkerUsage };
 
 export interface WorkerUsage {
@@ -114,6 +121,19 @@ export interface WorkerLoopOptions {
 	 * changes are committed and applied back to `projectRoot`.
 	 */
 	worktreeIsolation?: boolean;
+	/**
+	 * Validation repair loop configuration. When provided, validation failures
+	 * are recorded in a TaskTransaction with structured repair feedback instead
+	 * of immediate rollback. The repair budget limits how many fix attempts
+	 * are allowed before the transaction is marked failed.
+	 */
+	transactionConfig?: ValidationRepairConfig;
+	/**
+	 * Pipeline-scoped run identifier. When provided, all tasks share the same
+	 * runId so they can fork worktrees from a run-level integrated ref.
+	 * When omitted, each task generates its own (legacy behaviour).
+	 */
+	runId?: string;
 }
 
 export interface WorkerRunInput {
@@ -132,6 +152,8 @@ export interface WorkerRunInput {
 	 * never sees a tool it could use to change the workspace.
 	 */
 	readOnly?: boolean;
+	/** Pipeline-scoped run id — takes precedence over the constructor-level runId. */
+	runId?: string;
 }
 
 export interface WorkerRunResult {
@@ -144,6 +166,10 @@ export interface WorkerRunResult {
 	emptyFinalTurn?: boolean;
 	/** Structured reason for the terminal state. */
 	finishReason: "final" | "empty_stream" | "step_limit";
+	/** Transaction summary recording all validation events, repairs, and file touches. */
+	transactionSummary?: TransactionSummary;
+	/** Worktree conflict records from apply-back (files deferred to W4 merge). */
+	worktreeConflicts?: Array<{ path: string; baseSha: string; taskCommitSha: string }>;
 }
 
 const WRITE_TOOL_NAMES = new Set(["write_file", "edit_file", "apply_patch"]);
@@ -191,6 +217,8 @@ export class WorkerLoop {
 	private readonly billingMode: BillingMode;
 	private readonly maxToolResultBytes: number;
 	private readonly worktreeIsolation: boolean;
+	private readonly transactionConfig: ValidationRepairConfig | undefined;
+	private readonly runId: string | undefined;
 
 	constructor(opts: WorkerLoopOptions) {
 		this.client = opts.client;
@@ -202,6 +230,8 @@ export class WorkerLoop {
 		this.billingMode = opts.billingMode ?? "api";
 		this.maxToolResultBytes = opts.maxToolResultBytes ?? DEFAULT_MAX_RESULT_BYTES;
 		this.worktreeIsolation = opts.worktreeIsolation ?? false;
+		this.transactionConfig = opts.transactionConfig;
+		this.runId = opts.runId;
 	}
 
 	async runTask(input: WorkerRunInput): Promise<WorkerRunResult> {
@@ -235,7 +265,7 @@ export class WorkerLoop {
 		// parallel via the dynamic harness. The instance lives only for the duration
 		// of this call.
 		const gitStore = await AgentGitStore.resolve(this.projectRoot);
-		const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+		const runId = input.runId ?? this.runId ?? `run_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 		const snapshots = new GitSnapshotManager(gitStore, runId, input.contract.taskId);
 
 		// Worktree isolation lifecycle — create before task, commit+apply after.
@@ -247,7 +277,8 @@ export class WorkerLoop {
 
 		if (isolator) {
 			try {
-				worktreeBaseSha = await gitStore.readRef("HEAD");
+				const integratedRef = `refs/minimum/${runId}/integrated`;
+				worktreeBaseSha = (await gitStore.readRef(integratedRef)) ?? (await gitStore.readRef("HEAD"));
 				if (!worktreeBaseSha) {
 					// Repo has no HEAD (empty) — make a root commit so we have a base SHA.
 					worktreeBaseSha = await gitStore.commitTree(
@@ -262,6 +293,34 @@ export class WorkerLoop {
 				worktreeBaseSha = null;
 				activeWorktreePath = undefined;
 			}
+		}
+
+		// Task transaction — records touched files, validation failures, and repair
+		// history. Only created when transactionConfig is wired (repair loop enabled).
+		const txEnabled = this.transactionConfig?.enabled !== false;
+		const transaction = txEnabled
+			? new TaskTransaction(
+					{
+						taskId: input.contract.taskId,
+						personaId: input.persona.id,
+						objective: input.contract.objective,
+						acceptance: input.contract.acceptance,
+						allowedGlobs: input.contract.pathPolicy.allowedGlobs,
+						baseRevision: worktreeBaseSha,
+						worktreePath: activeWorktreePath,
+					},
+					{
+						maxAttemptsPerFile: this.transactionConfig?.maxAttemptsPerFile,
+						maxAttemptsPerTask: this.transactionConfig?.maxAttemptsPerTask,
+						sameErrorRepeatLimit: this.transactionConfig?.sameErrorRepeatLimit,
+						maxDiffChars: this.transactionConfig?.maxDiffChars,
+						maxDiagnosticChars: this.transactionConfig?.maxDiagnosticChars,
+					},
+				)
+			: null;
+
+		if (transaction) {
+			transaction.onEvent((evt) => emit({ type: "transaction_event", event: evt }));
 		}
 
 		const messages: ChatMessage[] = [
@@ -341,6 +400,7 @@ export class WorkerLoop {
 					emit,
 					pendingStaticCompileCommands,
 					activeWorktreePath,
+					transaction,
 				);
 				usage.toolCalls += 1;
 
@@ -373,6 +433,15 @@ export class WorkerLoop {
 					content: truncated,
 					tool_call_id: call.id,
 				});
+
+				// Inject repair feedback as a user message when a validation
+				// failure was recorded and the transaction entered repair mode.
+				if (outcome.repairFeedback) {
+					messages.push({
+						role: "user",
+						content: outcome.repairFeedback,
+					});
+				}
 			}
 		}
 
@@ -402,16 +471,98 @@ export class WorkerLoop {
 		}
 		emit({ type: "usage", usage });
 
+		// Completion gate — prevent workers from reporting completed while
+		// unresolved validation failures exist in the transaction.
+		if (transaction && this.transactionConfig?.blockCompletedWithPendingFailures !== false) {
+			const reportStatus = extractReportStatus(finalContent);
+			const budgetRemaining = transaction.getRemainingBudget();
+			const gate = checkCompletionGate(
+				transaction.status,
+				reportStatus,
+				transaction.hasUnresolvedFailures(),
+				budgetRemaining.perTask <= 0,
+			);
+			if (!gate.allow) {
+				const blockMsg = buildGateBlockMessage(
+					gate,
+					transaction.status,
+					transaction.failures.filter((f) => !f.resolved).length,
+					budgetRemaining.perTask,
+				);
+				finalContent = [
+					"<task_report>",
+					`  <status>${gate.requiredAction === "repair" ? "failed" : "blocked"}</status>`,
+					`  <summary>${blockMsg}</summary>`,
+					"</task_report>",
+				].join("\n");
+				finishReason = "final";
+				hitStepLimit = false;
+				transaction.setRollbackReason(gate.reason);
+				if (gate.requiredAction === "blocked_or_failed") {
+					try { transaction.transitionTo("blocked"); } catch { /* already terminal */ }
+				} else {
+					try { transaction.transitionTo("failed"); } catch { /* already terminal */ }
+				}
+			}
+		}
+
 		// Worktree isolation: commit changes from worktree and apply to main tree.
+		// When a transaction is active, only apply if the transaction is validated
+		// (no unresolved failures). Otherwise discard the worktree.
+		let worktreeApplyConflicts: Array<{ path: string; baseSha: string; taskCommitSha: string }> | undefined;
 		if (isolator && worktreeBaseSha) {
-			void isolator
-				.commitAndApply(
-					input.contract.taskId,
-					worktreeBaseSha,
-					`task(${input.contract.taskId}): apply worktree changes`,
-				)
-				.catch(() => {})
-				.finally(() => isolator.discard(input.contract.taskId).catch(() => {}));
+			if (transaction && !transaction.hasUnresolvedFailures() && !transaction.isTerminal) {
+				try {
+					transaction.transitionTo("validated");
+				} catch { /* may already be validated */ }
+			}
+			const shouldApply = !transaction || transaction.status === "validated";
+			if (shouldApply) {
+				const integratedRef = `refs/minimum/${runId}/integrated`;
+				try {
+					const result = await isolator.commitAndApply(
+						input.contract.taskId,
+						worktreeBaseSha,
+						`task(${input.contract.taskId}): apply worktree changes`,
+					);
+					if (transaction) {
+						transaction.setCommitSha(result?.sha ?? null);
+						try { transaction.transitionTo("committed"); } catch { /* already terminal */ }
+					}
+					if (result?.conflicts?.length) {
+						worktreeApplyConflicts = result.conflicts;
+					}
+					// Advance the run's integrated ref so later tasks fork from a
+					// tree that includes this task's applied (non-conflicting)
+					// changes. CAS-retry serialises against concurrent task
+					// completions.
+					if (result?.sha && worktreeBaseSha) {
+						for (let attempt = 0; attempt < 5; attempt++) {
+							const currentRef = await gitStore.readRef(integratedRef);
+							const current = currentRef ?? worktreeBaseSha;
+							const casOld = currentRef ?? "";
+							try {
+								const overlay = await gitStore.overlayCommit(
+									current,
+									result.sha,
+									worktreeBaseSha,
+									`integrate(${input.contract.taskId})`,
+								);
+								if (await gitStore.compareAndSwapRef(integratedRef, casOld, overlay.sha)) break;
+							} catch {
+								break;
+							}
+						}
+					}
+				} catch {
+					// commitAndApply failed — transaction stays validated (not committed)
+				}
+				void isolator.discard(input.contract.taskId).catch(() => {});
+			} else {
+				transaction?.setRollbackReason("unresolved validation failures");
+				try { transaction?.transitionTo("rolled_back"); } catch { /* already terminal */ }
+				void isolator.discard(input.contract.taskId).catch(() => {});
+			}
 		}
 
 		// Fire-and-forget: record task-done checkpoint for run history.
@@ -425,6 +576,8 @@ export class WorkerLoop {
 			hitStepLimit,
 			...(emptyFinalTurn && { emptyFinalTurn }),
 			finishReason,
+			...(transaction && { transactionSummary: transaction.getSummary() }),
+			...(worktreeApplyConflicts?.length && { worktreeConflicts: worktreeApplyConflicts }),
 		};
 	}
 
@@ -538,6 +691,7 @@ export class WorkerLoop {
 		emit: (e: WorkerEvent) => void,
 		pendingStaticCompileCommands: Set<string>,
 		worktreePath?: string,
+		transaction?: TaskTransaction | null,
 	): Promise<ExecuteOutcome> {
 		const effectiveRoot = worktreePath ?? this.projectRoot;
 		const name = call.function.name;
@@ -635,6 +789,9 @@ export class WorkerLoop {
 		// would still be able to restore (cheap — one fs.readFile per file).
 		if (isWrite && targetPath) {
 			await snapshots.snapshot(targetPath, effectiveRoot);
+			if (transaction) {
+				transaction.touchFile(targetPath, "modified");
+			}
 		}
 
 		// Execute the tool itself.
@@ -657,8 +814,10 @@ export class WorkerLoop {
 
 		// Post-edit validation. Only runs on successful writes (the model
 		// shouldn't be told the file is broken when its own call already
-		// failed). Failure rolls back via SnapshotManager and folds the diag
-		// into the tool_result content so the next assistant turn can react.
+		// failed). When a transaction is active, failures are recorded with
+		// structured diagnostics and repair feedback; without a transaction,
+		// the legacy immediate-rollback behaviour is preserved.
+		let repairFeedback: string | undefined;
 		if (
 			this.validator &&
 			isWrite &&
@@ -670,42 +829,162 @@ export class WorkerLoop {
 				args,
 				executed,
 				targetPath,
+				effectiveRoot,
 			);
 			if (validation && !validation.passed) {
-				const restored = await snapshots.restore(
-					targetPath,
-					effectiveRoot,
-				);
 				const issues = validation.checks.filter((c) => !c.passed);
-				const diagLines = issues
-					.map((c) => {
-						const loc = c.location
-							? `${c.location.file}(${c.location.line},${c.location.column}): `
-							: "";
-						return `  ${loc}${c.message}`;
-					})
-					.join("\n");
-				executed = {
-					content: [
-						executed.content,
-						"",
-						`Validation failed with ${issues.length} issue(s):`,
-						diagLines,
-						restored
-							? "\nFile has been restored to its pre-edit state."
-							: "\nWarning: rollback failed; file may be in a partial state.",
-					]
-						.join("\n")
-						.trim(),
-					isError: true,
-				};
-				emit({
-					type: "tool_rolled_back",
-					toolName: name,
-					path: targetPath,
-					restored,
-					issues: issues.length,
-				});
+
+				if (transaction) {
+					// Transaction-aware validation: resolve policy, record failure,
+					// conditionally rollback, and build repair feedback.
+					const hasWorktree = !!worktreePath;
+					const policy = resolveFailurePolicy({
+						checkerType: issues[0]?.type === "type" ? "typecheck"
+							: issues[0]?.type === "pattern" ? "pattern"
+							: "syntax",
+						severity: issues.some((i) => i.severity === "error") ? "error" : "warning",
+						hasWorktree,
+						isPathPolicyViolation: false,
+						isForbiddenGlob: false,
+					});
+
+					const diagEntries = issues.map((c) => ({
+						file: c.location?.file ?? targetPath,
+						line: c.location?.line,
+						column: c.location?.column,
+						message: c.message,
+						errorCode: c.name,
+					}));
+
+					// Capture diff before rollback if policy requires it.
+					let failedDiff: string | null = null;
+					if (policy === "rollback_with_diff" || this.transactionConfig?.includeFailedDiff) {
+						try {
+							const { readFileSync } = await import("node:fs");
+							const currentContent = readFileSync(
+								`${effectiveRoot}/${targetPath}`,
+								"utf-8",
+							);
+							failedDiff = currentContent.slice(0, transaction.repairBudget.maxDiffChars);
+						} catch {
+							failedDiff = null;
+						}
+					}
+
+					const failure = transaction.recordFailure({
+						checkerType: issues[0]?.type === "type" ? "typecheck"
+							: issues[0]?.type === "pattern" ? "pattern"
+							: "syntax",
+						severity: issues.some((i) => i.severity === "error") ? "error" : "warning",
+						affectedFiles: [targetPath],
+						diagnostics: diagEntries,
+						failedDiff,
+						policy,
+					});
+
+					// Execute policy action.
+					if (policy === "rollback_with_diff" || policy === "terminate") {
+						const restored = await snapshots.restore(targetPath, effectiveRoot);
+						emit({
+							type: "tool_rolled_back",
+							toolName: name,
+							path: targetPath,
+							restored,
+							issues: issues.length,
+						});
+					}
+					// retain_and_repair: keep the failed edit in the worktree.
+					// feedback_only: don't rollback, just record.
+
+					if (policy !== "feedback_only" && policy !== "terminate") {
+						const canRepair = transaction.canRepair(targetPath);
+						if (canRepair.allowed) {
+							const errorSig = `${failure.checkerType}:${targetPath}:${issues[0]?.name ?? ""}:${issues[0]?.location?.line ?? 0}`;
+							if (!transaction.checkSameErrorRepeat(errorSig)) {
+								transaction.consumeRepairAttempt(targetPath, errorSig);
+								repairFeedback = buildRepairFeedback({
+									objective: transaction.objective,
+									acceptance: transaction.acceptance,
+									failure,
+									failedDiff,
+									touchedFiles: [...transaction.touchedFiles.keys()],
+									remainingBudget: transaction.getRemainingBudget(),
+									allowedGlobs: transaction.allowedGlobs,
+									maxDiffChars: transaction.repairBudget.maxDiffChars,
+									maxDiagnosticChars: transaction.repairBudget.maxDiagnosticChars,
+								});
+							}
+						}
+					}
+
+					// Terminate policy: force transaction failure.
+					if (policy === "terminate") {
+						transaction.setRollbackReason(`policy violation: ${failure.checkerType}`);
+						try { transaction.transitionTo("failed"); } catch { /* already terminal */ }
+					}
+
+					// Update the tool result with diagnostic info.
+					const diagLines = issues
+						.map((c) => {
+							const loc = c.location
+								? `${c.location.file}(${c.location.line},${c.location.column}): `
+								: "";
+							return `  ${loc}${c.message}`;
+						})
+						.join("\n");
+					const policyNote = policy === "retain_and_repair"
+						? "\nFailed edit retained for repair. See repair feedback above."
+						: policy === "rollback_with_diff"
+							? "\nFile has been restored to its pre-edit state. Failed diff retained for repair."
+							: policy === "terminate"
+								? "\nPolicy violation — task terminated."
+								: "\nWarning (non-blocking).";
+					executed = {
+						content: [
+							executed.content,
+							"",
+							`Validation failed with ${issues.length} issue(s):`,
+							diagLines,
+							policyNote,
+						].join("\n").trim(),
+						isError: policy !== "feedback_only",
+					};
+				} else {
+					// Legacy path: no transaction — immediate rollback.
+					const restored = await snapshots.restore(
+						targetPath,
+						effectiveRoot,
+					);
+					const diagLines = issues
+						.map((c) => {
+							const loc = c.location
+								? `${c.location.file}(${c.location.line},${c.location.column}): `
+								: "";
+							return `  ${loc}${c.message}`;
+						})
+						.join("\n");
+					executed = {
+						content: [
+							executed.content,
+							"",
+							`Validation failed with ${issues.length} issue(s):`,
+							diagLines,
+							restored
+								? "\nFile has been restored to its pre-edit state."
+								: "\nWarning: rollback failed; file may be in a partial state.",
+						]
+							.join("\n")
+							.trim(),
+						isError: true,
+					};
+					emit({
+						type: "tool_rolled_back",
+						toolName: name,
+						path: targetPath,
+						restored,
+						issues: issues.length,
+					});
+				}
 			}
 		}
 		if (
@@ -720,6 +999,7 @@ export class WorkerLoop {
 			kind: "executed",
 			content: executed.content,
 			isError: executed.isError,
+			repairFeedback,
 		};
 	}
 
@@ -728,6 +1008,7 @@ export class WorkerLoop {
 		args: Record<string, unknown>,
 		result: { content: string; isError: boolean },
 		filePath: string,
+		workingDirectory: string,
 	): Promise<ValidationResult | undefined> {
 		if (!this.validator) return undefined;
 		try {
@@ -736,7 +1017,7 @@ export class WorkerLoop {
 				toolArgs: args,
 				toolResult: result,
 				filePath,
-				workingDirectory: this.projectRoot,
+				workingDirectory,
 			});
 		} catch {
 			// Validator faults must not nuke the worker — treat as a pass.
@@ -761,7 +1042,7 @@ interface TurnOutcome {
 
 type ExecuteOutcome =
 	| { kind: "denied"; reason: string }
-	| { kind: "executed"; content: string; isError: boolean };
+	| { kind: "executed"; content: string; isError: boolean; repairFeedback?: string };
 
 function safeParseArgs(call: ToolCall): Record<string, unknown> {
 	const raw = call.function.arguments;
@@ -784,4 +1065,12 @@ function allowPostStaticCompileShell(
 		persona.pathPolicy.canWrite &&
 		contract?.postStaticCompile?.required === true
 	);
+}
+
+/** Extract the <status> value from a task_report in the worker's final content. */
+function extractReportStatus(text: string): string | undefined {
+	const reportMatch = text.match(/<\s*task_report[^>]*>([\s\S]*?)<\s*\/\s*task_report\s*>/);
+	if (!reportMatch) return undefined;
+	const statusMatch = reportMatch[1].match(/<\s*status\s*>\s*(.*?)\s*<\s*\/\s*status\s*>/);
+	return statusMatch?.[1]?.trim();
 }

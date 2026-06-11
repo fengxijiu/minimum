@@ -6,6 +6,7 @@ import { getPersona } from "../personas/PersonaRegistry.js";
 import { filterAllowedTools } from "../tools/policy/ToolAllowlistEnforcer.js";
 import { validateContract } from "./ContractValidator.js";
 import type { TaskContract } from "./TaskContract.js";
+import type { TransactionSummary } from "../transaction/types.js";
 
 export type TaskStatus =
 	| "ok"
@@ -25,6 +26,17 @@ export interface ReadonlyFallbackAccess {
 	denyFileGlobs: string[];
 	maxFileBytes: number;
 	maxTotalBytes: number;
+}
+
+/** A worktree file that could not be auto-applied; carried to W4 for an LLM merge. */
+export interface ConflictRecord {
+	taskId: string;
+	/** Repo-relative path of the conflicting file. */
+	path: string;
+	/** Worktree base commit (the merge base / "base" version). */
+	baseSha: string;
+	/** The task's worktree commit (the "theirs" version). */
+	taskCommitSha: string;
 }
 
 export interface TaskResult {
@@ -48,6 +60,10 @@ export interface TaskResult {
 	lastError?: string;
 	fallbackAccess?: ReadonlyFallbackAccess;
 	durationMs: number;
+	/** Transaction summary recording validation events, repairs, and file touches. */
+	transactionSummary?: TransactionSummary;
+	/** Files the worktree apply-back could not merge cleanly (resolved at W4). */
+	mergeConflicts?: ConflictRecord[];
 }
 
 export interface SchemaRepairRequest {
@@ -64,6 +80,10 @@ export interface WorkerExecutionResult {
 	/** Structured terminal reason surfaced by worker/client adapters. */
 	finishReason?: "final" | "empty_stream" | "step_limit";
 	attempt?: number;
+	/** Transaction summary from the worker's task transaction. */
+	transactionSummary?: TransactionSummary;
+	/** Worktree conflict records from apply-back. */
+	worktreeConflicts?: Array<{ path: string; baseSha: string; taskCommitSha: string }>;
 }
 
 /** Worker run mode: a `plan` turn is read-only and must emit <execution_plan>;
@@ -76,7 +96,7 @@ export interface WorkerExecutor {
 		contract: TaskContract,
 		filteredTools: string[],
 		repair?: SchemaRepairRequest,
-		runOpts?: { mode?: WorkerRunMode; signal?: AbortSignal },
+		runOpts?: { mode?: WorkerRunMode; signal?: AbortSignal; runId?: string },
 	): Promise<string | WorkerExecutionResult>;
 }
 
@@ -86,6 +106,8 @@ export interface TaskRunnerOptions {
 	refreshScheduler?: MemoryIndexRefreshScheduler;
 	retryBackoff?: Partial<RetryBackoffOptions>;
 	signal?: AbortSignal;
+	/** Pipeline-scoped run id — forwarded to the executor for audit/chaining. */
+	runId?: string;
 }
 
 interface RetryBackoffOptions {
@@ -172,7 +194,7 @@ export async function runTask(
 	let execution: WorkerExecutionResult;
 	try {
 		execution = normalizeWorkerExecution(
-			await opts.executor.run(contract, filteredTools, undefined, { signal: opts.signal }),
+			await opts.executor.run(contract, filteredTools, undefined, { signal: opts.signal, ...(opts.runId && { runId: opts.runId }) }),
 		);
 	} catch (err: unknown) {
 		return {
@@ -211,7 +233,7 @@ export async function runTask(
 			);
 		try {
 			execution = normalizeWorkerExecution(
-				await opts.executor.run(contract, filteredTools, repair, { signal: opts.signal }),
+				await opts.executor.run(contract, filteredTools, repair, { signal: opts.signal, ...(opts.runId && { runId: opts.runId }) }),
 			);
 			rawOutput = execution.text;
 			reportInspection = inspectXmlBlock(rawOutput, "task_report");
@@ -253,15 +275,25 @@ export async function runTask(
 		? []
 		: buildMissingReportErrors(attempts, { schemaRepairAttempted });
 
+	const txSummary = execution.transactionSummary;
+	const finalStatus = resolveFinalStatus(status, txSummary);
+
 	return {
 		...base,
-		status,
+		status: finalStatus,
 		report,
 		memoryCandidateBody: memBlock,
 		errors,
 		...(stagingError !== undefined && { stagingError }),
 		...(execution.hitStepLimit !== undefined && { hitStepLimit: execution.hitStepLimit }),
 		...(schemaRepairAttempted && { schemaRepairAttempted }),
+		...(txSummary && { transactionSummary: txSummary }),
+		...(execution.worktreeConflicts?.length && {
+			mergeConflicts: execution.worktreeConflicts.map((c) => ({
+				taskId: contract.taskId,
+				...c,
+			})),
+		}),
 		durationMs: Date.now() - start,
 	};
 }
@@ -676,6 +708,35 @@ function detectStatus(report: string): TaskStatus {
 	if (/<status>\s*skipped\s*<\/status>/i.test(report)) return "skipped";
 	if (/<status>\s*(failed?|error)\s*<\/status>/i.test(report)) return "error";
 	return "ok";
+}
+
+/**
+ * Merge the worker's self-reported task status with the transaction's factual
+ * state. Transaction facts override worker self-report: a worker cannot claim
+ * "completed" when the transaction has unresolved validation failures.
+ */
+function resolveFinalStatus(
+	workerStatus: TaskStatus,
+	txSummary?: TransactionSummary,
+): TaskStatus {
+	if (!txSummary) return workerStatus;
+
+	if (txSummary.status === "validated" || txSummary.status === "committed") {
+		return workerStatus;
+	}
+	if (txSummary.status === "failed" || txSummary.status === "rolled_back") {
+		return "error";
+	}
+	if (txSummary.status === "blocked") {
+		return "blocked";
+	}
+	if (
+		(txSummary.status === "validation_failed" || txSummary.status === "repairing") &&
+		workerStatus === "ok"
+	) {
+		return "error";
+	}
+	return workerStatus;
 }
 
 /**

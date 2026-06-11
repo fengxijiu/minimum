@@ -14,6 +14,8 @@ import type {
 } from "../loop/MiMoLoop.js";
 import type { BillingMode } from "../clients/MiMoPricing.js";
 import type { ICodeValidator } from "../types/validator.js";
+import type { ValidationRepairConfig } from "../config/MiMoConfig.js";
+import type { TransactionSummary } from "../transaction/types.js";
 import { buildMasterStagePrompt, getPersona, type MasterPlannerStage } from "../personas/PersonaRegistry.js";
 import { loadProjectSkillPrompt, loadGrantedSkillPrompt } from "../personas/PersonaSkillMap.js";
 import { renderGrantableCatalog, type GrantableCatalog } from "./CapabilityCatalog.js";
@@ -170,6 +172,9 @@ export function createPlannerBridge(
 				`## Persisted Artifacts\n${renderArtifactPaths(input.artifactPaths)}`,
 				`## W0.5 Refinement Entries\n${renderRefinements(input.refinements)}`,
 				`## Task Results\n${renderResults(input.results)}`,
+				...(input.transactionSummaries?.length
+					? [`## Transaction Evidence\n${renderTransactionSummaries(input.transactionSummaries)}`]
+					: []),
 				`## Known Issues\n${renderKnownIssues(input.knownIssues)}`,
 				`## Canonical Project Memory\n${input.canonicalMemory || "(none)"}`,
 				[
@@ -267,6 +272,24 @@ export function createPlannerBridge(
 				],
 				max,
 			),
+		resolveConflict: async ({ path: filePath, base, ours, theirs }) => {
+			const sys: ChatMessage = {
+				role: "system",
+				content:
+					"You are resolving a 3-way merge conflict. Output ONLY the final merged file content, no fences, no commentary.",
+			};
+			const user: ChatMessage = {
+				role: "user",
+				content: [
+					`# File\n${filePath}`,
+					`\n# BASE (common ancestor)\n${base ?? "(absent)"}`,
+					`\n# OURS (current main tree)\n${ours ?? "(absent)"}`,
+					`\n# THEIRS (task's change)\n${theirs ?? "(absent)"}`,
+					"\nProduce the merged file content that preserves both intents.",
+				].join("\n"),
+			};
+			return collectText(client, [sys, user], max);
+		},
 	};
 }
 
@@ -380,6 +403,10 @@ export interface WorkerExecutorOptions {
 	/** When true, each task runs in an isolated git worktree; tool writes route
 	 *  there and are applied back to projectRoot on completion. */
 	worktreeIsolation?: boolean;
+	/** Validation repair loop config — forwarded to WorkerLoop for transaction-aware validation. */
+	transactionConfig?: ValidationRepairConfig;
+	/** Pipeline-scoped run identifier — forwarded to WorkerLoop for integrated-ref worktree chaining. */
+	runId?: string;
 	/** Optional event sink — fired for each tool call, result, and final usage roll-up. */
 	onWorkerEvent?: (
 		contract: TaskContract,
@@ -420,6 +447,8 @@ export function createWorkerExecutor(
 			...(opts.model !== undefined && { model: opts.model }),
 			...(opts.billingMode !== undefined && { billingMode: opts.billingMode }),
 			...(opts.worktreeIsolation !== undefined && { worktreeIsolation: opts.worktreeIsolation }),
+			...(opts.transactionConfig !== undefined && { transactionConfig: opts.transactionConfig }),
+			...(opts.runId !== undefined && { runId: opts.runId }),
 		})
 		: undefined;
 
@@ -428,7 +457,7 @@ export function createWorkerExecutor(
 			contract: TaskContract,
 			_filteredTools: string[],
 			repair?: SchemaRepairRequest,
-			runOpts?: { mode?: WorkerRunMode; signal?: AbortSignal },
+			runOpts?: { mode?: WorkerRunMode; signal?: AbortSignal; runId?: string },
 		): Promise<WorkerExecutionResult> => {
 			const planMode = runOpts?.mode === "plan";
 			const persona = getPersona(contract.personaId);
@@ -511,6 +540,7 @@ export function createWorkerExecutor(
 					}),
 					...(planMode && { readOnly: true }),
 					...(runOpts?.signal !== undefined && { signal: runOpts.signal }),
+					...(runOpts?.runId !== undefined && { runId: runOpts.runId }),
 					onEvent: opts.onWorkerEvent
 						? (ev) => opts.onWorkerEvent!(contract, ev)
 						: undefined,
@@ -521,6 +551,8 @@ export function createWorkerExecutor(
 					hitStepLimit: result.hitStepLimit,
 					...(result.emptyFinalTurn !== undefined && { emptyFinalTurn: result.emptyFinalTurn }),
 					finishReason: result.finishReason,
+					...(result.transactionSummary && { transactionSummary: result.transactionSummary }),
+					...(result.worktreeConflicts?.length && { worktreeConflicts: result.worktreeConflicts }),
 					...(repair && { attempt: repair.attempt }),
 				};
 			}
@@ -550,6 +582,32 @@ function renderResults(results: TaskResult[]): string {
 	if (results.length === 0) return "(none)";
 	return results
 		.map((r) => `## ${r.taskId} (${r.personaId}) — ${r.status}\n${r.report}`)
+		.join("\n\n");
+}
+
+function renderTransactionSummaries(summaries: TransactionSummary[]): string {
+	if (summaries.length === 0) return "(none)";
+	return summaries
+		.map((s) => {
+			const lines = [
+				`### ${s.taskId} — tx ${s.status}`,
+				`- Repair attempts: ${s.repairAttempts}`,
+				`- Unresolved failures: ${s.unresolvedFailures.length}`,
+				`- Touched files: ${s.touchedFiles.join(", ") || "(none)"}`,
+				`- Validators run: ${s.validatorsRun.join(", ") || "(none)"}`,
+			];
+			if (s.unresolvedFailures.length > 0) {
+				lines.push("- Unresolved:");
+				for (const f of s.unresolvedFailures) {
+					const msg = f.diagnostics[0]?.message ?? "unknown";
+					lines.push(`  - ${f.failureId} [${f.checkerType}]: ${msg}`);
+				}
+			}
+			if (s.repairAttempts > 2) {
+				lines.push(`- **Risk:** High repair count (${s.repairAttempts}) — may indicate design issue`);
+			}
+			return lines.join("\n");
+		})
 		.join("\n\n");
 }
 

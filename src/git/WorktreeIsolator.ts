@@ -8,6 +8,8 @@ export interface WorktreeResult {
   sha: string | null;
   /** Relative paths of files that were written or deleted. */
   changedFiles: string[];
+  /** Conflicting files left unapplied for the master to merge at W4. */
+  conflicts: Array<{ path: string; baseSha: string; taskCommitSha: string }>;
 }
 
 /**
@@ -64,12 +66,19 @@ export class WorktreeIsolator {
     }
     const sha = await this.store.captureWorktreeChanges(entry.worktreePath, message);
     if (sha === null) {
-      return { sha: null, changedFiles: [] };
+      return { sha: null, changedFiles: [], conflicts: [] };
     }
     const changed = await this.store.listChangedFiles(baseSha, sha);
-    // Applies changed files to the main working tree (store.config.workTree).
-    await this.store.applyCommitFiles(sha, baseSha, this.store.config.workTree);
-    return { sha, changedFiles: changed.map((f) => f.path) };
+    const { conflicts } = await this.store.applyCommitFilesChecked(
+      sha,
+      baseSha,
+      this.store.config.workTree,
+    );
+    return {
+      sha,
+      changedFiles: changed.map((f) => f.path),
+      conflicts: conflicts.map((p) => ({ path: p, baseSha, taskCommitSha: sha })),
+    };
   }
 
   /**

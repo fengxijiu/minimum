@@ -323,11 +323,13 @@ async function executeTask(
 	options?: DagHarnessOptions,
 ): Promise<TaskResult> {
 	if (!options) throw new Error("DynamicHarness requires options with projectRoot and executor");
+	const runId = options.runId ?? `run_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 	return runTaskWithRetry(contract, {
 		projectRoot: options.projectRoot,
 		executor: options.executor,
 		refreshScheduler: options.refreshScheduler,
 		retryBackoff: options.retryBackoff,
+		runId,
 	});
 }
 

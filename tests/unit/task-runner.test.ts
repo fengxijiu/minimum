@@ -462,4 +462,43 @@ describe("runTask", () => {
 		expect(r.retryCount).toBeUndefined();
 		expect(sleep).not.toHaveBeenCalled();
 	});
+
+	it("threads worktreeConflicts as mergeConflicts with taskId stamped", async () => {
+		const executor: WorkerExecutor = {
+			run: async () => ({
+				text: `<task_report><status>ok</status>\nDone with conflicts.</task_report>`,
+				hitStepLimit: false,
+				finishReason: "final" as const,
+				worktreeConflicts: [
+					{ path: "shared.ts", baseSha: "abc123", taskCommitSha: "def456" },
+					{ path: "other.ts", baseSha: "abc123", taskCommitSha: "def456" },
+				],
+			}),
+		};
+		const contract = mkContract({ taskId: "T-conflict-1" });
+		const r = await runTask(contract, { projectRoot: dir, executor });
+		expect(r.status).toBe("ok");
+		expect(r.mergeConflicts).toBeDefined();
+		expect(r.mergeConflicts!.length).toBe(2);
+		expect(r.mergeConflicts![0]).toEqual({
+			taskId: "T-conflict-1",
+			path: "shared.ts",
+			baseSha: "abc123",
+			taskCommitSha: "def456",
+		});
+		expect(r.mergeConflicts![1].taskId).toBe("T-conflict-1");
+	});
+
+	it("omits mergeConflicts when worktreeConflicts is empty", async () => {
+		const executor: WorkerExecutor = {
+			run: async () => ({
+				text: `<task_report><status>ok</status>\nClean.</task_report>`,
+				hitStepLimit: false,
+				finishReason: "final" as const,
+			}),
+		};
+		const r = await runTask(mkContract(), { projectRoot: dir, executor });
+		expect(r.status).toBe("ok");
+		expect(r.mergeConflicts).toBeUndefined();
+	});
 });

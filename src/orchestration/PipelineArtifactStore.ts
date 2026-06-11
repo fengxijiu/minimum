@@ -3,6 +3,8 @@ import * as path from "node:path";
 import type { MissionCheckReport } from "./MissionChecker.js";
 import type { RefinementEntry, RefineResult } from "./Refiner.js";
 import type { CoarseDag, TaskContract } from "./TaskContract.js";
+import type { TransactionSummary } from "../transaction/types.js";
+import { generateHumanReport } from "../transaction/TransactionArtifact.js";
 
 export interface ArtifactPaths {
 	dag?: string;
@@ -11,6 +13,7 @@ export interface ArtifactPaths {
 	confirmations: string[];
 	missionChecks: string[];
 	repairDags: string[];
+	transactions: string[];
 	memoryIndex?: string;
 }
 
@@ -26,6 +29,7 @@ export function emptyArtifactPaths(): ArtifactPaths {
 		confirmations: [],
 		missionChecks: [],
 		repairDags: [],
+		transactions: [],
 	};
 }
 
@@ -99,6 +103,26 @@ export async function writeMissionCheck(
 	await fs.writeFile(markdownPath, rawReport.endsWith("\n") ? rawReport : `${rawReport}\n`, "utf-8");
 	const jsonPath = await writeJson(projectRoot, ["tasks", epicId, "mission-checks", `${index}.json`], parsedReport);
 	return { markdownPath, jsonPath };
+}
+
+export async function writeTransactionSummary(
+	projectRoot: string,
+	epicId: string,
+	summary: TransactionSummary,
+): Promise<{ jsonPath: string; markdownPath: string }> {
+	const jsonPath = await writeJson(
+		projectRoot,
+		["tasks", epicId, "transactions", `${summary.taskId}.json`],
+		summary,
+	);
+	const markdownPath = artifactPath(
+		projectRoot,
+		["tasks", epicId, "transactions", `${summary.taskId}.md`],
+	);
+	await fs.mkdir(path.dirname(markdownPath), { recursive: true });
+	const report = generateHumanReport(summary);
+	await fs.writeFile(markdownPath, report.endsWith("\n") ? report : `${report}\n`, "utf-8");
+	return { jsonPath, markdownPath };
 }
 
 export function artifactPath(projectRoot: string, parts: string[]): string {

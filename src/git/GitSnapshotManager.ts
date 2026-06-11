@@ -45,9 +45,10 @@ export class GitSnapshotManager {
     const abs = this.resolvePath(rawPath, workingDirectory);
     if (this.entries.has(abs)) return;
 
-    // Compute path relative to the work-tree (forward slashes for git).
+    // Compute path relative to the effective root (work-tree or worktree).
+    const root = workingDirectory ?? this.store.config.workTree;
     const relativePath = path
-      .relative(this.store.config.workTree, abs)
+      .relative(root, abs)
       .replace(/\\/g, "/");
 
     let content: string | null;

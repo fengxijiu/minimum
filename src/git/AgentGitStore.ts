@@ -332,6 +332,87 @@ export class AgentGitStore {
     }
   }
 
+  /**
+   * Like {@link applyCommitFiles} but base-aware and binary-safe. A file is a
+   * conflict when the main tree's blob OID diverged from `baseSha` (someone else
+   * changed it since the worktree forked). Conflicts are left untouched and
+   * reported; clean files are applied using raw Buffer writes (no utf-8 decode).
+   */
+  async applyCommitFilesChecked(
+    commitSha: string,
+    baseSha: string,
+    targetRoot: string,
+  ): Promise<{ applied: string[]; conflicts: string[] }> {
+    const changed = await this.listChangedFiles(baseSha, commitSha);
+    const applied: string[] = [];
+    const conflicts: string[] = [];
+
+    for (const { path: relativePath, deleted } of changed) {
+      const fullPath = path.join(targetRoot, relativePath);
+      const baseOid = await this.blobOidAtCommit(baseSha, relativePath);
+      const oursOid = await this.hashFile(fullPath);
+
+      if (oursOid !== baseOid) {
+        conflicts.push(relativePath);
+        continue;
+      }
+
+      if (deleted) {
+        await fs.unlink(fullPath).catch(() => {});
+      } else {
+        const buf = await this.readBlobAtCommit(commitSha, relativePath);
+        if (buf !== null) {
+          await fs.mkdir(path.dirname(fullPath), { recursive: true });
+          await fs.writeFile(fullPath, buf);
+        }
+      }
+      applied.push(relativePath);
+    }
+    return { applied, conflicts };
+  }
+
+  /** Returns the blob SHA for a file at a given commit, or null if not found. */
+  async blobOidAtCommit(
+    commitSha: string,
+    relativePath: string,
+  ): Promise<string | null> {
+    try {
+      return await this.git(["rev-parse", `${commitSha}:${relativePath}`]);
+    } catch {
+      return null;
+    }
+  }
+
+  /** Raw blob bytes from a commit; null if the path is absent. Binary-safe. */
+  async readBlobAtCommit(commitSha: string, relativePath: string): Promise<Buffer | null> {
+    try {
+      const { stdout } = await execFileAsync(
+        "git",
+        ["show", `${commitSha}:${relativePath}`],
+        { cwd: this.config.workTree, maxBuffer: 64 * 1024 * 1024, encoding: "buffer" },
+      );
+      return stdout as unknown as Buffer;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Blob OID git would assign to an on-disk file; null if missing. */
+  async hashFile(absPath: string): Promise<string | null> {
+    try {
+      return await this.git(["hash-object", absPath]);
+    } catch {
+      return null;
+    }
+  }
+
+  /** True if the blob at <commit>:<path> contains a NUL byte in its head (binary). */
+  async isBinaryAtCommit(commitSha: string, relativePath: string): Promise<boolean> {
+    const buf = await this.readBlobAtCommit(commitSha, relativePath);
+    if (buf === null) return false;
+    return buf.subarray(0, 8000).includes(0);
+  }
+
   /** Stores a blob in the object store, returns its sha. */
   async storeBlob(content: string): Promise<string> {
     return this.git(["hash-object", "-w", "--stdin"], { input: content });
@@ -343,6 +424,79 @@ export class AgentGitStore {
       return await this.git(["cat-file", "blob", sha], { raw: true });
     } catch {
       return null;
+    }
+  }
+
+  /**
+   * Build a new commit whose tree = `baseCommit`'s tree with every file that
+   * changed between `taskBaseSha..taskCommitSha` overlaid (added/modified/deleted).
+   *
+   * Conflict detection: for each changed file, compares the blob at `baseCommit`
+   * (current integrated tree) with the blob at `taskBaseSha` (where the task
+   * forked from). If they differ, another task has modified the file since the
+   * fork — the file is skipped and reported in `conflictingFiles`.
+   *
+   * Returns `{ sha, conflictingFiles }`.
+   */
+  async overlayCommit(
+    baseCommit: string,
+    taskCommitSha: string,
+    taskBaseSha: string,
+    message: string,
+  ): Promise<{ sha: string; conflictingFiles: string[] }> {
+    const tmpIdx = path.join(
+      os.tmpdir(),
+      `minimum-int-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    const conflictingFiles: string[] = [];
+    try {
+      const idxEnv: NodeJS.ProcessEnv = { GIT_INDEX_FILE: tmpIdx };
+      await this.git(["read-tree", baseCommit], { env: idxEnv });
+      const changed = await this.listChangedFiles(taskBaseSha, taskCommitSha);
+      for (const { path: rel, deleted } of changed) {
+        // Conflict check: has another task changed this file on the integrated
+        // tree since we forked? Compare the blob at the current integrated
+        // commit vs. our fork point.
+        const blobAtBase = await this.blobOidAtCommit(baseCommit, rel);
+        const blobAtFork = await this.blobOidAtCommit(taskBaseSha, rel);
+        if (blobAtBase !== blobAtFork) {
+          conflictingFiles.push(rel);
+          continue;
+        }
+        if (deleted) {
+          await this.git(["update-index", "--force-remove", rel], { env: idxEnv }).catch(() => {});
+        } else {
+          const oid = await this.blobOidAtCommit(taskCommitSha, rel);
+          if (oid) {
+            await this.git(["update-index", "--add", "--cacheinfo", `100644,${oid},${rel}`], {
+              env: idxEnv,
+            });
+          }
+        }
+      }
+      const treeSha = await this.git(["write-tree"], { env: idxEnv });
+      const sha = await this.git(["commit-tree", treeSha, "-p", baseCommit, "-m", message], {
+        env: {
+          ...idxEnv,
+          GIT_AUTHOR_NAME: "minimum-agent",
+          GIT_AUTHOR_EMAIL: "agent@minimum.local",
+          GIT_COMMITTER_NAME: "minimum-agent",
+          GIT_COMMITTER_EMAIL: "agent@minimum.local",
+        },
+      });
+      return { sha, conflictingFiles };
+    } finally {
+      await fs.unlink(tmpIdx).catch(() => {});
+    }
+  }
+
+  /** Atomically move `ref` from `oldSha` to `newSha`. Returns false if `ref` no longer equals `oldSha`. */
+  async compareAndSwapRef(ref: string, oldSha: string, newSha: string): Promise<boolean> {
+    try {
+      await this.git(["update-ref", ref, newSha, oldSha]);
+      return true;
+    } catch {
+      return false;
     }
   }
 }

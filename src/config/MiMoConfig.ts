@@ -93,6 +93,36 @@ export interface MemoryConfig {
 
 export interface ApiConcurrencyConfig extends MiMoApiConcurrencyConfig {}
 
+export interface TransactionConfig {
+	/** 是否启用任务事务（默认 true） */
+	enabled?: boolean;
+	/** worktree 模式偏好（默认 worktree_preferred） */
+	mode?: "worktree_preferred" | "worktree_required" | "disabled";
+}
+
+export interface ValidationRepairConfig {
+	/** 是否启用验证修复循环（默认 true） */
+	enabled?: boolean;
+	/** 单文件最大修复次数（默认 2） */
+	maxAttemptsPerFile?: number;
+	/** 单任务最大修复次数（默认 4） */
+	maxAttemptsPerTask?: number;
+	/** 是否在修复反馈中包含 failed diff（默认 true） */
+	includeFailedDiff?: boolean;
+	/** worktree 模式下保留失败修改供原地修复（默认 true） */
+	retainFailedEditInWorktree?: boolean;
+	/** 修复耗尽后回滚（默认 true） */
+	rollbackOnExhausted?: boolean;
+	/** 有 pending failure 时禁止 completed（默认 true） */
+	blockCompletedWithPendingFailures?: boolean;
+	/** failed diff 最大字符数（默认 20000） */
+	maxDiffChars?: number;
+	/** diagnostics 最大字符数（默认 12000） */
+	maxDiagnosticChars?: number;
+	/** 同一错误签名重复出现上限（默认 2） */
+	sameErrorRepeatLimit?: number;
+}
+
 export interface MiMoConfig {
 	/** MiMo API key（来自 `init` 注册的全局配置，env MIMO_API_KEY 优先） */
 	apiKey?: string;
@@ -156,6 +186,10 @@ export interface MiMoConfig {
 		/** 永不可授予的 MCP 工具名(mcp__server__tool)。 */
 		denylistMcpTools?: string[];
 	};
+	/** 任务事务配置 */
+	transaction?: TransactionConfig;
+	/** 验证修复循环配置 */
+	validationRepair?: ValidationRepairConfig;
 }
 
 /** 所有优化分析得来的默认值 */
@@ -229,6 +263,22 @@ export const DEFAULT_MIMO_CONFIG: Required<MiMoConfig> = {
 		denylistSkills: [],
 		denylistMcpTools: [],
 	},
+	transaction: {
+		enabled: true,
+		mode: "worktree_preferred",
+	},
+	validationRepair: {
+		enabled: true,
+		maxAttemptsPerFile: 2,
+		maxAttemptsPerTask: 4,
+		includeFailedDiff: true,
+		retainFailedEditInWorktree: true,
+		rollbackOnExhausted: true,
+		blockCompletedWithPendingFailures: true,
+		maxDiffChars: 20_000,
+		maxDiagnosticChars: 12_000,
+		sameErrorRepeatLimit: 2,
+	},
 };
 
 /** 深合并用户配置与默认配置 */
@@ -284,5 +334,7 @@ export function mergeConfig(user: MiMoConfig = {}): Required<MiMoConfig> {
 		shell: { ...DEFAULT_MIMO_CONFIG.shell, ...user.shell },
 		mcpServers: user.mcpServers ?? DEFAULT_MIMO_CONFIG.mcpServers,
 		capabilityGrants: { ...DEFAULT_MIMO_CONFIG.capabilityGrants, ...user.capabilityGrants },
+		transaction: { ...DEFAULT_MIMO_CONFIG.transaction, ...user.transaction },
+		validationRepair: { ...DEFAULT_MIMO_CONFIG.validationRepair, ...user.validationRepair },
 	};
 }
