@@ -20,6 +20,11 @@ export interface DagHarnessOptions extends TaskRunnerOptions {
 	/** When true, each task runs in its own git worktree, so the scheduler skips
 	 *  write-lock serialisation and lets overlapping-glob tasks run in parallel. */
 	worktreeIsolation?: boolean;
+	/** Global concurrency cap for in-flight worker tasks. Defaults to the
+	 *  ResourceManager ceiling (50). The MiMoClient ApiConcurrencyGate remains the
+	 *  true global API backstop. `signal` (inherited from TaskRunnerOptions) cancels
+	 *  the whole DAG: running tasks abort and the remainder flush as skipped. */
+	globalConcurrency?: number;
 }
 
 export interface DagHarness {

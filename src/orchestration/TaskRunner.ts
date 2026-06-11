@@ -108,6 +108,16 @@ export interface TaskRunnerOptions {
 	signal?: AbortSignal;
 	/** Pipeline-scoped run id — forwarded to the executor for audit/chaining. */
 	runId?: string;
+	/**
+	 * Called immediately before a retry backoff wait, so the scheduler can release
+	 * resources the task does not need while sleeping (e.g. its write lock, #6).
+	 */
+	beforeRetryWait?: () => void;
+	/**
+	 * Called after the backoff wait, before the next attempt — the scheduler
+	 * re-acquires anything released by {@link beforeRetryWait}, awaiting if needed.
+	 */
+	afterRetryWait?: () => Promise<void>;
 }
 
 interface RetryBackoffOptions {
@@ -317,7 +327,11 @@ export async function runTaskWithRetry(
 		}
 		if (attempt < maxAttempts) {
 			if (opts.signal?.aborted) break;
+			// Release lock-style resources while sleeping, then re-acquire before the
+			// next attempt so an overlapping task can use the gap (#6).
+			opts.beforeRetryWait?.();
 			await waitForRetryBackoff(attempt, opts.retryBackoff);
+			if (opts.afterRetryWait) await opts.afterRetryWait();
 			continue;
 		}
 	}
