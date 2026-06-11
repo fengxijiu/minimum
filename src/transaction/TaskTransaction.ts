@@ -15,7 +15,7 @@ const VALID_TRANSITIONS: Record<TransactionStatus, TransactionStatus[]> = {
 	dirty: ["validation_failed", "validated", "blocked", "failed"],
 	validation_failed: ["repairing", "validated", "rolled_back", "blocked", "failed"],
 	repairing: ["validation_failed", "validated", "dirty", "blocked", "failed"],
-	validated: ["committed", "blocked", "failed"],
+	validated: ["committed", "blocked", "failed", "validation_failed"],
 	committed: [],
 	rolled_back: ["failed"],
 	blocked: [],
@@ -60,6 +60,7 @@ export class TaskTransaction {
 	private _eventCallbacks: TransactionEventCallback[] = [];
 	private readonly _budget: RepairBudget;
 	private _failureCounter = 0;
+	private _budgetExhaustionEmitted = false;
 
 	constructor(opts: TransactionOptions, budget?: Partial<RepairBudget>) {
 		this.id = `tx_${Date.now()}_${++transactionCounter}`;
@@ -102,6 +103,10 @@ export class TaskTransaction {
 
 	get isTerminal(): boolean {
 		return TERMINAL_STATUSES.has(this._status);
+	}
+
+	get repairAttempts(): number {
+		return this._repairState.totalAttempts;
 	}
 
 	onEvent(callback: TransactionEventCallback): void {
@@ -160,6 +165,37 @@ export class TaskTransaction {
 		return true;
 	}
 
+	resolveFailuresForFile(filePath: string): number {
+		// Only clear failures from static file-write checks; test/build/lint require
+		// the shell command to re-run and pass before they can be resolved.
+		const staticCheckers = new Set<string>(["syntax", "typecheck", "pattern"]);
+		let count = 0;
+		for (const f of this._failures) {
+			if (!f.resolved && f.affectedFiles.includes(filePath) && staticCheckers.has(f.checkerType)) {
+				f.resolved = true;
+				count++;
+			}
+		}
+		if (count > 0 && !this.hasUnresolvedFailures() && this._status !== "validated") {
+			this.transitionTo("validated");
+		}
+		return count;
+	}
+
+	resolveFailuresByCheckerType(checkerType: string): number {
+		let count = 0;
+		for (const f of this._failures) {
+			if (!f.resolved && f.checkerType === checkerType) {
+				f.resolved = true;
+				count++;
+			}
+		}
+		if (count > 0 && !this.hasUnresolvedFailures() && this._status !== "validated") {
+			this.transitionTo("validated");
+		}
+		return count;
+	}
+
 	hasUnresolvedFailures(): boolean {
 		return this._failures.some((f) => !f.resolved);
 	}
@@ -169,11 +205,25 @@ export class TaskTransaction {
 			return { allowed: false, reason: "transaction is in terminal state" };
 		}
 		if (this._repairState.totalAttempts >= this._budget.maxAttemptsPerTask) {
+			if (!this._budgetExhaustionEmitted) {
+				this._budgetExhaustionEmitted = true;
+				this._emit({
+					type: "repair_budget_exhausted",
+					reason: "per-task repair budget exhausted",
+				});
+			}
 			return { allowed: false, reason: "per-task repair budget exhausted" };
 		}
 		if (file) {
 			const fileAttempts = this._repairState.perFileAttempts.get(file) ?? 0;
 			if (fileAttempts >= this._budget.maxAttemptsPerFile) {
+				if (!this._budgetExhaustionEmitted) {
+					this._budgetExhaustionEmitted = true;
+					this._emit({
+						type: "repair_budget_exhausted",
+						reason: `per-file repair budget exhausted for ${file}`,
+					});
+				}
 				return { allowed: false, reason: `per-file repair budget exhausted for ${file}` };
 			}
 		}
@@ -253,6 +303,10 @@ export class TaskTransaction {
 
 	recordValidatorRun(checkerType: string): void {
 		this._validatorsRun.add(checkerType);
+	}
+
+	emitRepairEvent(event: TransactionEvent): void {
+		this._emit(event);
 	}
 
 	getSummary(): TransactionSummary {

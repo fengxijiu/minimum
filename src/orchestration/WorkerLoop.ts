@@ -174,6 +174,13 @@ export interface WorkerRunResult {
 
 const WRITE_TOOL_NAMES = new Set(["write_file", "edit_file", "apply_patch"]);
 
+const CHECKABLE_SHELL_TOOLS: Record<string, "test" | "build" | "lint" | "typecheck"> = {
+	"shell_test": "test",
+	"shell_build": "build",
+	"shell_lint": "lint",
+	"shell_typecheck": "typecheck",
+};
+
 /** Tools that can mutate the workspace/environment — denied during a plan turn. */
 const MUTATING_TOOL_NAMES = new Set([
 	"write_file", "edit_file", "apply_patch",
@@ -440,6 +447,10 @@ export class WorkerLoop {
 					messages.push({
 						role: "user",
 						content: outcome.repairFeedback,
+					});
+					transaction?.emitRepairEvent({
+						type: "repair_feedback_injected",
+						attemptIndex: transaction.repairAttempts,
 					});
 				}
 			}
@@ -871,6 +882,7 @@ export class WorkerLoop {
 						}
 					}
 
+					const wasRepairing = transaction.status === "repairing";
 					const failure = transaction.recordFailure({
 						checkerType: issues[0]?.type === "type" ? "typecheck"
 							: issues[0]?.type === "pattern" ? "pattern"
@@ -881,6 +893,13 @@ export class WorkerLoop {
 						failedDiff,
 						policy,
 					});
+					if (wasRepairing) {
+						transaction.emitRepairEvent({
+							type: "repair_attempt_failed",
+							attemptIndex: transaction.repairAttempts,
+							failure,
+						});
+					}
 
 					// Execute policy action.
 					if (policy === "rollback_with_diff" || policy === "terminate") {
@@ -985,6 +1004,74 @@ export class WorkerLoop {
 						issues: issues.length,
 					});
 				}
+			} else if (validation?.passed && transaction && transaction.hasUnresolvedFailures()) {
+				const resolved = transaction.resolveFailuresForFile(targetPath);
+				for (let i = 0; i < resolved; i++) {
+					transaction.emitRepairEvent({
+						type: "repair_attempt_passed",
+						attemptIndex: transaction.repairAttempts,
+					});
+				}
+			}
+		}
+		// Post-shell failure detection. When a checkable shell tool (test/build/lint/
+		// typecheck) runs, feed success/failure into the transaction so the repair loop
+		// and completion gate cover runtime failures, not just post-write static checks.
+		const shellCheckerType = CHECKABLE_SHELL_TOOLS[name];
+		if (shellCheckerType && transaction) {
+			const shellExitCode = parseShellExitCode(executed.content);
+			const shellFailed = shellExitCode !== null && shellExitCode !== 0;
+			if (shellFailed) {
+				const command = typeof args.command === "string" ? args.command : name;
+				const hadUnresolved = transaction.failures.some(
+					(f) => !f.resolved && f.checkerType === shellCheckerType,
+				);
+				const shellFailure = transaction.recordFailure({
+					checkerType: shellCheckerType,
+					severity: "error",
+					affectedFiles: transaction.touchedFiles.size > 0 ? [...transaction.touchedFiles.keys()] : [command],
+					diagnostics: [{
+						file: "",
+						message: name + " failed (exit " + shellExitCode + "): " + command,
+					}],
+					failedDiff: executed.content.slice(0, transaction.repairBudget.maxDiffChars),
+					command,
+					exitCode: shellExitCode ?? undefined,
+					policy: "retain_and_repair",
+				});
+				if (hadUnresolved) {
+					transaction.emitRepairEvent({
+						type: "repair_attempt_failed",
+						attemptIndex: transaction.repairAttempts,
+						failure: shellFailure,
+					});
+				}
+				const shellCanRepair = transaction.canRepair(shellCheckerType);
+				if (shellCanRepair.allowed) {
+					const shellErrorSig = shellCheckerType + ":" + command;
+					if (!transaction.checkSameErrorRepeat(shellErrorSig)) {
+						transaction.consumeRepairAttempt(shellCheckerType, shellErrorSig);
+						repairFeedback = buildRepairFeedback({
+							objective: transaction.objective,
+							acceptance: transaction.acceptance,
+							failure: shellFailure,
+							failedDiff: shellFailure.failedDiff,
+							touchedFiles: [...transaction.touchedFiles.keys()],
+							remainingBudget: transaction.getRemainingBudget(),
+							allowedGlobs: transaction.allowedGlobs,
+							maxDiffChars: transaction.repairBudget.maxDiffChars,
+							maxDiagnosticChars: transaction.repairBudget.maxDiagnosticChars,
+						});
+					}
+				}
+			} else if (shellExitCode === 0 && transaction.hasUnresolvedFailures()) {
+				const resolved = transaction.resolveFailuresByCheckerType(shellCheckerType);
+				for (let i = 0; i < resolved; i++) {
+					transaction.emitRepairEvent({
+						type: "repair_attempt_passed",
+						attemptIndex: transaction.repairAttempts,
+					});
+				}
 			}
 		}
 		if (
@@ -1071,6 +1158,13 @@ function allowPostStaticCompileShell(
 function extractReportStatus(text: string): string | undefined {
 	const reportMatch = text.match(/<\s*task_report[^>]*>([\s\S]*?)<\s*\/\s*task_report\s*>/);
 	if (!reportMatch) return undefined;
-	const statusMatch = reportMatch[1].match(/<\s*status\s*>\s*(.*?)\s*<\s*\/\s*status\s*>/);
+	const statusMatch = reportMatch[1]?.match(/<\s*status\s*>\s*(.*?)\s*<\s*\/\s*status\s*>/);
 	return statusMatch?.[1]?.trim();
+}
+
+export function parseShellExitCode(content: string): number | null {
+	const m = content.match(/\[exit\s+(\d+)\]/);
+	if (m?.[1] !== undefined) return parseInt(m[1], 10);
+	if (content.includes("[killed after timeout]")) return -1;
+	return null;
 }
