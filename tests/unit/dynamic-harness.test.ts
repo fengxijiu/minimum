@@ -7,6 +7,11 @@ import type { TaskContract } from "../../src/orchestration/TaskContract.js";
 import type { WorkerExecutor } from "../../src/orchestration/TaskRunner.js";
 import { DynamicHarness } from "../../src/orchestration/DynamicHarness.js";
 import { classifyRoutePolicy } from "../../src/orchestration/RoutePolicy.js";
+import {
+	getPersona,
+	registerPersonaForTesting,
+	type Persona,
+} from "../../src/personas/index.js";
 
 function mkContract(over: Partial<TaskContract> = {}): TaskContract {
 	return {
@@ -157,6 +162,45 @@ describe("DynamicHarness", () => {
 
 		expect(peak()).toBe(3);
 		expect(results.filter((r) => r.status === "ok")).toHaveLength(4);
+	});
+
+	it("uses a newly registered persona concurrency cap", async () => {
+		const fake: Persona = {
+			...getPersona("reviewer"),
+			id: "contract_reviewer",
+			systemPrompt: "Contract reviewer prompt",
+			requiredReportBlocks: [],
+			parallelism: { soloPerWave: false, maxConcurrent: 1 },
+			orchestration: {
+				stage: "review",
+				routeRoles: ["audit_review"],
+				chainRole: "review",
+				executionDepth: "fast",
+				planGate: "never",
+				producesArtifacts: [],
+				repairAliases: ["contract review"],
+			},
+		};
+		const restore = registerPersonaForTesting(fake);
+		try {
+			const { executor, peak } = trackingExecutor();
+			const tasks = Array.from({ length: 2 }, (_, index) => mkContract({
+				taskId: `T-C${index + 1}`,
+				personaId: "contract_reviewer",
+				objective: `review contract surface ${index + 1}`,
+				pathPolicy: { allowedGlobs: [], forbiddenGlobs: [] },
+			}));
+
+			const results = await new DynamicHarness().runToCompletion(tasks, {
+				projectRoot: dir,
+				executor,
+			});
+
+			expect(peak()).toBe(1);
+			expect(results.filter((r) => r.status === "ok")).toHaveLength(2);
+		} finally {
+			restore();
+		}
 	});
 
 	// ── F1: launch gate (launchRequirements / artifact gate) ──────────────────

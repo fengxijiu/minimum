@@ -16,6 +16,11 @@ import type { TaskResult, WorkerExecutor } from "../../src/orchestration/index.j
 import { listCandidates } from "../../src/memory/governance/index.js";
 import { estimateTokens } from "../../src/utils/token-counter.js";
 import type { ChoicePayload, ChoiceVerdict, ConfirmationGate } from "../../src/tools/choice/ConfirmationGate.js";
+import {
+	getPersona,
+	registerPersonaForTesting,
+	type Persona,
+} from "../../src/personas/index.js";
 
 // Satisfies code_executor's required blocks so the default impl task (T2-1)
 // passes field-level validation in one shot. Extra blocks are ignored by
@@ -1304,6 +1309,63 @@ Reason:
 		expect(auditPlan).not.toHaveBeenCalled();
 		expect(ran).toContain("T2-1");
 	});
+
+	it("runs newly registered perception personas in W1 before W0.5/W2/3", async () => {
+		const fake: Persona = {
+			...getPersona("repo_scout"),
+			id: "architecture_scout",
+			systemPrompt: "Architecture scout prompt",
+			requiredReportBlocks: [],
+			orchestration: {
+				stage: "perception",
+				routeRoles: ["implementation"],
+				chainRole: "discover",
+				executionDepth: "fast",
+				planGate: "never",
+				producesArtifacts: ["file_list"],
+				repairAliases: ["architecture scout"],
+			},
+		};
+		const restore = registerPersonaForTesting(fake);
+		try {
+			const ran: string[] = [];
+			const planner = stubPlanner({
+				compile: async () => `<task_dag>${JSON.stringify({
+					epic: "dynamic_persona",
+					phases: [
+						{ id: "P0", name: "perception", tasks: [
+							{ id: "T0-arch", persona: "architecture_scout", objective: "scan architecture", parallelGroup: "scan", dependsOn: [], needsRefine: false },
+						] },
+						{ id: "P2", name: "implementation", tasks: [
+							{ id: "T2-impl", persona: "code_executor", objective: "implement bounded change", parallelGroup: "impl", dependsOn: ["T0-arch"], needsRefine: true },
+						] },
+					],
+				})}</task_dag>`,
+				refine: async () =>
+					`<refine>{"tasks":[{"taskId":"T2-impl","allowedGlobs":["src/upload.ts"],"acceptance":["done"],"blockedCondition":"blocked if architecture context is missing"}]}</refine>`,
+			});
+			const executor: WorkerExecutor = {
+				run: async (contract) => {
+					ran.push(contract.taskId);
+					return contract.personaId === "architecture_scout"
+						? `<task_report><status>ok</status><file_list>- src/upload.ts</file_list></task_report>`
+						: OK;
+				},
+			};
+
+			const result = await runPipeline("dynamic persona pipeline", {
+				projectRoot: dir,
+				planner,
+				executor,
+				choiceGate: continueGate(),
+			});
+
+			expect(result.ok).toBe(true);
+			expect(ran).toEqual(["T0-arch", "T2-impl"]);
+		} finally {
+			restore();
+		}
+	});
 });
 
 describe("MiMoPipeline W0 compile retry", () => {
@@ -1315,7 +1377,7 @@ describe("MiMoPipeline W0 compile retry", () => {
 
 	const invalidDagText = `<task_dag>
 { "epic": "e", "phases": [ { "id": "P0", "name": "p", "tasks": [
-  { "id": "T0-1", "persona": "developer", "objective": "scan the repo",
+  { "id": "T0-1", "persona": "programmer", "objective": "scan the repo",
     "parallelGroup": "g", "dependsOn": [], "needsRefine": false } ] } ] }
 </task_dag>`;
 

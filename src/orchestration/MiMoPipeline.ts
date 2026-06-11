@@ -15,21 +15,29 @@ import {
 } from "../memory/governance/index.js";
 import type { MemoryCandidate, MergeDecision } from "../memory/governance/types.js";
 import type { PersonaId } from "../personas/Persona.js";
+import { getPersona, isPerceptionPersona, listPersonasByStage } from "../personas/PersonaRegistry.js";
+import { truncateToTokens } from "../utils/token-counter.js";
 import { compileCoarse, classifyTaskType } from "./TaskCompiler.js";
 import type { CoarseDag, TaskContract, TaskInputs } from "./TaskContract.js";
 import { compileRefinement, refineDag, type RefinementEntry } from "./Refiner.js";
 import { validateGrants, type GrantableCatalog } from "./CapabilityCatalog.js";
 import { DynamicHarness } from "./DynamicHarness.js";
 import type { HarnessEvent } from "./HarnessEvent.js";
-import { buildArtifactMap, evaluateLaunchGate, isContextGapBlocked } from "./LaunchGate.js";
+import { buildArtifactMap, canUseReadonlyFallback, evaluateLaunchGate, isContextGapBlocked } from "./LaunchGate.js";
 import {
 	compileMissionCheck,
 	loopBackTasksToCoarseTasks,
 	type MissionCheckInput,
 	type MissionLoopBackTask,
 } from "./MissionChecker.js";
-import type { PlanMode } from "./PlanGate.js";
-import type { RouteHint, RoutePolicy } from "./RoutePolicy.js";
+import {
+	compilePlanAudit,
+	extractExecutionPlan,
+	needsPlanApproval,
+	type PlanMode,
+} from "./PlanGate.js";
+import { classifyRoutePolicy, type RouteHint, type RoutePolicy } from "./RoutePolicy.js";
+import { validateAgainstRoutePolicy } from "./RoutePolicyValidator.js";
 import {
 	emptyArtifactPaths,
 	writeContracts,
@@ -60,12 +68,9 @@ import type { ChoicePayload, ConfirmationGate } from "../tools/choice/Confirmati
  *   W4   master finalizes → memory governance applied, staging cleared
  */
 
-export const PERCEPTION_PERSONAS: ReadonlySet<PersonaId> = new Set<PersonaId>([
-	"vision",
-	"repo_scout",
-	"web_searcher",
-	"context_builder",
-]);
+export const PERCEPTION_PERSONAS: ReadonlySet<PersonaId> = new Set<PersonaId>(
+	listPersonasByStage("perception").map((p) => p.id),
+);
 
 export type PipelinePhase = "W0" | "W1" | "W0.5" | "W2/3" | "W3.5" | "W4";
 
@@ -82,6 +87,9 @@ export type PipelineEvent =
 	| { type: "human_confirmation_required"; phase: PipelinePhase; reason: string }
 	| { type: "gate_retry"; phase: "W2/3"; taskId: string; attempt: 1; reason: string }
 	| { type: "task_deferred"; phase: "W2/3"; taskId: string; reason: string; blockedCondition?: string }
+	| { type: "plan_proposed"; phase: "W2/3"; taskId: string; plan: string }
+	| { type: "plan_revise"; phase: "W2/3"; taskId: string; corrections: string[]; reason: string }
+	| { type: "plan_audited"; phase: "W2/3"; taskId: string; decision: "APPROVED" | "REVISE" | "blocked"; reason: string }
 	| { type: "finalize_done"; report: FinalizeReport }
 	| {
 			type: "pipeline_complete";
@@ -275,6 +283,9 @@ export async function runPipeline(
 	userRequest: string,
 	opts: PipelineOptions,
 ): Promise<PipelineResult> {
+	if (!opts.routePolicy && opts.routeHint) {
+		opts = { ...opts, routePolicy: classifyRoutePolicy(userRequest, opts.routeHint) };
+	}
 	const emit = opts.onEvent ?? (() => {});
 	const taskType = classifyTaskType(userRequest);
 	const allResults: TaskResult[] = [];
@@ -689,7 +700,7 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 
 	// ── W1: perception ───────────────────────────────────────────────────────
 	emit({ type: "phase_start", phase: "W1", label: stageLabel("W1", labelSuffix) });
-	const perceptionDag = filterDag(dag, (p) => PERCEPTION_PERSONAS.has(p));
+	const perceptionDag = filterDag(dag, isPerceptionPersona);
 	const { contracts: perceptionContracts } = refineDag(perceptionDag, {
 		inputs: baseInputs,
 		refinement: new Map(),
@@ -730,7 +741,12 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 			if (parsed.ok) {
 				refinement = parsed.entries;
 				refinementParsed = true;
-				await writeInlineContextPacks(opts.projectRoot, dag.epicId, refinement);
+				await writeInlineContextPacks(
+					opts.projectRoot,
+					dag.epicId,
+					refinement,
+					opts.routePolicy?.granularityCaps.contextPackMaxTokens,
+				);
 				refinements.push(...refinement.values());
 			} else {
 				knownIssues.push(`W0.5 refine parse failed for ${dag.epicId}: ${parsed.error}`);
@@ -792,6 +808,35 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 			].join("\n");
 			emit({ type: "pipeline_choice", phase: "W0.5", choiceId: "auto_rerun_refine", reason: refineFeedback });
 			continue;
+		}
+		const missingAllowedGlobsTaskIds = getMissingAllowedGlobsTaskIds(allContracts);
+		if (missingAllowedGlobsTaskIds.length > 0 && !autoRefineRetryUsed) {
+			autoRefineRetryUsed = true;
+			refineFeedback = [
+				`Tasks missing allowedGlobs: ${missingAllowedGlobsTaskIds.join(", ")}`,
+				"The previous <refine> block is invalid. Write-capable implementation tasks must have concrete allowedGlobs.",
+				"Re-emit the ENTIRE <refine> block, not an incremental patch.",
+			].join("\n");
+			emit({ type: "pipeline_choice", phase: "W0.5", choiceId: "auto_rerun_refine", reason: refineFeedback });
+			continue;
+		}
+		const routeIssues = opts.routePolicy
+			? validateAgainstRoutePolicy({ routePolicy: opts.routePolicy, contracts: allContracts, dag })
+			: [];
+		if (routeIssues.length > 0 && !autoRefineRetryUsed) {
+			autoRefineRetryUsed = true;
+			refineFeedback = [
+				"coarse-task-risk: Route policy detected unsafe task shape.",
+				...routeIssues.map((issue) => `${issue.code}${issue.taskId ? ` ${issue.taskId}` : ""}: ${issue.message}`),
+				"Re-emit the ENTIRE <refine> block with narrower scoped tasks.",
+			].join("\n");
+			emit({ type: "pipeline_choice", phase: "W0.5", choiceId: "auto_rerun_refine", reason: "coarse-task-risk" });
+			continue;
+		}
+		if (routeIssues.length > 0) {
+			for (const issue of routeIssues) {
+				refineErrors.push({ taskId: issue.taskId ?? "_route_policy", errors: [`${issue.code}: ${issue.message}`] });
+			}
 		}
 		if (refineErrors.length > 0) {
 			for (const error of refineErrors) {
@@ -856,7 +901,7 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 
 	// ── W2/3: implementation + validation (exclude perception, already run) ───
 	emit({ type: "phase_start", phase: "W2/3", label: stageLabel("W2/3", labelSuffix) });
-	const implContracts = allContracts.filter((c) => !PERCEPTION_PERSONAS.has(c.personaId));
+	const implContracts = allContracts.filter((c) => !isPerceptionPersona(c.personaId));
 	if (implContracts.length > 0) {
 		try {
 			const { runnable } = applyLaunchGate({
@@ -895,6 +940,20 @@ function getMissingRefinementTaskIds(errors: ReturnType<typeof refineDag>["error
 	return [...missing];
 }
 
+function getMissingAllowedGlobsTaskIds(contracts: TaskContract[]): string[] {
+	return contracts
+		.filter((contract) => {
+			if (contract.pathPolicy.allowedGlobs.length > 0) return false;
+			try {
+				const persona = getPersona(contract.personaId);
+				return persona.pathPolicy.canWrite && persona.pathPolicy.alwaysAllowedGlobs.length === 0;
+			} catch {
+				return false;
+			}
+		})
+		.map((contract) => contract.taskId);
+}
+
 async function askPipelineChoice(
 	choiceGate: ConfirmationGate | undefined,
 	payload: ChoicePayload,
@@ -915,11 +974,11 @@ function buildDagConfirmation(args: {
 	knownIssues: string[];
 	passId: string;
 }): { brief: string; flow: string; markdown: string } {
-	const perception = args.results.filter((r) => PERCEPTION_PERSONAS.has(r.personaId));
+	const perception = args.results.filter((r) => isPerceptionPersona(r.personaId));
 	const launchRequirementCount = args.contracts.reduce((n, c) => n + (c.launchRequirements?.length ?? 0), 0);
-	const runnable = args.contracts.filter((c) => !PERCEPTION_PERSONAS.has(c.personaId));
+	const runnable = args.contracts.filter((c) => !isPerceptionPersona(c.personaId));
 	const briefLines = [
-		"# Refine DAG 确认",
+		"# Refine DAG confirmation / 确认",
 		`目标: ${args.userRequest}`,
 		`passId: ${args.passId}`,
 		`Scan 感知结果: ${perception.length ? perception.map((r) => `${r.taskId}/${r.personaId}/${r.status}`).join(", ") : "无感知任务"}`,
@@ -1005,12 +1064,20 @@ async function resolveStaticCompileCommands(
 
 function selectObservedStaticCompileCommands(results: TaskResult[]): string[] {
 	const candidates = results
-		.filter((result) => result.personaId === "repo_scout" && result.status === "ok")
+		.filter((result) => result.status === "ok" && personaProducesArtifact(result.personaId, "static_compile_commands"))
 		.flatMap((result) => parseStaticCompileCommands(result.report));
 	if (candidates.length === 0) return [];
 	const rank = { high: 3, medium: 2, low: 1 };
 	const best = Math.max(...candidates.map((candidate) => rank[candidate.confidence]));
 	return [...new Set(candidates.filter((candidate) => rank[candidate.confidence] === best).map((candidate) => candidate.command))];
+}
+
+function personaProducesArtifact(personaId: PersonaId, artifact: string): boolean {
+	try {
+		return getPersona(personaId).orchestration.producesArtifacts.includes(artifact);
+	} catch {
+		return false;
+	}
 }
 
 function parseStaticCompileCommands(report: string): StaticCompileCandidate[] {
@@ -1096,6 +1163,9 @@ function applyLaunchGate(args: {
 
 		const decision = evaluateLaunchGate(contract, allResults, artifacts);
 		if (decision.ok) {
+			for (const issue of readonlyFallbackIssues(contract, allResults, artifacts)) {
+				knownIssues.push(issue);
+			}
 			runnable.push(contract);
 			continue;
 		}
@@ -1174,10 +1244,11 @@ async function runWaves(
 	const contractsById = new Map(contracts.map((contract) => [contract.taskId, contract] as const));
 	const results = new Map<string, TaskResult>();
 	const harness = new DynamicHarness();
+	const executor = createPlanGatedExecutor(opts, emit);
 
 	const allResults = await harness.runToCompletion(contracts, {
 		projectRoot: opts.projectRoot,
-		executor: opts.executor,
+		executor,
 		...(opts.routePolicy && { routePolicy: opts.routePolicy }),
 		...(opts.worktreeIsolation && { worktreeIsolation: true }),
 		...(opts.runId && { runId: opts.runId }),
@@ -1195,6 +1266,122 @@ async function runWaves(
 	}
 
 	return [...results.values()];
+}
+
+function createPlanGatedExecutor(
+	opts: PipelineOptions,
+	emit: (e: PipelineEvent) => void,
+): WorkerExecutor {
+	const planMode = opts.planMode ?? "off";
+	const maxPlanRevisions = opts.maxPlanRevisions ?? 2;
+	return {
+		run: async (contract, filteredTools, repair, runOpts) => {
+			const shouldGate = needsPlanApproval(
+				contract.personaId,
+				getPersona(contract.personaId).pathPolicy.canWrite,
+				contract.pathPolicy.allowedGlobs.length,
+				contract.requiresPlanApproval,
+				planMode,
+			);
+			if (!shouldGate || runOpts?.mode === "plan") {
+				return opts.executor.run(contract, filteredTools, repair, runOpts);
+			}
+
+			let lastCorrections: string[] = [];
+			for (let attempt = 0; attempt <= maxPlanRevisions; attempt++) {
+				const planOutput = await opts.executor.run(contract, filteredTools, repair, {
+					...runOpts,
+					mode: "plan",
+				});
+				const planText = extractExecutionPlan(
+					typeof planOutput === "string" ? planOutput : planOutput.text,
+				);
+				emit({ type: "plan_proposed", phase: "W2/3", taskId: contract.taskId, plan: planText });
+				if (!planText) {
+					emit({
+						type: "plan_audited",
+						phase: "W2/3",
+						taskId: contract.taskId,
+						decision: "blocked",
+						reason: "missing <execution_plan> block",
+					});
+					return blockedPlanReport("missing <execution_plan> block");
+				}
+
+				const auditText = await opts.planner.auditPlan({
+					taskId: contract.taskId,
+					persona: contract.personaId,
+					objective: contract.objective,
+					allowedGlobs: contract.pathPolicy.allowedGlobs,
+					acceptance: contract.acceptance,
+					nonGoals: contract.nonGoals ?? [],
+					upstreamArtifacts: contract.inputs.artifacts.join("\n"),
+					plan: lastCorrections.length
+						? `${planText}\n\nPrevious corrections:\n${lastCorrections.map((c) => `- ${c}`).join("\n")}`
+						: planText,
+				});
+				const audit = compilePlanAudit(auditText);
+				if (!audit.ok) {
+					emit({
+						type: "plan_audited",
+						phase: "W2/3",
+						taskId: contract.taskId,
+						decision: "blocked",
+						reason: audit.error,
+					});
+					return blockedPlanReport(audit.error);
+				}
+
+				emit({
+					type: "plan_audited",
+					phase: "W2/3",
+					taskId: contract.taskId,
+					decision: audit.audit.decision,
+					reason: audit.audit.reason,
+				});
+				if (audit.audit.decision === "APPROVED") {
+					return opts.executor.run(
+						{
+							...contract,
+							inputs: { ...contract.inputs, approvedPlan: planText },
+						},
+						filteredTools,
+						repair,
+						{ ...runOpts, mode: "execute" },
+					);
+				}
+
+				lastCorrections = audit.audit.corrections;
+				emit({
+					type: "plan_revise",
+					phase: "W2/3",
+					taskId: contract.taskId,
+					corrections: audit.audit.corrections,
+					reason: audit.audit.reason,
+				});
+			}
+
+			emit({
+				type: "plan_audited",
+				phase: "W2/3",
+				taskId: contract.taskId,
+				decision: "blocked",
+				reason: `plan audit exceeded ${maxPlanRevisions} revision(s)`,
+			});
+			return blockedPlanReport(`plan audit exceeded ${maxPlanRevisions} revision(s)`);
+		},
+	};
+}
+
+function blockedPlanReport(reason: string): string {
+	return `<task_report><status>blocked</status><summary>${escapeXml(reason)}</summary></task_report>`;
+}
+
+function escapeXml(value: string): string {
+	return value
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;");
 }
 
 function adaptHarnessEventToTaskResult(
@@ -1229,18 +1416,37 @@ function createSkippedTaskResult(
 	};
 }
 
+function readonlyFallbackIssues(
+	contract: TaskContract,
+	allResults: TaskResult[],
+	artifacts: ReturnType<typeof buildArtifactMap>,
+): string[] {
+	const out: string[] = [];
+	for (const requirement of contract.launchRequirements ?? []) {
+		const upstream = allResults.find((r) => r.taskId === requirement.sourceTaskId);
+		if (!upstream) continue;
+		const value = artifacts.get(requirement.sourceTaskId)?.get(requirement.artifact)?.trim();
+		if (value) continue;
+		if (!canUseReadonlyFallback(requirement, upstream)) continue;
+		out.push(`W2/3 ${contract.taskId} using readonly fallback because ${requirement.sourceTaskId}.${requirement.artifact} is unavailable`);
+	}
+	return out;
+}
+
 async function writeInlineContextPacks(
 	projectRoot: string,
 	epicId: string,
 	refinement: Map<string, RefinementEntry>,
+	maxTokens?: number,
 ): Promise<void> {
 	for (const entry of refinement.values()) {
 		const text = entry.contextPack?.trim();
 		if (!text) continue;
+		const bounded = maxTokens ? truncateToTokens(text, maxTokens) : text;
 
 		const filePath = contextPackPath(projectRoot, epicId, entry.taskId);
 		await fs.mkdir(path.dirname(filePath), { recursive: true });
-		await fs.writeFile(filePath, text.endsWith("\n") ? text : `${text}\n`, "utf-8");
+		await fs.writeFile(filePath, bounded.endsWith("\n") ? bounded : `${bounded}\n`, "utf-8");
 		entry.contextPackPath = filePath;
 	}
 	await refreshMemoryIndex(projectRoot);

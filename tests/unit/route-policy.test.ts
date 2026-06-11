@@ -6,6 +6,11 @@ import {
 	renderRoutePolicyForPlanner,
 } from "../../src/orchestration/RoutePolicy.js";
 import { classifyOrchestrationMode } from "../../src/orchestration/OrchestrationClassifier.js";
+import {
+	getPersona,
+	registerPersonaForTesting,
+	type Persona,
+} from "../../src/personas/index.js";
 
 describe("RoutePolicy", () => {
 	it("classifies dead-code and conflict audits as audit_review large", () => {
@@ -80,5 +85,64 @@ describe("RoutePolicy", () => {
 		expect(classifyOrchestrationMode("explain how the router works")).toBe("scan_only");
 		expect(classifyOrchestrationMode("small patch the typo in README")).toBe("direct_edit");
 		expect(classifyOrchestrationMode("audit dead code across the repo")).toBe("full_pipeline");
+	});
+
+	it("synthesizes route caps for newly registered personas with matching routeRoles", () => {
+		const fake: Persona = {
+			...getPersona("reviewer"),
+			id: "contract_reviewer",
+			systemPrompt: "Contract reviewer prompt",
+			requiredReportBlocks: [],
+			parallelism: { soloPerWave: false, maxConcurrent: 4 },
+			orchestration: {
+				stage: "review",
+				routeRoles: ["audit_review"],
+				chainRole: "review",
+				executionDepth: "fast",
+				planGate: "never",
+				producesArtifacts: [],
+				repairAliases: ["contract review"],
+			},
+		};
+		const restore = registerPersonaForTesting(fake);
+		try {
+			const policy = classifyRoutePolicy("audit public contracts", {
+				route: "audit_review",
+				scale: "large",
+			});
+			expect(policy.taskCaps.contract_reviewer).toEqual({ min: 6, max: 10 });
+			expect(policy.personaCaps.contract_reviewer).toBe(3);
+		} finally {
+			restore();
+		}
+	});
+
+	it("does not fan out newly registered personas without routeRoles", () => {
+		const fake: Persona = {
+			...getPersona("reviewer"),
+			id: "explicit_only_reviewer",
+			systemPrompt: "Explicit reviewer prompt",
+			requiredReportBlocks: [],
+			orchestration: {
+				stage: "review",
+				routeRoles: [],
+				chainRole: "review",
+				executionDepth: "fast",
+				planGate: "never",
+				producesArtifacts: [],
+				repairAliases: ["explicit reviewer"],
+			},
+		};
+		const restore = registerPersonaForTesting(fake);
+		try {
+			const policy = classifyRoutePolicy("audit public contracts", {
+				route: "audit_review",
+				scale: "large",
+			});
+			expect(policy.taskCaps.explicit_only_reviewer).toBeUndefined();
+			expect(policy.personaCaps.explicit_only_reviewer).toBeUndefined();
+		} finally {
+			restore();
+		}
 	});
 });

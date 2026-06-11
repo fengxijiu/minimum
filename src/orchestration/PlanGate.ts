@@ -1,4 +1,5 @@
 import { extractXmlBlock } from "./TaskRunner.js";
+import { getPersona } from "../personas/PersonaRegistry.js";
 
 /**
  * PlanGate — pure parsing helpers for the W2-plan gate, where a write-capable
@@ -81,8 +82,14 @@ export function needsPlanApproval(
 	if (!canWrite || allowedGlobsCount === 0) return false;
 	if (requiresPlanApproval === true) return true;
 	if (planMode === "all_writes") return true;
-	// "code_personas": only the implementation/test authors.
-	return personaId === "code_executor" || personaId === "test_writer";
+	if (planMode === "code_personas") {
+		try {
+			return getPersona(personaId).orchestration.planGate === "code_personas";
+		} catch {
+			return false;
+		}
+	}
+	return false;
 }
 
 export type PlanMode = "off" | "code_personas" | "all_writes";

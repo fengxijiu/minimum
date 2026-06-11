@@ -274,7 +274,7 @@ function assembleContract(
 	// is exempt: validating compilation IS its job, even with no writable globs.
 	const writesCompilableSource = allowedGlobs.some(globMayMatchCompilableSource);
 	const requiresPostStaticCompile =
-		(task.personaId === "test_runner" || (persona.readOnly === false && writesCompilableSource)) &&
+		(persona.chainRole === "validate" || (persona.readOnly === false && writesCompilableSource)) &&
 		staticCompileCommands.length > 0;
 
 	const contract: TaskContract = {
@@ -344,10 +344,10 @@ function globMayMatchCompilableSource(glob: string): boolean {
 
 function safeOutputSchema(
 	task: CoarseTask,
-): { outputSchema: TaskContract["outputSchema"]; readOnly: boolean } {
+): { outputSchema: TaskContract["outputSchema"]; readOnly: boolean; chainRole?: string } {
 	try {
 		const p = getPersona(task.personaId);
-		return { outputSchema: p.outputSchema, readOnly: !p.pathPolicy.canWrite };
+		return { outputSchema: p.outputSchema, readOnly: !p.pathPolicy.canWrite, chainRole: p.orchestration.chainRole };
 	} catch {
 		// Unknown persona — validateContract will flag it; pick a safe default.
 		return { outputSchema: "task_report", readOnly: false };

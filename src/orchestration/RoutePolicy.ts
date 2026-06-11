@@ -1,4 +1,5 @@
 import type { PersonaId } from "../personas/Persona.js";
+import { listPersonas } from "../personas/PersonaRegistry.js";
 import type { ExecutionDepth } from "./ExecutionBudget.js";
 
 export type OrchestrationRoute =
@@ -118,6 +119,7 @@ export function classifyRoutePolicy(userRequest: string, hint?: RouteHint): Rout
 
 export function renderRoutePolicyForPlanner(policy: RoutePolicy): string {
 	const caps = Object.entries(policy.taskCaps)
+		.filter((entry): entry is [string, CountCap] => entry[1] !== undefined)
 		.map(([persona, cap]) => `- ${persona}: ${cap.min}-${cap.max}`)
 		.join("\n");
 	return [
@@ -181,45 +183,17 @@ function buildRoutePolicy(input: Pick<RoutePolicy, "route" | "scale" | "source" 
 }
 
 function taskCapsFor(route: OrchestrationRoute, scale: FanoutScale): RoutePolicy["taskCaps"] {
-	if (route === "audit_review") {
-		if (scale === "large") return { repo_scout: { min: 2, max: 4 }, reviewer: { min: 6, max: 10 }, docs: { min: 1, max: 1 } };
-		if (scale === "medium") return { repo_scout: { min: 1, max: 2 }, reviewer: { min: 3, max: 5 }, docs: { min: 1, max: 1 } };
-		return { repo_scout: { min: 1, max: 1 }, reviewer: { min: 2, max: 2 }, docs: { min: 1, max: 1 } };
-	}
-	if (route === "implementation") {
-		if (scale === "large") return { repo_scout: { min: 2, max: 4 }, test_writer: { min: 3, max: 6 }, code_executor: { min: 3, max: 6 }, test_runner: { min: 2, max: 4 }, reviewer: { min: 1, max: 2 }, docs: { min: 1, max: 1 } };
-		if (scale === "medium") return { repo_scout: { min: 1, max: 2 }, test_writer: { min: 2, max: 3 }, code_executor: { min: 2, max: 3 }, test_runner: { min: 2, max: 2 }, reviewer: { min: 1, max: 1 } };
-		return { repo_scout: { min: 1, max: 1 }, test_writer: { min: 1, max: 1 }, code_executor: { min: 1, max: 1 }, test_runner: { min: 1, max: 2 } };
-	}
-	if (route === "debug_fix") {
-		if (scale === "large") return { runtime_debug: { min: 1, max: 2 }, code_executor: { min: 2, max: 3 }, test_runner: { min: 2, max: 3 }, reviewer: { min: 1, max: 2 } };
-		if (scale === "medium") return { runtime_debug: { min: 1, max: 1 }, code_executor: { min: 1, max: 2 }, test_runner: { min: 1, max: 2 }, reviewer: { min: 1, max: 1 } };
-		return { runtime_debug: { min: 1, max: 1 }, code_executor: { min: 1, max: 1 }, test_runner: { min: 1, max: 1 } };
-	}
-	if (route === "dependency_config") {
-		if (scale === "large") return { repo_scout: { min: 1, max: 2 }, code_executor: { min: 2, max: 3 }, test_runner: { min: 2, max: 3 }, reviewer: { min: 1, max: 1 } };
-		if (scale === "medium") return { repo_scout: { min: 1, max: 1 }, code_executor: { min: 1, max: 2 }, test_runner: { min: 1, max: 2 } };
-		return { repo_scout: { min: 1, max: 1 }, code_executor: { min: 1, max: 1 }, test_runner: { min: 1, max: 1 } };
-	}
-	if (route === "direct_edit") return { repo_scout: { min: 1, max: 1 }, code_executor: { min: 1, max: 1 }, test_runner: { min: 0, max: 1 } };
-	if (route === "scan_only") return { repo_scout: { min: 1, max: 1 } };
-	return {};
+	return assignCapsByChainRole(route, scale, taskCapProfile(route, scale));
 }
 
 function personaCapsFor(route: OrchestrationRoute, scale: FanoutScale): RoutePolicy["personaCaps"] {
-	const reviewer = scale === "large" ? 3 : scale === "medium" ? 2 : 1;
-	return {
-		repo_scout: scale === "large" ? 4 : 2,
-		reviewer,
-		code_executor: route === "dependency_config" ? 1 : scale === "large" ? 3 : 2,
-		test_writer: scale === "large" ? 3 : 2,
-		test_runner: scale === "large" ? 3 : 2,
-		runtime_debug: 1,
-		context_builder: 1,
-		docs: 1,
-		vision: 1,
-		web_searcher: 2,
-	};
+	const out: RoutePolicy["personaCaps"] = {};
+	for (const persona of listPersonas()) {
+		if (persona.kind !== "worker") continue;
+		if (!persona.orchestration.routeRoles.includes(route)) continue;
+		out[persona.id] = personaConcurrencyCap(persona.id, route, scale);
+	}
+	return out;
 }
 
 function granularityCapsFor(scale: FanoutScale): RoutePolicy["granularityCaps"] {
@@ -233,13 +207,85 @@ function granularityCapsFor(scale: FanoutScale): RoutePolicy["granularityCaps"] 
 }
 
 function executionDepthFor(route: OrchestrationRoute, scale: FanoutScale): RoutePolicy["executionDepthByPersona"] {
-	return {
-		repo_scout: "normal",
-		reviewer: scale === "small" ? "fast" : "normal",
-		code_executor: scale === "large" && route === "implementation" ? "deep" : "normal",
-		test_writer: "normal",
-		test_runner: "fast",
-		runtime_debug: "deep",
-		docs: scale === "large" ? "normal" : "fast",
-	};
+	const out: RoutePolicy["executionDepthByPersona"] = {};
+	for (const persona of listPersonas()) {
+		if (persona.kind !== "worker") continue;
+		if (!persona.orchestration.routeRoles.includes(route)) continue;
+		out[persona.id] = personaExecutionDepth(persona.id, route, scale);
+	}
+	return out;
+}
+
+type ChainRole =
+	| "discover"
+	| "design"
+	| "scaffold"
+	| "implement"
+	| "test_author"
+	| "validate"
+	| "debug"
+	| "review"
+	| "document"
+	| "deliver";
+
+type TaskCapProfile = Partial<Record<ChainRole, CountCap>>;
+
+function taskCapProfile(route: OrchestrationRoute, scale: FanoutScale): TaskCapProfile {
+	if (route === "audit_review") {
+		if (scale === "large") return { discover: { min: 2, max: 4 }, review: { min: 6, max: 10 }, document: { min: 1, max: 1 } };
+		if (scale === "medium") return { discover: { min: 1, max: 2 }, review: { min: 3, max: 5 }, document: { min: 1, max: 1 } };
+		return { discover: { min: 1, max: 1 }, review: { min: 2, max: 2 }, document: { min: 1, max: 1 } };
+	}
+	if (route === "implementation") {
+		if (scale === "large") return { discover: { min: 2, max: 4 }, test_author: { min: 3, max: 6 }, implement: { min: 3, max: 6 }, validate: { min: 2, max: 4 }, review: { min: 1, max: 2 }, document: { min: 1, max: 1 } };
+		if (scale === "medium") return { discover: { min: 1, max: 2 }, test_author: { min: 2, max: 3 }, implement: { min: 2, max: 3 }, validate: { min: 2, max: 2 }, review: { min: 1, max: 1 } };
+		return { discover: { min: 1, max: 1 }, test_author: { min: 1, max: 1 }, implement: { min: 1, max: 1 }, validate: { min: 1, max: 2 } };
+	}
+	if (route === "debug_fix") {
+		if (scale === "large") return { debug: { min: 1, max: 2 }, implement: { min: 2, max: 3 }, validate: { min: 2, max: 3 }, review: { min: 1, max: 2 } };
+		if (scale === "medium") return { debug: { min: 1, max: 1 }, implement: { min: 1, max: 2 }, validate: { min: 1, max: 2 }, review: { min: 1, max: 1 } };
+		return { debug: { min: 1, max: 1 }, implement: { min: 1, max: 1 }, validate: { min: 1, max: 1 } };
+	}
+	if (route === "dependency_config") {
+		if (scale === "large") return { discover: { min: 1, max: 2 }, implement: { min: 2, max: 3 }, validate: { min: 2, max: 3 }, review: { min: 1, max: 1 } };
+		if (scale === "medium") return { discover: { min: 1, max: 1 }, implement: { min: 1, max: 2 }, validate: { min: 1, max: 2 } };
+		return { discover: { min: 1, max: 1 }, implement: { min: 1, max: 1 }, validate: { min: 1, max: 1 } };
+	}
+	if (route === "direct_edit") return { discover: { min: 1, max: 1 }, implement: { min: 1, max: 1 }, validate: { min: 0, max: 1 } };
+	if (route === "scan_only") return { discover: { min: 1, max: 1 } };
+	return {};
+}
+
+function assignCapsByChainRole(route: OrchestrationRoute, _scale: FanoutScale, profile: TaskCapProfile): RoutePolicy["taskCaps"] {
+	const out: RoutePolicy["taskCaps"] = {};
+	for (const persona of listPersonas()) {
+		if (persona.kind !== "worker") continue;
+		if (!persona.orchestration.routeRoles.includes(route)) continue;
+		const cap = profile[persona.orchestration.chainRole as ChainRole];
+		if (cap) out[persona.id] = cap;
+	}
+	return out;
+}
+
+function personaConcurrencyCap(personaId: PersonaId, route: OrchestrationRoute, scale: FanoutScale): number {
+	const persona = listPersonas().find((p) => p.id === personaId);
+	if (!persona) return 2;
+	const role = persona.orchestration.chainRole;
+	if (role === "discover") return scale === "large" ? 4 : 2;
+	if (role === "review") return scale === "large" ? 3 : scale === "medium" ? 2 : 1;
+	if (role === "implement") return route === "dependency_config" ? 1 : scale === "large" ? 3 : 2;
+	if (role === "test_author" || role === "validate") return scale === "large" ? 3 : 2;
+	if (role === "debug" || role === "design" || role === "document" || role === "deliver") return 1;
+	return persona.parallelism.maxConcurrent;
+}
+
+function personaExecutionDepth(personaId: PersonaId, route: OrchestrationRoute, scale: FanoutScale): ExecutionDepth {
+	const persona = listPersonas().find((p) => p.id === personaId);
+	if (!persona) return "normal";
+	const role = persona.orchestration.chainRole;
+	if (role === "review") return scale === "small" ? "fast" : "normal";
+	if (role === "implement") return scale === "large" && route === "implementation" ? "deep" : "normal";
+	if (role === "debug") return "deep";
+	if (role === "document") return scale === "large" ? "normal" : "fast";
+	return persona.orchestration.executionDepth;
 }

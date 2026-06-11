@@ -1,5 +1,6 @@
 import type { RoutePolicy } from "./RoutePolicy.js";
 import type { CoarseDag, TaskContract } from "./TaskContract.js";
+import { getPersona } from "../personas/PersonaRegistry.js";
 
 export interface RoutePolicyIssue {
 	code:
@@ -21,7 +22,7 @@ export function validateAgainstRoutePolicy(input: {
 	if (routePolicy.route !== "audit_review") return [];
 
 	const issues: RoutePolicyIssue[] = [];
-	const reviewers = contracts.filter((c) => c.personaId === "reviewer");
+	const reviewers = contracts.filter((c) => personaChainRole(c) === "review");
 	const reviewerCap = routePolicy.taskCaps.reviewer;
 	if (reviewerCap && reviewers.length < reviewerCap.min) {
 		issues.push({
@@ -53,10 +54,10 @@ export function validateAgainstRoutePolicy(input: {
 		});
 	}
 
-	for (const docs of contracts.filter((c) => c.personaId === "docs")) {
-		const dependsOnScout = docs.dependsOn.some((dep) => contracts.find((c) => c.taskId === dep)?.personaId === "repo_scout");
+	for (const docs of contracts.filter((c) => personaChainRole(c) === "document")) {
+		const dependsOnScout = docs.dependsOn.some((dep) => personaChainRole(contracts.find((c) => c.taskId === dep)) === "discover");
 		const requiresScoutFileList = (docs.launchRequirements ?? []).some(
-			(req) => req.artifact === "file_list" && contracts.find((c) => c.taskId === req.sourceTaskId)?.personaId === "repo_scout",
+			(req) => req.artifact === "file_list" && personaChainRole(contracts.find((c) => c.taskId === req.sourceTaskId)) === "discover",
 		);
 		if (dependsOnScout || requiresScoutFileList) {
 			issues.push({
@@ -68,6 +69,15 @@ export function validateAgainstRoutePolicy(input: {
 	}
 
 	return issues;
+}
+
+function personaChainRole(contract: TaskContract | undefined): string | undefined {
+	if (!contract) return undefined;
+	try {
+		return getPersona(contract.personaId).orchestration.chainRole;
+	} catch {
+		return undefined;
+	}
 }
 
 function isBroadReviewer(contract: TaskContract, policy: RoutePolicy): boolean {

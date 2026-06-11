@@ -1,5 +1,6 @@
 import { extractXmlBlock, type TaskResult } from "./TaskRunner.js";
 import type { LaunchArtifact, LaunchRequirement, TaskContract } from "./TaskContract.js";
+import { getPersona } from "../personas/PersonaRegistry.js";
 
 export type ArtifactMap = Map<string, Map<LaunchArtifact, string>>;
 
@@ -102,9 +103,14 @@ export function canUseReadonlyFallback(
 	upstream: TaskResult,
 ): boolean {
 	if (requirement.artifact === "static_compile_commands") return false;
-	if (upstream.personaId !== "repo_scout") return false;
 	if (upstream.status !== "degraded") return false;
 	if (upstream.fallbackAccess?.mode !== "readonly_workspace" || !upstream.fallbackAccess.allowed) return false;
+	try {
+		const persona = getPersona(upstream.personaId);
+		if (persona.orchestration.stage !== "perception" || persona.orchestration.chainRole !== "discover") return false;
+	} catch {
+		return false;
+	}
 	const explicit = requirement.fallback;
 	if (!explicit) return true;
 	if (explicit.mode !== "readonly_workspace") return false;

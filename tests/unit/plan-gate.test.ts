@@ -4,6 +4,11 @@ import {
 	extractExecutionPlan,
 	needsPlanApproval,
 } from "../../src/orchestration/index.js";
+import {
+	getPersona,
+	registerPersonaForTesting,
+	type Persona,
+} from "../../src/personas/index.js";
 
 describe("extractExecutionPlan", () => {
 	it("pulls the <execution_plan> body", () => {
@@ -77,5 +82,28 @@ describe("needsPlanApproval", () => {
 	});
 	it("honours an explicit requiresPlanApproval flag", () => {
 		expect(needsPlanApproval("docs", true, 1, true, "code_personas")).toBe(true);
+	});
+
+	it("uses registry planGate metadata for newly registered personas", () => {
+		const fake: Persona = {
+			...getPersona("code_executor"),
+			id: "refactor_executor",
+			systemPrompt: "Refactor executor prompt",
+			orchestration: {
+				stage: "implementation",
+				routeRoles: ["implementation"],
+				chainRole: "implement",
+				executionDepth: "normal",
+				planGate: "code_personas",
+				producesArtifacts: [],
+				repairAliases: ["refactor executor"],
+			},
+		};
+		const restore = registerPersonaForTesting(fake);
+		try {
+			expect(needsPlanApproval("refactor_executor", true, 1, undefined, "code_personas")).toBe(true);
+		} finally {
+			restore();
+		}
 	});
 });

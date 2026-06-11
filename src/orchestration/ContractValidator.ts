@@ -154,12 +154,12 @@ function validatePathPolicy(
 	// `code_executor` — which is built for source edits and would otherwise be
 	// wrongly gated on a whole-project static compile it cannot influence.
 	if (
-		persona.id === "code_executor" &&
+		persona.orchestration.chainRole === "implement" &&
 		allowedGlobs.length > 0 &&
 		allowedGlobs.every(isDocumentationGlob)
 	) {
 		errors.push(
-			`code_executor task ${contract.taskId} writes only Markdown (${allowedGlobs.join(", ")}); ` +
+			`${persona.id} task ${contract.taskId} writes only Markdown (${allowedGlobs.join(", ")}); ` +
 				"analysis/report tasks belong to reviewer (findings) + docs (report) — reassign the persona",
 		);
 	}
