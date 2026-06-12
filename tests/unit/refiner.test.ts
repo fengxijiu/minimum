@@ -443,6 +443,23 @@ describe("refineDag", () => {
 		expect(byId.get("T2-be")!.interfaceContracts![0]!.id).toBe("IC-todo");
 		expect(byId.get("T3-fe")!.interfaceContracts![0]!.id).toBe("IC-todo");
 	});
+
+	it("leaves interfaceContracts undefined for tasks with no shared surface", () => {
+		const { contracts, errors } = refineDag(mkDag(), {
+			inputs: baseInputs,
+			refinement: refinement([
+				{
+					taskId: "T2-1",
+					allowedGlobs: ["src/upload.ts"],
+					acceptance: ["ok"],
+					nonGoals: ["no"],
+					blockedCondition: "blocked if T0-1.file_list is unavailable",
+				},
+			]),
+		});
+		expect(errors).toEqual([]);
+		expect(contracts[0]!.interfaceContracts).toBeUndefined();
+	});
 });
 
 describe("master capability grants", () => {
