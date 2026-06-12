@@ -49,6 +49,13 @@ export interface TaskContract {
 	blockedCondition?: string;
 	/** Structured W0.5 launch gate evidence required before scheduling. */
 	launchRequirements?: LaunchRequirement[];
+	/**
+	 * Module interface contracts touching this task. For the owner (scaffold)
+	 * task this is the full set it must write; for a consumer task it is the
+	 * frozen surface it must implement against and may not rewrite. Denormalized
+	 * by refineDag — absent for tasks with no cross-module surface.
+	 */
+	interfaceContracts?: InterfaceContract[];
 	/** Tail static-compile enforcement for this task, when required. */
 	postStaticCompile?: {
 		required: boolean;
@@ -114,6 +121,64 @@ export interface TaskPathPolicy {
 	allowedGlobs: string[];
 	/** Globs the worker must never touch (merged with persona's globals). */
 	forbiddenGlobs: string[];
+}
+
+/**
+ * The kind of module boundary an InterfaceContract freezes. Chosen by the
+ * boundary's shape, not by language syntax:
+ *  - function_signature: an in-process call surface (typed langs → Tier 1 compile).
+ *  - data_schema: a data shape passed between modules / algorithm stages.
+ *  - api_rpc: a cross-process HTTP / RPC surface.
+ *  - artifact_handoff: producer writes a file/artifact, consumer reads it.
+ */
+export type InterfaceBoundaryKind =
+	| "function_signature"
+	| "data_schema"
+	| "api_rpc"
+	| "artifact_handoff";
+
+/**
+ * One language materialization of a contract. For a same-language boundary
+ * (e.g. a TS frontend + TS backend) there is a single binding both sides import.
+ * For a polyglot boundary (e.g. a Python algorithm feeding a Go service) there
+ * is one binding per side, all sharing the contract's neutral `schema`.
+ */
+export interface InterfaceBinding {
+	/** Language id as reported by repo_scout tech_stack, e.g. "typescript", "python", "go". */
+	language: string;
+	/**
+	 * Repo-relative paths holding this binding. The scaffold (owner) task's
+	 * allowedGlobs MUST cover these; every consumer's allowedGlobs MUST NOT —
+	 * that is what makes the signature immutable to implementers.
+	 */
+	files: string[];
+	/** Master-authored binding text in this language; the scaffold task writes it verbatim. */
+	definition: string;
+}
+
+/**
+ * A frozen module interface authored by the master in W0.5. It is denormalized
+ * onto the owner task and every consumer task so ContextPackBuilder can render
+ * it without cross-task lookups.
+ */
+export interface InterfaceContract {
+	/** Unique within the epic, e.g. "IC-todo-api". */
+	id: string;
+	boundary: InterfaceBoundaryKind;
+	/** Language-neutral source of truth (JSON-Schema-ish or IDL text). */
+	schema: string;
+	/** Semantic guarantees the signature cannot express (status codes, units, null/ordering conventions). */
+	rules: string[];
+	/** Golden boundary data, language-neutral; both sides test against it. */
+	fixtures?: Array<{ name: string; data: unknown }>;
+	/** One entry per consuming language/side. Non-empty. */
+	bindings: InterfaceBinding[];
+	/** The scaffold task allowed to create/modify the binding files. */
+	ownerTaskId: string;
+	/** Implementation tasks that may import but never write the binding files. */
+	consumerTaskIds: string[];
+	/** Monotonic; bumped when the master amends the contract (amendment loop, follow-up plan). */
+	revision: number;
 }
 
 /** Master's coarse DAG output before any contract validation. */
