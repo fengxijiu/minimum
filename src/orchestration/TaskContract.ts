@@ -164,6 +164,7 @@ export interface InterfaceBinding {
 export interface InterfaceContract {
 	/** Unique within the epic, e.g. "IC-todo-api". */
 	id: string;
+	/** What kind of module surface this contract freezes; drives scaffold tooling and validation. */
 	boundary: InterfaceBoundaryKind;
 	/** Language-neutral source of truth (JSON-Schema-ish or IDL text). */
 	schema: string;
