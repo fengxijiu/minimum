@@ -1,6 +1,6 @@
 import { getPersona } from "../personas/PersonaRegistry.js";
 import { extractJsonBlock, isObj } from "../utils/guards.js";
-import { findGlobConflicts, validateContract } from "./ContractValidator.js";
+import { findGlobConflicts, findInterfaceContractIssues, validateContract } from "./ContractValidator.js";
 import type {
 	CoarseDag,
 	CoarseTask,
@@ -299,6 +299,10 @@ export function refineDag(dag: CoarseDag, opts: RefineOptions): RefineResult {
 				taskId: "_glob_conflict",
 				errors: conflicts.map((c) => `${c.taskA} and ${c.taskB} both claim ${c.glob}`),
 			});
+		}
+		const interfaceIssues = findInterfaceContractIssues(contracts);
+		if (interfaceIssues.length > 0) {
+			errors.push({ taskId: "_interface_contract", errors: interfaceIssues });
 		}
 	}
 

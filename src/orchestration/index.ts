@@ -1,6 +1,7 @@
 export {
 	findDanglingDeps,
 	findGlobConflicts,
+	findInterfaceContractIssues,
 	validateContract,
 	type ValidationResult,
 } from "./ContractValidator.js";
@@ -102,6 +103,9 @@ export type {
 	CoarseDag,
 	CoarsePhase,
 	CoarseTask,
+	InterfaceBinding,
+	InterfaceBoundaryKind,
+	InterfaceContract,
 	LaunchArtifact,
 	LaunchRequirement,
 	TaskContract,
