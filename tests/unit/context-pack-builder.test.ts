@@ -142,6 +142,20 @@ describe("buildContextPack", () => {
 		expect(pack.text).toContain("owner: T1-scaffold");
 	});
 
+	it("labels the owner role for the scaffold task", () => {
+		const contract = mkContract({
+			taskId: "T1-scaffold",
+			interfaceContracts: [{
+				id: "IC-todo", boundary: "api_rpc", schema: "{ Todo }",
+				rules: [],
+				bindings: [{ language: "typescript", files: ["src/shared/api.ts"], definition: "export interface Todo {}" }],
+				ownerTaskId: "T1-scaffold", consumerTaskIds: ["T2-be"], revision: 1,
+			}],
+		});
+		const pack = buildContextPack({ contract, candidates: [] });
+		expect(pack.text).toContain("OWNER (you write the binding files)");
+	});
+
 	it("keeps interface contracts even when the budget is tiny", () => {
 		const contract = mkContract({
 			taskId: "T2-be",
