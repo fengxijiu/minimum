@@ -322,6 +322,9 @@ function distributeInterfaceContracts(
 			for (const taskId of targets) {
 				const contract = byId.get(taskId);
 				if (!contract) continue; // dangling id — reported by validation
+				// Intentionally shared reference: the same frozen contract object lands
+				// on owner + every consumer. Downstream passes (validation, ContextPack,
+				// plan-gate) only read it; an InterfaceContract is treated as immutable.
 				(contract.interfaceContracts ??= []).push(ic);
 			}
 		}
