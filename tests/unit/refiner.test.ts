@@ -404,6 +404,45 @@ describe("refineDag", () => {
 		// the needs_refine-without-entry error is assembly-level, still recorded
 		expect(errors.every((e) => e.taskId !== "_glob_conflict")).toBe(true);
 	});
+
+	it("denormalizes interfaceContracts onto owner and consumer contracts", () => {
+		const dag: CoarseDag = {
+			epicId: "todo",
+			phases: [
+				{
+					id: "P1",
+					name: "impl",
+					tasks: [
+						{ id: "T1-scaffold", personaId: "code_executor", objective: "write shared api contract", parallelGroup: "scaffold", dependsOn: [], needsRefine: true },
+						{ id: "T2-be", personaId: "code_executor", objective: "implement backend handlers", parallelGroup: "impl", dependsOn: ["T1-scaffold"], needsRefine: true },
+						{ id: "T3-fe", personaId: "code_executor", objective: "implement frontend client", parallelGroup: "impl", dependsOn: ["T1-scaffold"], needsRefine: true },
+					],
+				},
+			],
+		};
+		const refinementMap = new Map<string, RefinementEntry>([
+			["T1-scaffold", {
+				taskId: "T1-scaffold",
+				allowedGlobs: ["src/shared/api.ts"],
+				acceptance: ["api.ts compiles"],
+				nonGoals: ["no business logic"],
+				blockedCondition: "blocked if tech_stack is unavailable or incomplete",
+				interfaceContracts: [{
+					id: "IC-todo", boundary: "api_rpc", schema: "{Todo}", rules: ["[] not null"],
+					bindings: [{ language: "typescript", files: ["src/shared/api.ts"], definition: "export interface Todo {}" }],
+					ownerTaskId: "T1-scaffold", consumerTaskIds: ["T2-be", "T3-fe"], revision: 1,
+				}],
+			}],
+			["T2-be", { taskId: "T2-be", allowedGlobs: ["src/backend/**"], acceptance: ["handlers"], nonGoals: ["no contract edits"], blockedCondition: "blocked if IC-todo is missing or contradictory" }],
+			["T3-fe", { taskId: "T3-fe", allowedGlobs: ["src/frontend/**"], acceptance: ["client"], nonGoals: ["no contract edits"], blockedCondition: "blocked if IC-todo is missing or contradictory" }],
+		]);
+		const { contracts, errors } = refineDag(dag, { inputs: baseInputs, refinement: refinementMap });
+		expect(errors).toEqual([]);
+		const byId = new Map(contracts.map((c) => [c.taskId, c]));
+		expect(byId.get("T1-scaffold")!.interfaceContracts).toHaveLength(1);
+		expect(byId.get("T2-be")!.interfaceContracts![0]!.id).toBe("IC-todo");
+		expect(byId.get("T3-fe")!.interfaceContracts![0]!.id).toBe("IC-todo");
+	});
 });
 
 describe("master capability grants", () => {

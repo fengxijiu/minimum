@@ -286,6 +286,8 @@ export function refineDag(dag: CoarseDag, opts: RefineOptions): RefineResult {
 		}
 	}
 
+	distributeInterfaceContracts(contracts, opts.refinement);
+
 	if (validate) {
 		for (const c of contracts) {
 			const r = validateContract(c);
@@ -301,6 +303,29 @@ export function refineDag(dag: CoarseDag, opts: RefineOptions): RefineResult {
 	}
 
 	return { contracts, errors };
+}
+
+/**
+ * Each InterfaceContract is authored once on its owner task's refinement entry.
+ * Copy it onto the owner contract and every consumer contract so each worker's
+ * ContextPack carries the frozen surface. Pure assignment — validation of
+ * ownership/consumer ids happens in ContractValidator.findInterfaceContractIssues.
+ */
+function distributeInterfaceContracts(
+	contracts: TaskContract[],
+	refinement: Map<string, RefinementEntry>,
+): void {
+	const byId = new Map(contracts.map((c) => [c.taskId, c]));
+	for (const entry of refinement.values()) {
+		for (const ic of entry.interfaceContracts ?? []) {
+			const targets = new Set<string>([ic.ownerTaskId, ...ic.consumerTaskIds]);
+			for (const taskId of targets) {
+				const contract = byId.get(taskId);
+				if (!contract) continue; // dangling id — reported by validation
+				(contract.interfaceContracts ??= []).push(ic);
+			}
+		}
+	}
 }
 
 function assembleContract(
