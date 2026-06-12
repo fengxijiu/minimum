@@ -453,3 +453,58 @@ describe("master capability grants", () => {
 		expect(res.ok).toBe(false);
 	});
 });
+
+describe("interfaceContracts in compileRefinement", () => {
+	it("parses interfaceContracts on an entry", () => {
+		const text = `<refine>{"tasks":[
+			{"taskId":"T1-scaffold","allowedGlobs":["src/shared/api.ts"],
+			 "acceptance":["api.ts compiles"],
+			 "blockedCondition":"blocked if tech_stack is unavailable or incomplete",
+			 "interfaceContracts":[
+			   {"id":"IC-todo","boundary":"api_rpc",
+			    "schema":"{ Todo: {id,title,done} }",
+			    "rules":["empty list returns [] not null"],
+			    "fixtures":[{"name":"one","data":{"id":"a","title":"t","done":false}}],
+			    "bindings":[{"language":"typescript","files":["src/shared/api.ts"],"definition":"export interface Todo {}"}],
+			    "ownerTaskId":"T1-scaffold","consumerTaskIds":["T2-be","T3-fe"],"revision":1}
+			 ]}
+		]}</refine>`;
+		const r = compileRefinement(text);
+		expect(r.ok).toBe(true);
+		if (r.ok) {
+			const e = r.entries.get("T1-scaffold")!;
+			expect(e.interfaceContracts).toHaveLength(1);
+			const ic = e.interfaceContracts![0]!;
+			expect(ic.id).toBe("IC-todo");
+			expect(ic.boundary).toBe("api_rpc");
+			expect(ic.bindings[0]!.language).toBe("typescript");
+			expect(ic.consumerTaskIds).toEqual(["T2-be", "T3-fe"]);
+			expect(ic.revision).toBe(1);
+		}
+	});
+
+	it("rejects an interfaceContract with an unknown boundary", () => {
+		const text = `<refine>{"tasks":[
+			{"taskId":"T1","allowedGlobs":["src/x.ts"],
+			 "interfaceContracts":[
+			   {"id":"IC","boundary":"nonsense","schema":"s","rules":[],
+			    "bindings":[{"language":"go","files":["x.go"],"definition":"d"}],
+			    "ownerTaskId":"T1","consumerTaskIds":[],"revision":1}]}
+		]}</refine>`;
+		const r = compileRefinement(text);
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.error).toContain("boundary");
+	});
+
+	it("rejects an interfaceContract with no bindings", () => {
+		const text = `<refine>{"tasks":[
+			{"taskId":"T1","allowedGlobs":["src/x.ts"],
+			 "interfaceContracts":[
+			   {"id":"IC","boundary":"data_schema","schema":"s","rules":[],
+			    "bindings":[],"ownerTaskId":"T1","consumerTaskIds":[],"revision":1}]}
+		]}</refine>`;
+		const r = compileRefinement(text);
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.error).toContain("bindings");
+	});
+});
