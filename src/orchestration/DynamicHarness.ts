@@ -6,7 +6,7 @@ import { ResultStore } from "./ResultStore.js";
 import { ArtifactIndex } from "./ArtifactIndex.js";
 import { RunningSet } from "./RunningSet.js";
 import { ResourceManager } from "./ResourceManager.js";
-import { buildArtifactMap, evaluateLaunchGate } from "./LaunchGate.js";
+import { buildArtifactMap, canUseReadonlyFallback, evaluateLaunchGate, isContextGapBlocked } from "./LaunchGate.js";
 import type { TaskContract } from "./TaskContract.js";
 import type { TaskResult } from "./TaskRunner.js";
 import { runTaskWithRetry } from "./TaskRunner.js";
@@ -77,6 +77,11 @@ export class DynamicHarness implements DagHarness {
 		const priorArtifacts = buildArtifactMap(priorResults);
 		const priorIds = new Set(priorResults.map((r) => r.taskId));
 
+		// Per-task "one lenient (re)run" budget shared by the cross-phase launch-gate
+		// gap path (promote) and the context-gap blocked path (handleTaskComplete) —
+		// a task gets exactly one extra chance total before it is deferred (#7).
+		const gateRetryUsed = new Set<string>();
+
 		// Idle detection latch — a stuck queue emits exactly one queue_idle (carrying
 		// diagnostics) before the harness flushes and completes (#10). Declared here
 		// so the main loop and tail share it.
@@ -112,18 +117,59 @@ export class DynamicHarness implements DagHarness {
 			const mergedArtifacts = new Map([...priorArtifacts, ...artifacts.asMap()]);
 			const decision = evaluateLaunchGate(gateContract, mergedResults, mergedArtifacts);
 			if (decision.ok) {
+				// Surface any requirement that only passed via a degraded upstream's
+				// read-only fallback, so the caller can record it (replaces the wave
+				// layer's readonlyFallbackIssues, #7).
+				for (const r of gateableReqs) {
+					const upstream = mergedResults.find((x) => x.taskId === r.sourceTaskId);
+					if (!upstream) continue;
+					if (mergedArtifacts.get(r.sourceTaskId)?.get(r.artifact)?.trim()) continue;
+					if (canUseReadonlyFallback(r, upstream)) {
+						emit?.({ type: "gate_fallback", taskId: id, reason: `${r.sourceTaskId}.${r.artifact} unavailable; proceeding via readonly fallback` });
+					}
+				}
 				graph.clearDeferred(id);
 				graph.setStatus(id, "ready");
 				queue.enqueue(contract);
 				emit?.({ type: "task_ready", taskId: id });
 				if (unlockedBy) emit?.({ type: "dependency_unlocked", taskId: id, unlockedBy });
-			} else {
-				// Required artifacts not (yet) available — hold the task as deferred so
-				// idle detection / W3.5 can surface it rather than launching it blind.
-				const wasDeferred = graph.getStatus(id) === "deferred";
-				graph.markDeferred(id);
-				if (!wasDeferred) {
-					emit?.({ type: "resource_wait", taskId: id, resource: "launch_gate", queueDepth: 0 });
+				return;
+			}
+
+			// Gate failed. A CROSS-PHASE gap (the unmet source lives only in
+			// priorResults, not in this invocation's graph) gets ONE lenient run — the
+			// worker may still succeed via read-only fallback — replacing the wave
+			// layer's gate_retry (#7). static_compile gaps and INTRA gaps stay strict.
+			const hasStaticCompileIssue = decision.issues.some(
+				(i) => i.requirement.artifact === "static_compile_commands",
+			);
+			const allCrossPhase = decision.issues.length > 0 && decision.issues.every(
+				(i) => priorIds.has(i.requirement.sourceTaskId) && graph.getContract(i.requirement.sourceTaskId) === undefined,
+			);
+			if (!hasStaticCompileIssue && allCrossPhase && !gateRetryUsed.has(id)) {
+				gateRetryUsed.add(id);
+				graph.clearDeferred(id);
+				graph.setStatus(id, "ready");
+				queue.enqueue(contract);
+				emit?.({ type: "gate_retry", taskId: id, reason: decision.issues.map((i) => i.reason).join("; ") });
+				if (unlockedBy) emit?.({ type: "dependency_unlocked", taskId: id, unlockedBy });
+				return;
+			}
+
+			// Strict defer — hold as deferred so idle detection / W3.5 can surface it
+			// rather than launching it blind. If the gate gap is terminal (budget used
+			// or static compile), also announce task_deferred for the caller.
+			const wasDeferred = graph.getStatus(id) === "deferred";
+			graph.markDeferred(id);
+			if (!wasDeferred) {
+				emit?.({ type: "resource_wait", taskId: id, resource: "launch_gate", queueDepth: 0 });
+				if (hasStaticCompileIssue || (allCrossPhase && gateRetryUsed.has(id))) {
+					emit?.({
+						type: "task_deferred",
+						taskId: id,
+						reason: decision.issues.map((i) => i.reason).join("; "),
+						...(contract.blockedCondition && { blockedCondition: contract.blockedCondition }),
+					});
 				}
 			}
 		};
@@ -181,8 +227,24 @@ export class DynamicHarness implements DagHarness {
 					recordPropagatedSkip(sid, `upstream ${taskId} skipped`);
 				}
 			} else if (result.status === "blocked") {
-				emit?.({ type: "task_blocked", result, reason: result.errors.join("; ") });
-				graph.markDeferred(taskId);
+				// A context-gap block gets one re-run (the retryBlockedContextGaps role),
+				// sharing the single per-task budget with the launch-gate leniency (#7).
+				const contract = graph.getContract(taskId);
+				if (contract && isContextGapBlocked(result) && !gateRetryUsed.has(taskId)) {
+					gateRetryUsed.add(taskId);
+					emit?.({ type: "gate_retry", taskId, reason: "context gap; granting one re-run" });
+					graph.setStatus(taskId, "ready");
+					queue.enqueue(contract);
+				} else {
+					emit?.({ type: "task_blocked", result, reason: result.errors.join("; ") });
+					graph.markDeferred(taskId);
+					emit?.({
+						type: "task_deferred",
+						taskId,
+						reason: result.errors.join("; ") || "context gap unresolved",
+						...(contract?.blockedCondition && { blockedCondition: contract.blockedCondition }),
+					});
+				}
 			} else if (result.status === "error" || result.status === "contract_invalid") {
 				const eventType = result.status === "contract_invalid" ? "task_blocked" : "task_failed";
 				emit?.({ type: eventType as "task_failed", result, error: result.errors.join("; ") });

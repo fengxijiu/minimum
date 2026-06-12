@@ -464,17 +464,28 @@ describe("DynamicHarness", () => {
 
 	// ── #7: cross-phase launch gate via injected priorResults ─────────────────
 
-	it("defers a task whose cross-phase requirement is unmet, using injected priorResults", async () => {
+	const SCOUT_NO_FILE_LIST = {
+		taskId: "W1-scout",
+		personaId: "repo_scout" as const,
+		status: "ok" as const,
+		report: "<task_report><status>ok</status><summary>scanned</summary></task_report>",
+		memoryCandidateBody: undefined,
+		errors: [],
+		durationMs: 1,
+	};
+
+	it("grants one lenient run for an unmet cross-phase requirement and emits gate_retry", async () => {
 		const ran: string[] = [];
+		const events: HarnessEvent[] = [];
 		const executor: WorkerExecutor = {
 			run: async (contract) => {
 				ran.push(contract.taskId);
 				return `<task_report><status>ok</status><summary>done</summary><changed_files>- b.ts</changed_files></task_report>`;
 			},
 		};
-		// T2's launch requirement points at a W1 perception task NOT in this
-		// invocation. The harness must evaluate it against priorResults rather than
-		// silently dropping it — the prior result has no <file_list>, so T2 defers.
+		// T2's requirement points at a W1 task (cross-phase, in priorResults) that
+		// produced no <file_list>. Cross-phase gaps get ONE lenient run, not a strict
+		// defer — the worker may still succeed via read-only fallback.
 		const b = mkContract({
 			taskId: "T2",
 			pathPolicy: { allowedGlobs: ["b.ts"], forbiddenGlobs: [] },
@@ -484,19 +495,107 @@ describe("DynamicHarness", () => {
 		const results = await new DynamicHarness().runToCompletion([b], {
 			projectRoot: dir,
 			executor,
+			priorResults: [SCOUT_NO_FILE_LIST],
+			onEvent: (e) => events.push(e),
+		});
+
+		expect(ran.filter((id) => id === "T2")).toHaveLength(1);
+		expect(events.some((e) => e.type === "gate_retry" && e.taskId === "T2")).toBe(true);
+		expect(results.find((r) => r.taskId === "T2")?.status).toBe("ok");
+	});
+
+	it("defers a cross-phase gap task after its one lenient run returns blocked", async () => {
+		const ran: string[] = [];
+		const events: HarnessEvent[] = [];
+		const executor: WorkerExecutor = {
+			run: async (contract) => {
+				ran.push(contract.taskId);
+				return `<task_report><status>blocked</status><summary>still missing file_list context</summary></task_report>`;
+			},
+		};
+		const b = mkContract({
+			taskId: "T2",
+			pathPolicy: { allowedGlobs: ["b.ts"], forbiddenGlobs: [] },
+			launchRequirements: [{ sourceTaskId: "W1-scout", artifact: "file_list", required: true }],
+		});
+
+		const results = await new DynamicHarness().runToCompletion([b], {
+			projectRoot: dir,
+			executor,
+			priorResults: [SCOUT_NO_FILE_LIST],
+			onEvent: (e) => events.push(e),
+		});
+
+		// One lenient run, then deferred (no second attempt).
+		expect(ran.filter((id) => id === "T2")).toHaveLength(1);
+		expect(events.some((e) => e.type === "gate_retry" && e.taskId === "T2")).toBe(true);
+		expect(events.some((e) => e.type === "task_deferred" && e.taskId === "T2")).toBe(true);
+	});
+
+	it("re-runs a context-gap-blocked task once, then defers it", async () => {
+		const ran: string[] = [];
+		const events: HarnessEvent[] = [];
+		const executor: WorkerExecutor = {
+			run: async (contract) => {
+				ran.push(contract.taskId);
+				// Gate passes (no launch requirement), but the worker reports a context gap.
+				return `<task_report><status>blocked</status><summary>missing file_list context</summary></task_report>`;
+			},
+		};
+		const a = mkContract({ taskId: "T1", pathPolicy: { allowedGlobs: ["a.ts"], forbiddenGlobs: [] } });
+
+		const results = await new DynamicHarness().runToCompletion([a], {
+			projectRoot: dir,
+			executor,
+			onEvent: (e) => events.push(e),
+		});
+
+		// First blocked → one retry; second blocked → defer.
+		expect(ran.filter((id) => id === "T1")).toHaveLength(2);
+		expect(events.some((e) => e.type === "gate_retry" && e.taskId === "T1")).toBe(true);
+		expect(events.some((e) => e.type === "task_deferred" && e.taskId === "T1")).toBe(true);
+	});
+
+	it("emits gate_fallback when a task proceeds via a degraded upstream's readonly fallback", async () => {
+		const events: HarnessEvent[] = [];
+		const executor: WorkerExecutor = {
+			run: async () => `<task_report><status>ok</status><summary>done</summary><changed_files>- b.ts</changed_files></task_report>`,
+		};
+		const b = mkContract({
+			taskId: "T2",
+			pathPolicy: { allowedGlobs: ["b.ts"], forbiddenGlobs: [] },
+			launchRequirements: [{ sourceTaskId: "W1-scout", artifact: "file_list", required: true }],
+		});
+
+		const results = await new DynamicHarness().runToCompletion([b], {
+			projectRoot: dir,
+			executor,
+			onEvent: (e) => events.push(e),
 			priorResults: [{
 				taskId: "W1-scout",
 				personaId: "repo_scout",
-				status: "ok",
-				report: "<task_report><status>ok</status><summary>scanned</summary></task_report>",
+				status: "degraded",
+				report: "<task_report><status>degraded</status><summary>scan degraded</summary></task_report>",
 				memoryCandidateBody: undefined,
 				errors: [],
 				durationMs: 1,
+				fallbackAccess: {
+					mode: "readonly_workspace",
+					allowed: true,
+					root: dir,
+					allowTools: [],
+					denyTools: [],
+					allowFileGlobs: [],
+					denyFileGlobs: [],
+					maxFileBytes: 1,
+					maxTotalBytes: 1,
+				},
 			}],
 		});
 
-		expect(ran).not.toContain("T2");
-		expect(["skipped", "blocked"]).toContain(results.find((r) => r.taskId === "T2")?.status);
+		// Gate passes via readonly fallback → T2 runs, and the fallback is surfaced.
+		expect(results.find((r) => r.taskId === "T2")?.status).toBe("ok");
+		expect(events.some((e) => e.type === "gate_fallback" && e.taskId === "T2")).toBe(true);
 	});
 
 	it("launches a task whose cross-phase requirement is satisfied by priorResults", async () => {

@@ -68,6 +68,25 @@ export type HarnessEvent =
 			/** Which upstream task just completed, unlocking this one. */
 			unlockedBy: string;
 	  }
+	/** Launch gate / context gap granted a single lenient (re)run for this task. */
+	| {
+			type: "gate_retry";
+			taskId: string;
+			reason: string;
+	  }
+	/** Task passed the launch gate via a degraded upstream's read-only fallback. */
+	| {
+			type: "gate_fallback";
+			taskId: string;
+			reason: string;
+	  }
+	/** Task will not run: its launch gate / context gap never cleared (after any retry). */
+	| {
+			type: "task_deferred";
+			taskId: string;
+			reason: string;
+			blockedCondition?: string;
+	  }
 
 	// ── Queue health ───────────────────────────────────────────────────────
 	/** No tasks running and no tasks ready, but DAG is not complete (dynamic only). */
