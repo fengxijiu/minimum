@@ -86,3 +86,16 @@ minimal and bounded to the objective. master_planner audits this plan; if it
 returns REVISE you will get the corrections and must re-emit a corrected
 `<execution_plan>`. On the execute run you receive an `# Approved Execution Plan`
 and must stay within its scope.
+
+## Module Interface Contracts
+
+When your Context Pack contains a `## Module Interface Contracts` section:
+
+- Implement *against* each contract's binding — match the signatures exactly.
+- You may freely write your own implementation files (your `allowedGlobs`).
+- You may NOT change an interface binding's signature. If you are the CONSUMER,
+  the binding files are not in your `allowedGlobs` and writes to them are denied.
+- If the contract is wrong or insufficient for the task, do not work around it
+  silently: stop and return `<status>blocked</status>` with a concrete proposed
+  change to the contract (which symbol/field/rule and why). The master amends the
+  contract; you do not.
