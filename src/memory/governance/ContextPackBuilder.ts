@@ -73,6 +73,12 @@ export function buildContextPack(input: ContextPackInput): ContextPack {
 	// --- Always-included header (objective + acceptance + constraints) ---
 	budget.pushAlways(renderHead(contract));
 
+	// --- Module interface contracts (high priority: essential, not optional) ---
+	const contracts = contract.interfaceContracts ?? [];
+	if (contracts.length > 0) {
+		budget.pushAlways(renderInterfaceContracts(contract.taskId, contracts));
+	}
+
 	// --- Canonical memory sections (already task-type filtered upstream) ---
 	const includedSections: string[] = [];
 	const canonical = input.canonicalSections ?? [];
@@ -123,6 +129,33 @@ function renderHead(contract: TaskContract): string {
 	if (contract.inputs.constraints.length > 0) {
 		lines.push("\n## Constraints\n\n");
 		lines.push(contract.inputs.constraints.map((c) => `- ${c}`).join("\n") + "\n");
+	}
+	return lines.join("");
+}
+
+function renderInterfaceContracts(
+	taskId: string,
+	contracts: NonNullable<TaskContract["interfaceContracts"]>,
+): string {
+	const lines: string[] = ["\n## Module Interface Contracts\n"];
+	lines.push(
+		"> Frozen by the master. Implement against these surfaces; you may NOT change a\n" +
+			"> binding's signature. If a change is unavoidable, stop and return blocked.\n",
+	);
+	for (const ic of contracts) {
+		const role = ic.ownerTaskId === taskId ? "OWNER (you write the binding files)" : "CONSUMER (import only, do not edit)";
+		lines.push(`\n### ${ic.id} — ${ic.boundary} [${role}]\n`);
+		lines.push(`owner: ${ic.ownerTaskId} · consumers: ${ic.consumerTaskIds.join(", ") || "—"} · revision: ${ic.revision}\n`);
+		lines.push(`\n**Schema (source of truth):**\n\n\`\`\`\n${ic.schema.trim()}\n\`\`\`\n`);
+		if (ic.rules.length > 0) {
+			lines.push(`\n**Rules:**\n\n${ic.rules.map((r) => `- ${r}`).join("\n")}\n`);
+		}
+		for (const b of ic.bindings) {
+			lines.push(`\n**Binding (${b.language}) — ${b.files.join(", ")}:**\n\n\`\`\`${b.language}\n${b.definition.trim()}\n\`\`\`\n`);
+		}
+		if (ic.fixtures && ic.fixtures.length > 0) {
+			lines.push(`\n**Golden fixtures:** ${ic.fixtures.map((f) => f.name).join(", ")}\n`);
+		}
 	}
 	return lines.join("");
 }

@@ -123,6 +123,41 @@ describe("buildContextPack", () => {
 		const pack = buildContextPack({ contract: mkContract(), candidates: [] });
 		expect(pack.approxTokens).toBeGreaterThan(0);
 	});
+
+	it("renders module interface contracts for a consumer", () => {
+		const contract = mkContract({
+			taskId: "T2-be",
+			interfaceContracts: [{
+				id: "IC-todo", boundary: "api_rpc", schema: "{ Todo: {id,title,done} }",
+				rules: ["empty list returns [] not null"],
+				bindings: [{ language: "typescript", files: ["src/shared/api.ts"], definition: "export interface Todo {}" }],
+				ownerTaskId: "T1-scaffold", consumerTaskIds: ["T2-be"], revision: 1,
+			}],
+		});
+		const pack = buildContextPack({ contract, candidates: [] });
+		expect(pack.text).toContain("## Module Interface Contracts");
+		expect(pack.text).toContain("IC-todo");
+		expect(pack.text).toContain("empty list returns [] not null");
+		expect(pack.text).toContain("export interface Todo {}");
+		expect(pack.text).toContain("owner: T1-scaffold");
+	});
+
+	it("keeps interface contracts even when the budget is tiny", () => {
+		const contract = mkContract({
+			taskId: "T2-be",
+			interfaceContracts: [{
+				id: "IC-keep", boundary: "data_schema", schema: "shape", rules: ["r"],
+				bindings: [{ language: "python", files: ["shared/contract.py"], definition: "class Todo: ..." }],
+				ownerTaskId: "T1", consumerTaskIds: ["T2-be"], revision: 1,
+			}],
+			inputs: { userGoal: "g", artifacts: [], constraints: [] },
+		});
+		const candidates = [
+			{ sourceTask: "S", persona: "repo_scout", scope: "x", confidence: "high" as const, relatedFiles: [], body: "x".repeat(5000) },
+		];
+		const pack = buildContextPack({ contract, candidates, maxTokens: 200 });
+		expect(pack.text).toContain("IC-keep");
+	});
 });
 
 describe("rankCandidates", () => {
