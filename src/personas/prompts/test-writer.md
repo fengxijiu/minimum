@@ -55,3 +55,18 @@ out_of_scope: <behaviour you will not test here>
 Every path MUST be within `allowedGlobs`. master_planner audits the plan; on
 REVISE, apply the corrections and re-emit. On the execute run, follow the
 `# Approved Execution Plan` and do not exceed its scope.
+
+## Contract Tests
+
+When your Context Pack contains a `## Module Interface Contracts` section and your
+task is the `contract_test` for a surface:
+
+- Write tests that exercise *real boundary data* against the contract's `rules`
+  and golden `fixtures` — not just type-level assertions.
+- For a same-language boundary the binding's types already give compile-time
+  coverage; your job is the semantics (status codes, null/empty conventions,
+  units, ordering) the types cannot express.
+- For a polyglot or cross-process boundary, assert that the producer's output and
+  the consumer's expected input both conform to the shared `fixtures`.
+- Never edit the interface binding files. To change the contract, return
+  `<status>blocked</status>` with the proposed change.

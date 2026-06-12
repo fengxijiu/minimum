@@ -23,7 +23,6 @@ import { compileRefinement, refineDag, type RefinementEntry } from "./Refiner.js
 import { validateGrants, type GrantableCatalog } from "./CapabilityCatalog.js";
 import { DynamicHarness } from "./DynamicHarness.js";
 import type { HarnessEvent } from "./HarnessEvent.js";
-import { buildArtifactMap, canUseReadonlyFallback, evaluateLaunchGate, isContextGapBlocked } from "./LaunchGate.js";
 import {
 	compileMissionCheck,
 	loopBackTasksToCoarseTasks,
@@ -292,7 +291,6 @@ export async function runPipeline(
 	const resolvedContracts: TaskContract[] = [];
 	const refinements: RefinementEntry[] = [];
 	const knownIssues: string[] = [];
-	const gateRetryKeys = new Set<string>();
 	const artifactPaths = emptyArtifactPaths();
 	artifactPaths.memoryIndex = memoryIndexPath(opts.projectRoot);
 	let maxMissionRepairLoops = opts.maxMissionRepairLoops ?? DEFAULT_MAX_MISSION_REPAIR_LOOPS;
@@ -368,7 +366,6 @@ export async function runPipeline(
 		labelSuffix: "",
 		passId: "initial",
 		artifactPaths,
-		gateRetryKeys,
 	});
 	if (!initialPass.ok) return initialPass.result;
 
@@ -550,7 +547,6 @@ export async function runPipeline(
 			labelSuffix: ` repair ${missionLoopIndex}`,
 			passId: `repair-${missionLoopIndex}`,
 			artifactPaths,
-			gateRetryKeys,
 		});
 		if (!repairPass.ok) return repairPass.result;
 	}
@@ -676,7 +672,6 @@ interface DagPassOptions {
 	labelSuffix: string;
 	passId: string;
 	artifactPaths: ArtifactPaths;
-	gateRetryKeys: Set<string>;
 }
 
 type DagPassResult = { ok: true } | { ok: false; result: PipelineResult };
@@ -695,7 +690,6 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 		labelSuffix,
 		passId,
 		artifactPaths,
-		gateRetryKeys,
 	} = args;
 
 	// ── W1: perception ───────────────────────────────────────────────────────
@@ -904,24 +898,16 @@ async function runDagPass(args: DagPassOptions): Promise<DagPassResult> {
 	const implContracts = allContracts.filter((c) => !isPerceptionPersona(c.personaId));
 	if (implContracts.length > 0) {
 		try {
-			const { runnable } = applyLaunchGate({
-				contracts: implContracts,
-				allResults,
+			// Single launch-gate authority (#7): the harness gates each task's
+			// requirements against this invocation's results AND the W1 results we
+			// inject as priorResults. It grants the one lenient run for a cross-phase
+			// gap and the one context-gap re-run, surfacing gate_retry / task_deferred
+			// which runWaves maps to PipelineEvents + knownIssues.
+			const implResults = await runWaves(stripPerceptionDeps(implContracts), opts, emit, {
+				priorResults: [...allResults],
 				knownIssues,
-				emit,
-				gateRetryKeys,
 			});
-			const implResults = await runWaves(stripPerceptionDeps(runnable), opts, emit);
 			allResults.push(...implResults);
-			const retryResults = await retryBlockedContextGaps({
-				results: implResults,
-				contracts: runnable,
-				opts,
-				emit,
-				knownIssues,
-				gateRetryKeys,
-			});
-			allResults.push(...retryResults);
 		} catch (e) {
 			return { ok: false, result: fail(emit, "W2/3", e, allResults) };
 		}
@@ -1139,105 +1125,11 @@ function clipLine(text: string | undefined, max = 140): string {
 	return oneLine.length > max ? `${oneLine.slice(0, max - 1)}…` : oneLine;
 }
 
-function applyLaunchGate(args: {
-	contracts: TaskContract[];
-	allResults: TaskResult[];
-	knownIssues: string[];
-	emit: (e: PipelineEvent) => void;
-	gateRetryKeys: Set<string>;
-}): { runnable: TaskContract[] } {
-	const { contracts, allResults, knownIssues, emit, gateRetryKeys } = args;
-	const artifacts = buildArtifactMap(allResults);
-	const runnable: TaskContract[] = [];
-	const deferred = new Set<string>();
-
-	for (const contract of contracts) {
-		const deferredDep = contract.dependsOn.find((dep) => deferred.has(dep));
-		if (deferredDep) {
-			const reason = `${contract.taskId} deferred because dependency ${deferredDep} was deferred`;
-			deferred.add(contract.taskId);
-			knownIssues.push(`W2/3 ${reason}`);
-			emit({ type: "task_deferred", phase: "W2/3", taskId: contract.taskId, reason, ...(contract.blockedCondition && { blockedCondition: contract.blockedCondition }) });
-			continue;
-		}
-
-		const decision = evaluateLaunchGate(contract, allResults, artifacts);
-		if (decision.ok) {
-			for (const issue of readonlyFallbackIssues(contract, allResults, artifacts)) {
-				knownIssues.push(issue);
-			}
-			runnable.push(contract);
-			continue;
-		}
-
-		const reason = decision.issues.map((issue) => issue.reason).join("; ");
-		if (decision.issues.some((issue) => issue.requirement.artifact === "static_compile_commands")) {
-			deferred.add(contract.taskId);
-			knownIssues.push(`W2/3 ${contract.taskId} deferred: ${reason}`);
-			emit({ type: "task_deferred", phase: "W2/3", taskId: contract.taskId, reason, ...(contract.blockedCondition && { blockedCondition: contract.blockedCondition }) });
-			continue;
-		}
-		if (!gateRetryKeys.has(contract.taskId)) {
-			gateRetryKeys.add(contract.taskId);
-			knownIssues.push(`W2/3 ${contract.taskId} launch gate missing context; allowing one same-contract retry: ${reason}`);
-			emit({ type: "gate_retry", phase: "W2/3", taskId: contract.taskId, attempt: 1, reason });
-			runnable.push(contract);
-			continue;
-		}
-
-		deferred.add(contract.taskId);
-		knownIssues.push(`W2/3 ${contract.taskId} deferred after one same-contract retry: ${reason}`);
-		emit({ type: "task_deferred", phase: "W2/3", taskId: contract.taskId, reason, ...(contract.blockedCondition && { blockedCondition: contract.blockedCondition }) });
-	}
-
-	return { runnable };
-}
-
-async function retryBlockedContextGaps(args: {
-	results: TaskResult[];
-	contracts: TaskContract[];
-	opts: PipelineOptions;
-	emit: (e: PipelineEvent) => void;
-	knownIssues: string[];
-	gateRetryKeys: Set<string>;
-}): Promise<TaskResult[]> {
-	const { results, contracts, opts, emit, knownIssues, gateRetryKeys } = args;
-	const byId = new Map(contracts.map((c) => [c.taskId, c]));
-	const retryContracts: TaskContract[] = [];
-
-	for (const result of results) {
-		if (!isContextGapBlocked(result)) continue;
-		const contract = byId.get(result.taskId);
-		if (!contract) continue;
-		if (gateRetryKeys.has(result.taskId)) {
-			const reason = `${result.taskId} remained blocked after one same-contract context retry`;
-			knownIssues.push(`W2/3 ${reason}`);
-			emit({ type: "task_deferred", phase: "W2/3", taskId: result.taskId, reason, ...(contract.blockedCondition && { blockedCondition: contract.blockedCondition }) });
-			continue;
-		}
-		gateRetryKeys.add(result.taskId);
-		const reason = `${result.taskId} returned blocked for missing W1 context`;
-		knownIssues.push(`W2/3 ${reason}; allowing one same-contract retry`);
-		emit({ type: "gate_retry", phase: "W2/3", taskId: result.taskId, attempt: 1, reason });
-		retryContracts.push(contract);
-	}
-
-	if (retryContracts.length === 0) return [];
-	const retryResults = await runWaves(stripPerceptionDeps(retryContracts), opts, emit);
-	for (const result of retryResults) {
-		if (!isContextGapBlocked(result)) continue;
-		const contract = byId.get(result.taskId);
-		const reason = `${result.taskId} remained blocked after one same-contract context retry`;
-		knownIssues.push(`W2/3 ${reason}`);
-		emit({ type: "task_deferred", phase: "W2/3", taskId: result.taskId, reason, ...(contract?.blockedCondition && { blockedCondition: contract.blockedCondition }) });
-	}
-	return retryResults;
-}
-
 async function runWaves(
 	contracts: TaskContract[],
 	opts: PipelineOptions,
 	emit: (e: PipelineEvent) => void,
+	gateContext?: { priorResults: TaskResult[]; knownIssues: string[] },
 ): Promise<TaskResult[]> {
 	if (contracts.length === 0) return [];
 
@@ -1252,8 +1144,28 @@ async function runWaves(
 		...(opts.routePolicy && { routePolicy: opts.routePolicy }),
 		...(opts.worktreeIsolation && { worktreeIsolation: true }),
 		...(opts.runId && { runId: opts.runId }),
+		...(gateContext && { priorResults: gateContext.priorResults }),
 		onEvent: (event) => {
 			emit({ type: "harness", event });
+			// Surface the harness's launch-gate decisions as PipelineEvents + knownIssues
+			// (#7) — these used to come from the wave-layer applyLaunchGate.
+			if (event.type === "gate_retry") {
+				emit({ type: "gate_retry", phase: "W2/3", taskId: event.taskId, attempt: 1, reason: event.reason });
+				gateContext?.knownIssues.push(
+					`W2/3 ${event.taskId} launch gate missing context; allowing one same-contract retry: ${event.reason}`,
+				);
+			} else if (event.type === "task_deferred") {
+				emit({
+					type: "task_deferred",
+					phase: "W2/3",
+					taskId: event.taskId,
+					reason: event.reason,
+					...(event.blockedCondition && { blockedCondition: event.blockedCondition }),
+				});
+				gateContext?.knownIssues.push(`W2/3 ${event.taskId} deferred: ${event.reason}`);
+			} else if (event.type === "gate_fallback") {
+				gateContext?.knownIssues.push(`W2/3 ${event.taskId} using readonly fallback: ${event.reason}`);
+			}
 			const result = adaptHarnessEventToTaskResult(event, contractsById);
 			if (result) {
 				results.set(result.taskId, result);
@@ -1414,23 +1326,6 @@ function createSkippedTaskResult(
 		errors: [reason],
 		durationMs: 0,
 	};
-}
-
-function readonlyFallbackIssues(
-	contract: TaskContract,
-	allResults: TaskResult[],
-	artifacts: ReturnType<typeof buildArtifactMap>,
-): string[] {
-	const out: string[] = [];
-	for (const requirement of contract.launchRequirements ?? []) {
-		const upstream = allResults.find((r) => r.taskId === requirement.sourceTaskId);
-		if (!upstream) continue;
-		const value = artifacts.get(requirement.sourceTaskId)?.get(requirement.artifact)?.trim();
-		if (value) continue;
-		if (!canUseReadonlyFallback(requirement, upstream)) continue;
-		out.push(`W2/3 ${contract.taskId} using readonly fallback because ${requirement.sourceTaskId}.${requirement.artifact} is unavailable`);
-	}
-	return out;
 }
 
 async function writeInlineContextPacks(

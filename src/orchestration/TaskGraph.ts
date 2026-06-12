@@ -1,6 +1,7 @@
 import {
 	findDanglingDeps,
 	findGlobConflicts,
+	findInterfaceContractIssues,
 	validateContract,
 } from "./ContractValidator.js";
 import { groupBy } from "../utils/collections.js";
@@ -63,6 +64,10 @@ export function buildTaskBatches(
 					(d) => `${d.taskId} depends on unknown task ${d.missingDep}`,
 				),
 			});
+		}
+		const interfaceIssues = findInterfaceContractIssues(contracts);
+		if (interfaceIssues.length > 0) {
+			errors.push({ taskId: "_interface_contract", errors: interfaceIssues });
 		}
 	}
 

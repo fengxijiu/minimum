@@ -1,7 +1,8 @@
 import type { Persona } from "../personas/Persona.js";
 import { getPersona } from "../personas/PersonaRegistry.js";
+import { matchGlob, normalizeRelPath } from "../tools/policy/PathPolicyEnforcer.js";
 import { groupBy } from "../utils/collections.js";
-import type { TaskContract } from "./TaskContract.js";
+import type { InterfaceContract, TaskContract } from "./TaskContract.js";
 
 /**
  * ContractValidator — runtime check that gates worker launch.
@@ -214,6 +215,86 @@ export function findDanglingDeps(
 		}
 	}
 	return out;
+}
+
+/**
+ * Validate module interface contracts across a contract set. A contract is
+ * denormalized onto owner + consumers (same object on several tasks), so we
+ * dedupe by id first. Returns a flat error list, empty if clean.
+ *
+ * Checks, all deterministic and AST-free:
+ *  - ownerTaskId and consumerTaskIds resolve to tasks in the set;
+ *  - owner's allowedGlobs cover every binding file (owner can write them);
+ *  - no consumer's allowedGlobs matches any binding file (signature immutable);
+ *  - every consumer (transitively) depends on the owner.
+ */
+export function findInterfaceContractIssues(contracts: TaskContract[]): string[] {
+	const errors: string[] = [];
+	const byId = new Map(contracts.map((c) => [c.taskId, c]));
+	const reaches = buildReachability(contracts);
+
+	const uniq = new Map<string, InterfaceContract>();
+	for (const c of contracts) {
+		for (const ic of c.interfaceContracts ?? []) {
+			if (!uniq.has(ic.id)) uniq.set(ic.id, ic);
+		}
+	}
+
+	for (const ic of uniq.values()) {
+		const owner = byId.get(ic.ownerTaskId);
+		if (!owner) {
+			errors.push(`interface ${ic.id}: ownerTaskId ${ic.ownerTaskId} is not a task in this set`);
+		}
+		const bindingFiles = ic.bindings.flatMap((b) => b.files.map((f) => normalizeRelPath(f)));
+
+		if (owner) {
+			for (const file of bindingFiles) {
+				if (!owner.pathPolicy.allowedGlobs.some((g) => matchGlob(file, g))) {
+					errors.push(`interface ${ic.id}: owner ${owner.taskId} allowedGlobs must cover binding file ${file}`);
+				}
+			}
+		}
+
+		for (const consumerId of ic.consumerTaskIds) {
+			const consumer = byId.get(consumerId);
+			if (!consumer) {
+				errors.push(`interface ${ic.id}: consumerTaskId ${consumerId} is not a task in this set`);
+				continue;
+			}
+			for (const file of bindingFiles) {
+				if (consumer.pathPolicy.allowedGlobs.some((g) => matchGlob(file, g))) {
+					errors.push(`interface ${ic.id}: consumer ${consumerId} must not be able to write binding file ${file}`);
+				}
+			}
+			if (owner && consumerId !== owner.taskId && !reaches(consumerId, owner.taskId)) {
+				errors.push(`interface ${ic.id}: consumer ${consumerId} must depend (transitively) on owner ${owner.taskId}`);
+			}
+		}
+	}
+	return errors;
+}
+
+/**
+ * Returns a predicate reaches(from, to): does `from` depend transitively on `to`?
+ * Assumes an acyclic dependency graph; the memo guards against infinite recursion
+ * on a malformed cyclic DAG but a cyclic node will report incomplete ancestors.
+ * Callers (refineDag, buildTaskBatches) reject cycles separately (Kahn's sort).
+ */
+function buildReachability(contracts: TaskContract[]): (from: string, to: string) => boolean {
+	const deps = new Map(contracts.map((c) => [c.taskId, c.dependsOn]));
+	const memo = new Map<string, Set<string>>();
+	function ancestorsOf(id: string): Set<string> {
+		const cached = memo.get(id);
+		if (cached) return cached;
+		const acc = new Set<string>();
+		memo.set(id, acc); // guard against cycles
+		for (const dep of deps.get(id) ?? []) {
+			acc.add(dep);
+			for (const a of ancestorsOf(dep)) acc.add(a);
+		}
+		return acc;
+	}
+	return (from, to) => ancestorsOf(from).has(to);
 }
 
 /** Re-exported for discoverability — grant validation is catalog-aware (see CapabilityCatalog). */

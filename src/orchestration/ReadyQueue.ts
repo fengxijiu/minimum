@@ -1,16 +1,20 @@
 import type { TaskContract } from "./TaskContract.js";
+import { compareTaskPriority, type PriorityMetrics } from "./taskPriority.js";
 
 /**
  * ReadyQueue — priority-sorted queue of tasks ready for scheduling.
  *
- * Ordering (stable FIFO within same priority):
- *   1. Higher-level priority hints (P0 > P1 > P2 > P3)
- *   2. Lower dependency depth (fewer remaining upstream deps → earlier)
- *   3. Higher downstream impact (more children → earlier)
- *   4. Lexicographic taskId (deterministic tie-breaker)
+ * Ordering is the single canonical {@link compareTaskPriority}:
+ *   1. priority field (P0 > P1 > P2 > P3)
+ *   2. fewer unresolved upstream deps first
+ *   3. higher downstream impact first
+ *   4. lexicographic taskId (deterministic tie-breaker)
+ *
+ * Steps 2–3 only apply when a graph metrics provider is supplied; without one
+ * the queue orders by priority then taskId.
  *
  * Usage:
- *   const q = new ReadyQueue();
+ *   const q = new ReadyQueue(id => ({ unresolved, downstream }));
  *   q.enqueue(contract);       // add one task
  *   q.enqueueAll([c1, c2]);    // add multiple
  *   const next = q.dequeue();  // get the highest-priority ready task
@@ -19,6 +23,8 @@ import type { TaskContract } from "./TaskContract.js";
  */
 export class ReadyQueue {
 	private items: TaskContract[] = [];
+
+	constructor(private readonly metrics?: (taskId: string) => PriorityMetrics) {}
 
 	enqueue(contract: TaskContract): void {
 		this.items.push(contract);
@@ -69,32 +75,6 @@ export class ReadyQueue {
 	// ── Private ────────────────────────────────────────────────────────────
 
 	private sort(): void {
-		this.items.sort((a, b) => {
-			// Priority-level ordering
-			const pa = priorityWeight(a);
-			const pb = priorityWeight(b);
-			if (pa !== pb) return pa - pb;
-
-			// Dependency depth: fewer deps = earlier
-			const da = a.dependsOn.length;
-			const db = b.dependsOn.length;
-			if (da !== db) return da - db;
-
-			// Lexicographic taskId for determinism
-			return a.taskId.localeCompare(b.taskId);
-		});
-	}
-}
-
-function priorityWeight(c: TaskContract): number {
-	// Lower number = higher priority. CoarseTask may carry a priority field
-	// through TaskContract; otherwise default to P2.
-	const p = (c as any).priority as string | undefined;
-	switch (p) {
-		case "P0": return 0;
-		case "P1": return 1;
-		case "P2": return 2;
-		case "P3": return 3;
-		default: return 2;
+		this.items.sort((a, b) => compareTaskPriority(a, b, this.metrics));
 	}
 }

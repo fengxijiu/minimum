@@ -1,5 +1,6 @@
 import type { PersonaId } from "../personas/Persona.js";
 import type { TaskContract } from "./TaskContract.js";
+import { compareTaskPriority, type PriorityMetrics } from "./taskPriority.js";
 
 /**
  * Runtime status of a task in the Dynamic Ready Queue.
@@ -10,6 +11,7 @@ export type TaskRuntimeStatus =
 	| "scheduled"
 	| "running"
 	| "ok"
+	| "degraded"
 	| "blocked"
 	| "failed"
 	| "contract_invalid"
@@ -93,13 +95,14 @@ export class TaskGraphIndex {
 		if (this.blockedByDeferred.has(taskId)) return false;
 		return (this.unresolvedCount.get(taskId) ?? 0) === 0;
 	}
-
 	/**
-	 * Mark a task as completed ok and decrement all downstream unresolved
-	 * counts. Returns the set of tasks that just became ready.
+   	* Mark a task as completed (ok or degraded) and decrement all downstream
+   	* unresolved counts. Returns the set of tasks that just became ready.
+   	* Pass "degraded" to preserve the graph status when the result is degraded
+   	* rather than masking it as "ok".
 	 */
-	tryUnlock(taskId: string): string[] {
-		this.status.set(taskId, "ok");
+  tryUnlock(taskId: string, finalStatus: "ok" | "degraded" = "ok"): string[] {
+    this.status.set(taskId, finalStatus);
 		const newlyReady: string[] = [];
 		for (const child of this.downstream.get(taskId) ?? []) {
 			const prev = this.unresolvedCount.get(child) ?? 0;
@@ -126,7 +129,7 @@ export class TaskGraphIndex {
 		const visit = new Set<string>();
 		const queue = [...(this.downstream.get(taskId) ?? [])];
 
-		const TERMINAL: Set<TaskRuntimeStatus> = new Set(["ok", "failed", "skipped", "contract_invalid"]);
+		const TERMINAL: Set<TaskRuntimeStatus> = new Set(["ok", "degraded", "failed", "skipped", "contract_invalid"]);
 
 		while (queue.length > 0) {
 			const id = queue.shift()!;
@@ -138,7 +141,10 @@ export class TaskGraphIndex {
 
 			const hasHardDep = upstream.has(taskId);
 			const status = this.status.get(id);
-			const isPending = status === "pending" || status === "ready";
+			// "blocked" is re-evaluatable, not terminal: a node parked as blocked
+			// because some upstream was still pending must be reconsidered when that
+			// upstream later fails — otherwise it latches in blocked forever (#2).
+			const isPending = status === "pending" || status === "ready" || status === "blocked";
 
 			if (hasHardDep && isPending) {
 				// Check all upstreams: are they all in a terminal state?
@@ -238,9 +244,9 @@ export class TaskGraphIndex {
 		return [...this.contracts.keys()];
 	}
 
-	/** @returns whether every task's status is a terminal state (ok/failed/skipped/contract_invalid). */
+	/** @returns whether every task's status is a terminal state (ok/degraded/failed/skipped/contract_invalid). */
 	get isComplete(): boolean {
-		const terminal: Set<TaskRuntimeStatus> = new Set(["ok", "failed", "skipped", "contract_invalid"]);
+		const terminal: Set<TaskRuntimeStatus> = new Set(["ok", "degraded", "failed", "skipped", "contract_invalid"]);
 		for (const s of this.status.values()) {
 			if (!terminal.has(s)) return false;
 		}
@@ -254,12 +260,16 @@ export class TaskGraphIndex {
 	buildIdleDiagnostics(): Array<{ taskId: string; reason: string }> {
 		const diags: Array<{ taskId: string; reason: string }> = [];
 		for (const [taskId, s] of this.status) {
-			if (s === "ok" || s === "failed" || s === "skipped" || s === "running") continue;
+			if (s === "ok" || s === "degraded" || s === "failed" || s === "skipped" || s === "running") continue;
 			if (s === "deferred") { diags.push({ taskId, reason: "waiting for repair or human confirmation" }); continue; }
 			if (s === "blocked") { diags.push({ taskId, reason: "blocked by context gap or upstream failure" }); continue; }
-			// pending/ready: list unresolved upstream deps
+			// pending/ready: list unresolved upstream deps. A degraded upstream has
+			// already unlocked its downstream (F2), so it is resolved — not waiting (#8).
 			const upstream = this.upstream.get(taskId) ?? new Set();
-			const unresolved = [...upstream].filter(dep => this.status.get(dep) !== "ok");
+			const unresolved = [...upstream].filter(dep => {
+				const s = this.status.get(dep);
+				return s !== "ok" && s !== "degraded";
+			});
 			if (unresolved.length > 0) {
 				const statuses = unresolved.map(d => `${d}(${this.status.get(d)})`).join(", ");
 				diags.push({ taskId, reason: `waiting for upstream: ${statuses}` });
@@ -270,20 +280,22 @@ export class TaskGraphIndex {
 		return diags;
 	}
 
+	/** Graph-derived priority metrics for {@link compareTaskPriority} (shared with ReadyQueue). */
+	priorityMetrics(taskId: string): PriorityMetrics {
+		return {
+			unresolved: this.unresolvedCount.get(taskId) ?? 0,
+			downstream: this.downstream.get(taskId)?.size ?? 0,
+		};
+	}
+
 	// ── Private ────────────────────────────────────────────────────────────
 
 	private comparePriority(a: string, b: string): number {
-		const ca = this.contracts.get(a);
-		const cb = this.contracts.get(b);
-		// Priority hint: lower depDepth first, then alphabetical for determinism
-		const da = this.unresolvedCount.get(a) ?? 0;
-		const db = this.unresolvedCount.get(b) ?? 0;
-		if (da !== db) return da - db;
-		// downstream count: more downstream = higher priority (inverted)
-		const dsa = this.downstream.get(a)?.size ?? 0;
-		const dsb = this.downstream.get(b)?.size ?? 0;
-		if (dsa !== dsb) return dsb - dsa;
-		return a.localeCompare(b);
+		return compareTaskPriority(
+			{ taskId: a, priority: this.contracts.get(a)?.priority },
+			{ taskId: b, priority: this.contracts.get(b)?.priority },
+			(id) => this.priorityMetrics(id),
+		);
 	}
 
 	private detectCycles(contracts: TaskContract[]): void {

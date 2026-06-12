@@ -1,9 +1,12 @@
 import { getPersona } from "../personas/PersonaRegistry.js";
 import { extractJsonBlock, isObj } from "../utils/guards.js";
-import { findGlobConflicts, validateContract } from "./ContractValidator.js";
+import { findGlobConflicts, findInterfaceContractIssues, validateContract } from "./ContractValidator.js";
 import type {
 	CoarseDag,
 	CoarseTask,
+	InterfaceBinding,
+	InterfaceBoundaryKind,
+	InterfaceContract,
 	LaunchArtifact,
 	LaunchRequirement,
 	TaskContract,
@@ -38,6 +41,8 @@ export interface RefinementEntry {
 	grantedSkills?: string[];
 	/** MCP tool names the master grants this task. */
 	grantedMcpTools?: string[];
+	/** Module interface contracts the master freezes for this (owner) task's surface. */
+	interfaceContracts?: InterfaceContract[];
 }
 
 export interface RefineCompileSuccess {
@@ -124,6 +129,14 @@ function validateEntry(
 	if (!Array.isArray(grantedMcpTools) || !grantedMcpTools.every((s) => typeof s === "string"))
 		return { ok: false, error: `refine entry ${taskId}: grantedMcpTools must be string[] or omitted` };
 
+	const rawContracts = raw.interfaceContracts ?? raw.interface_contracts;
+	let interfaceContracts: InterfaceContract[] | undefined;
+	if (rawContracts !== undefined) {
+		const ic = validateInterfaceContracts(rawContracts, taskId);
+		if (!ic.ok) return { ok: false, error: ic.error };
+		interfaceContracts = ic.value;
+	}
+
 	return {
 		ok: true,
 		entry: {
@@ -140,6 +153,7 @@ function validateEntry(
 			...(contextPack !== undefined && { contextPack }),
 			grantedSkills: grantedSkills as string[],
 			grantedMcpTools: grantedMcpTools as string[],
+			...(interfaceContracts !== undefined && { interfaceContracts }),
 		},
 	};
 }
@@ -171,6 +185,64 @@ function validateLaunchRequirements(
 		item.required = item.required ?? true;
 	}
 	return { ok: true };
+}
+
+const BOUNDARY_KINDS = new Set<InterfaceBoundaryKind>([
+	"function_signature",
+	"data_schema",
+	"api_rpc",
+	"artifact_handoff",
+]);
+
+function validateInterfaceContracts(
+	raw: unknown,
+	taskId: string,
+): { ok: true; value: InterfaceContract[] } | { ok: false; error: string } {
+	if (!Array.isArray(raw))
+		return { ok: false, error: `refine entry ${taskId}: interfaceContracts must be an array` };
+	const out: InterfaceContract[] = [];
+	for (const [i, c] of raw.entries()) {
+		const where = `refine entry ${taskId}: interfaceContracts[${i}]`;
+		if (!isObj(c)) return { ok: false, error: `${where} must be an object` };
+		if (typeof c.id !== "string" || !c.id) return { ok: false, error: `${where}.id required` };
+		if (typeof c.boundary !== "string" || !BOUNDARY_KINDS.has(c.boundary as InterfaceBoundaryKind))
+			return { ok: false, error: `${where}.boundary must be one of ${[...BOUNDARY_KINDS].join(",")}` };
+		if (typeof c.schema !== "string" || !c.schema) return { ok: false, error: `${where}.schema required` };
+		if (!Array.isArray(c.rules) || !c.rules.every((r) => typeof r === "string"))
+			return { ok: false, error: `${where}.rules must be string[]` };
+		if (!Array.isArray(c.bindings) || c.bindings.length === 0)
+			return { ok: false, error: `${where}.bindings must be a non-empty array` };
+		for (const [j, b] of (c.bindings as unknown[]).entries()) {
+			if (!isObj(b)) return { ok: false, error: `${where}.bindings[${j}] must be an object` };
+			if (typeof b.language !== "string" || !b.language)
+				return { ok: false, error: `${where}.bindings[${j}].language required` };
+			if (!Array.isArray(b.files) || b.files.length === 0 || !b.files.every((f) => typeof f === "string"))
+				return { ok: false, error: `${where}.bindings[${j}].files must be a non-empty string[]` };
+			if (typeof b.definition !== "string" || !b.definition)
+				return { ok: false, error: `${where}.bindings[${j}].definition required` };
+		}
+		if (typeof c.ownerTaskId !== "string" || !c.ownerTaskId)
+			return { ok: false, error: `${where}.ownerTaskId required` };
+		if (!Array.isArray(c.consumerTaskIds) || !c.consumerTaskIds.every((t) => typeof t === "string"))
+			return { ok: false, error: `${where}.consumerTaskIds must be string[]` };
+		const revision = typeof c.revision === "number" ? c.revision : 1;
+		out.push({
+			id: c.id,
+			boundary: c.boundary as InterfaceBoundaryKind,
+			schema: c.schema,
+			rules: c.rules as string[],
+			...(Array.isArray(c.fixtures) && { fixtures: c.fixtures as InterfaceContract["fixtures"] }),
+			bindings: (c.bindings as InterfaceBinding[]).map((b) => ({
+				language: b.language,
+				files: b.files,
+				definition: b.definition,
+			})),
+			ownerTaskId: c.ownerTaskId,
+			consumerTaskIds: c.consumerTaskIds as string[],
+			revision,
+		});
+	}
+	return { ok: true, value: out };
 }
 
 export interface RefineOptions {
@@ -214,6 +286,8 @@ export function refineDag(dag: CoarseDag, opts: RefineOptions): RefineResult {
 		}
 	}
 
+	distributeInterfaceContracts(contracts, opts.refinement);
+
 	if (validate) {
 		for (const c of contracts) {
 			const r = validateContract(c);
@@ -226,9 +300,39 @@ export function refineDag(dag: CoarseDag, opts: RefineOptions): RefineResult {
 				errors: conflicts.map((c) => `${c.taskA} and ${c.taskB} both claim ${c.glob}`),
 			});
 		}
+		const interfaceIssues = findInterfaceContractIssues(contracts);
+		if (interfaceIssues.length > 0) {
+			errors.push({ taskId: "_interface_contract", errors: interfaceIssues });
+		}
 	}
 
 	return { contracts, errors };
+}
+
+/**
+ * Each InterfaceContract is authored once on its owner task's refinement entry.
+ * Copy it onto the owner contract and every consumer contract so each worker's
+ * ContextPack carries the frozen surface. Pure assignment — validation of
+ * ownership/consumer ids happens in ContractValidator.findInterfaceContractIssues.
+ */
+function distributeInterfaceContracts(
+	contracts: TaskContract[],
+	refinement: Map<string, RefinementEntry>,
+): void {
+	const byId = new Map(contracts.map((c) => [c.taskId, c]));
+	for (const entry of refinement.values()) {
+		for (const ic of entry.interfaceContracts ?? []) {
+			const targets = new Set<string>([ic.ownerTaskId, ...ic.consumerTaskIds]);
+			for (const taskId of targets) {
+				const contract = byId.get(taskId);
+				if (!contract) continue; // dangling id — reported by validation
+				// Intentionally shared reference: the same frozen contract object lands
+				// on owner + every consumer. Downstream passes (validation, ContextPack,
+				// plan-gate) only read it; an InterfaceContract is treated as immutable.
+				(contract.interfaceContracts ??= []).push(ic);
+			}
+		}
+	}
 }
 
 function assembleContract(

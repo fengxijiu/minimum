@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
 	findDanglingDeps,
 	findGlobConflicts,
+	findInterfaceContractIssues,
 	validateContract,
 } from "../../src/orchestration/index.js";
-import type { TaskContract } from "../../src/orchestration/TaskContract.js";
+import type { InterfaceContract, TaskContract } from "../../src/orchestration/index.js";
 
 function makeContract(overrides: Partial<TaskContract> = {}): TaskContract {
 	return {
@@ -286,5 +287,88 @@ describe("findDanglingDeps", () => {
 		expect(findDanglingDeps([a])).toEqual([
 			{ taskId: "T2", missingDep: "T-missing" },
 		]);
+	});
+});
+
+function mkContract(over: Partial<TaskContract>): TaskContract {
+	return {
+		taskId: "T1", phase: "P1", epicId: "e", personaId: "code_executor",
+		objective: "implement something concrete",
+		inputs: { userGoal: "goal", artifacts: [], constraints: [] },
+		pathPolicy: { allowedGlobs: [], forbiddenGlobs: [] },
+		acceptance: ["done"], nonGoals: ["nope"], blockedCondition: "blocked if x is missing",
+		outputSchema: "task_report", parallelGroup: "g", dependsOn: [],
+		grantedSkills: [], grantedMcpTools: [], abortOnConflict: false,
+		...over,
+	};
+}
+
+const ic: InterfaceContract = {
+	id: "IC", boundary: "api_rpc", schema: "s", rules: [],
+	bindings: [{ language: "typescript", files: ["src/shared/api.ts"], definition: "export {}" }],
+	ownerTaskId: "T1-scaffold", consumerTaskIds: ["T2-be"], revision: 1,
+};
+
+describe("findInterfaceContractIssues", () => {
+	it("passes a well-formed owner/consumer pair", () => {
+		const contracts = [
+			mkContract({ taskId: "T1-scaffold", parallelGroup: "scaffold", pathPolicy: { allowedGlobs: ["src/shared/api.ts"], forbiddenGlobs: [] }, interfaceContracts: [ic] }),
+			mkContract({ taskId: "T2-be", parallelGroup: "impl", dependsOn: ["T1-scaffold"], pathPolicy: { allowedGlobs: ["src/backend/**"], forbiddenGlobs: [] }, interfaceContracts: [ic] }),
+		];
+		expect(findInterfaceContractIssues(contracts)).toEqual([]);
+	});
+
+	it("flags a consumer that can write the binding file", () => {
+		const contracts = [
+			mkContract({ taskId: "T1-scaffold", pathPolicy: { allowedGlobs: ["src/shared/api.ts"], forbiddenGlobs: [] }, interfaceContracts: [ic] }),
+			mkContract({ taskId: "T2-be", dependsOn: ["T1-scaffold"], pathPolicy: { allowedGlobs: ["src/shared/api.ts"], forbiddenGlobs: [] }, interfaceContracts: [ic] }),
+		];
+		const issues = findInterfaceContractIssues(contracts);
+		expect(issues.some((i) => i.includes("T2-be") && i.includes("src/shared/api.ts"))).toBe(true);
+	});
+
+	it("flags an owner that cannot write the binding file", () => {
+		const contracts = [
+			mkContract({ taskId: "T1-scaffold", pathPolicy: { allowedGlobs: ["src/other/**"], forbiddenGlobs: [] }, interfaceContracts: [ic] }),
+			mkContract({ taskId: "T2-be", dependsOn: ["T1-scaffold"], pathPolicy: { allowedGlobs: ["src/backend/**"], forbiddenGlobs: [] }, interfaceContracts: [ic] }),
+		];
+		const issues = findInterfaceContractIssues(contracts);
+		expect(issues.some((i) => i.includes("owner") && i.includes("src/shared/api.ts"))).toBe(true);
+	});
+
+	it("flags a consumer that does not depend on the owner", () => {
+		const contracts = [
+			mkContract({ taskId: "T1-scaffold", pathPolicy: { allowedGlobs: ["src/shared/api.ts"], forbiddenGlobs: [] }, interfaceContracts: [ic] }),
+			mkContract({ taskId: "T2-be", dependsOn: [], pathPolicy: { allowedGlobs: ["src/backend/**"], forbiddenGlobs: [] }, interfaceContracts: [ic] }),
+		];
+		const issues = findInterfaceContractIssues(contracts);
+		expect(issues.some((i) => i.includes("T2-be") && i.includes("depend"))).toBe(true);
+	});
+
+	it("flags a dangling owner id", () => {
+		const orphan: InterfaceContract = { ...ic, ownerTaskId: "T9-missing" };
+		const contracts = [
+			mkContract({ taskId: "T2-be", dependsOn: [], pathPolicy: { allowedGlobs: ["src/backend/**"], forbiddenGlobs: [] }, interfaceContracts: [orphan] }),
+		];
+		const issues = findInterfaceContractIssues(contracts);
+		expect(issues.some((i) => i.includes("T9-missing"))).toBe(true);
+	});
+
+	it("passes when a consumer depends transitively on the owner", () => {
+		const contracts = [
+			mkContract({ taskId: "T1-scaffold", pathPolicy: { allowedGlobs: ["src/shared/api.ts"], forbiddenGlobs: [] }, interfaceContracts: [ic] }),
+			mkContract({ taskId: "T1b-glue", dependsOn: ["T1-scaffold"], pathPolicy: { allowedGlobs: ["src/glue/**"], forbiddenGlobs: [] } }),
+			mkContract({ taskId: "T2-be", dependsOn: ["T1b-glue"], pathPolicy: { allowedGlobs: ["src/backend/**"], forbiddenGlobs: [] }, interfaceContracts: [ic] }),
+		];
+		expect(findInterfaceContractIssues(contracts)).toEqual([]);
+	});
+
+	it("flags a dangling consumer id", () => {
+		const orphan: InterfaceContract = { ...ic, consumerTaskIds: ["T9-missing"] };
+		const contracts = [
+			mkContract({ taskId: "T1-scaffold", pathPolicy: { allowedGlobs: ["src/shared/api.ts"], forbiddenGlobs: [] }, interfaceContracts: [orphan] }),
+		];
+		const issues = findInterfaceContractIssues(contracts);
+		expect(issues.some((i) => i.includes("T9-missing"))).toBe(true);
 	});
 });

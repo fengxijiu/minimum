@@ -72,17 +72,6 @@ export class RunningSet {
 		return ids;
 	}
 
-	/** @returns all currently locked globs across running tasks. */
-	getActiveGlobs(): Array<{ taskId: string; glob: string }> {
-		const active: Array<{ taskId: string; glob: string }> = [];
-		for (const e of this.entries.values()) {
-			for (const glob of e.allowedGlobs) {
-				if (glob.length > 0) active.push({ taskId: e.taskId, glob });
-			}
-		}
-		return active;
-	}
-
 	getAll(): RunningEntry[] {
 		return [...this.entries.values()];
 	}

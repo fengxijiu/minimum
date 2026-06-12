@@ -6,11 +6,16 @@ import { WriteLockManager } from "./WriteLockManager.js";
  * ResourceManager — global resource scheduling for DynamicHarness.
  *
  * Controls:
- *   • Global concurrency cap (default 4)
+ *   • Global concurrency cap (default 50) — the single capacity authority for
+ *     DynamicHarness; the MiMoClient ApiConcurrencyGate is the global API backstop.
  *   • Per-persona concurrency caps
  *   • Write locks via WriteLockManager
- *   • install_dependency global project lock
- *   • shell command limited concurrency (default 2)
+ *   • install_dependency global project lock  ┐ runtime-reserved: these are NOT
+ *   • shell command limited concurrency       ┘ derivable from launch-time contract
+ *     data (a persona that *can* install ≠ a task that *will*), so the harness does
+ *     not auto-flag them. They are acquired at runtime when a worker actually calls
+ *     install_dependency / a shell tool. Kept here (and unit-tested) as the single
+ *     home for that gating when WorkerLoop wires it.
  *
  * Usage:
  *   const rm = new ResourceManager();
@@ -33,7 +38,10 @@ export interface ResourceConfig {
 }
 
 const DEFAULT_CONFIG: ResourceConfig = {
-	globalMax: 4,
+	// Scheduler-level global cap. The MiMoClient ApiConcurrencyGate is the true
+	// global backstop (with 429 throttling), so this only needs to bound how many
+	// worker tasks the harness keeps in-flight at once — 50 is the agreed ceiling.
+	globalMax: 50,
 	personaCaps: {
 		code_executor: 2,
 		test_writer: 1,
@@ -149,6 +157,26 @@ export class ResourceManager {
 		this.personaActive.set(personaId, Math.max(0, count - 1));
 		if (needsInstall) this.installLocked = false;
 		if (needsShell) this.shellActive = Math.max(0, this.shellActive - 1);
+	}
+
+	/**
+	 * Release only a task's write lock while it keeps its concurrency slot — used
+	 * when a task enters a retry backoff wait (#6). The file is not being written
+	 * during backoff, so holding the lock would needlessly block overlapping tasks.
+	 * No-op under worktree isolation (no write locks held).
+	 */
+	releaseWriteLock(taskId: string): void {
+		if (!this.config.skipWriteLocks) this.writeLocks.unlock(taskId);
+	}
+
+	/**
+	 * Try to re-acquire a task's write lock before its next retry attempt (#6).
+	 * @returns true if the lock is now held by this task (or write locks are
+	 * skipped), false if another task currently holds an overlapping glob.
+	 */
+	tryReacquireWriteLock(taskId: string, allowedGlobs: string[]): boolean {
+		if (this.config.skipWriteLocks) return true;
+		return this.writeLocks.tryLock(taskId, allowedGlobs).length === 0;
 	}
 
 	/** @returns harness events describing what's blocking this task. */

@@ -1,6 +1,7 @@
 export {
 	findDanglingDeps,
 	findGlobConflicts,
+	findInterfaceContractIssues,
 	validateContract,
 	type ValidationResult,
 } from "./ContractValidator.js";
@@ -30,7 +31,9 @@ export {
 export {
 	compilePlanAudit,
 	extractExecutionPlan,
+	findInterfacePlanViolations,
 	needsPlanApproval,
+	type PlanAuditInput,
 	type PlanMode,
 } from "./PlanGate.js";
 export {
@@ -102,6 +105,9 @@ export type {
 	CoarseDag,
 	CoarsePhase,
 	CoarseTask,
+	InterfaceBinding,
+	InterfaceBoundaryKind,
+	InterfaceContract,
 	LaunchArtifact,
 	LaunchRequirement,
 	TaskContract,

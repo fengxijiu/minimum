@@ -404,6 +404,62 @@ describe("refineDag", () => {
 		// the needs_refine-without-entry error is assembly-level, still recorded
 		expect(errors.every((e) => e.taskId !== "_glob_conflict")).toBe(true);
 	});
+
+	it("denormalizes interfaceContracts onto owner and consumer contracts", () => {
+		const dag: CoarseDag = {
+			epicId: "todo",
+			phases: [
+				{
+					id: "P1",
+					name: "impl",
+					tasks: [
+						{ id: "T1-scaffold", personaId: "code_executor", objective: "write shared api contract", parallelGroup: "scaffold", dependsOn: [], needsRefine: true },
+						{ id: "T2-be", personaId: "code_executor", objective: "implement backend handlers", parallelGroup: "impl", dependsOn: ["T1-scaffold"], needsRefine: true },
+						{ id: "T3-fe", personaId: "code_executor", objective: "implement frontend client", parallelGroup: "impl", dependsOn: ["T1-scaffold"], needsRefine: true },
+					],
+				},
+			],
+		};
+		const refinementMap = new Map<string, RefinementEntry>([
+			["T1-scaffold", {
+				taskId: "T1-scaffold",
+				allowedGlobs: ["src/shared/api.ts"],
+				acceptance: ["api.ts compiles"],
+				nonGoals: ["no business logic"],
+				blockedCondition: "blocked if tech_stack is unavailable or incomplete",
+				interfaceContracts: [{
+					id: "IC-todo", boundary: "api_rpc", schema: "{Todo}", rules: ["[] not null"],
+					bindings: [{ language: "typescript", files: ["src/shared/api.ts"], definition: "export interface Todo {}" }],
+					ownerTaskId: "T1-scaffold", consumerTaskIds: ["T2-be", "T3-fe"], revision: 1,
+				}],
+			}],
+			["T2-be", { taskId: "T2-be", allowedGlobs: ["src/backend/**"], acceptance: ["handlers"], nonGoals: ["no contract edits"], blockedCondition: "blocked if IC-todo is missing or contradictory" }],
+			["T3-fe", { taskId: "T3-fe", allowedGlobs: ["src/frontend/**"], acceptance: ["client"], nonGoals: ["no contract edits"], blockedCondition: "blocked if IC-todo is missing or contradictory" }],
+		]);
+		const { contracts, errors } = refineDag(dag, { inputs: baseInputs, refinement: refinementMap });
+		expect(errors).toEqual([]);
+		const byId = new Map(contracts.map((c) => [c.taskId, c]));
+		expect(byId.get("T1-scaffold")!.interfaceContracts).toHaveLength(1);
+		expect(byId.get("T2-be")!.interfaceContracts![0]!.id).toBe("IC-todo");
+		expect(byId.get("T3-fe")!.interfaceContracts![0]!.id).toBe("IC-todo");
+	});
+
+	it("leaves interfaceContracts undefined for tasks with no shared surface", () => {
+		const { contracts, errors } = refineDag(mkDag(), {
+			inputs: baseInputs,
+			refinement: refinement([
+				{
+					taskId: "T2-1",
+					allowedGlobs: ["src/upload.ts"],
+					acceptance: ["ok"],
+					nonGoals: ["no"],
+					blockedCondition: "blocked if T0-1.file_list is unavailable",
+				},
+			]),
+		});
+		expect(errors).toEqual([]);
+		expect(contracts[0]!.interfaceContracts).toBeUndefined();
+	});
 });
 
 describe("master capability grants", () => {
@@ -451,5 +507,60 @@ describe("master capability grants", () => {
 			`<refine>{"tasks":[{"taskId":"T2-1","allowedGlobs":["src/a.ts"],"grantedSkills":"pdf"}]}</refine>`,
 		);
 		expect(res.ok).toBe(false);
+	});
+});
+
+describe("interfaceContracts in compileRefinement", () => {
+	it("parses interfaceContracts on an entry", () => {
+		const text = `<refine>{"tasks":[
+			{"taskId":"T1-scaffold","allowedGlobs":["src/shared/api.ts"],
+			 "acceptance":["api.ts compiles"],
+			 "blockedCondition":"blocked if tech_stack is unavailable or incomplete",
+			 "interfaceContracts":[
+			   {"id":"IC-todo","boundary":"api_rpc",
+			    "schema":"{ Todo: {id,title,done} }",
+			    "rules":["empty list returns [] not null"],
+			    "fixtures":[{"name":"one","data":{"id":"a","title":"t","done":false}}],
+			    "bindings":[{"language":"typescript","files":["src/shared/api.ts"],"definition":"export interface Todo {}"}],
+			    "ownerTaskId":"T1-scaffold","consumerTaskIds":["T2-be","T3-fe"],"revision":1}
+			 ]}
+		]}</refine>`;
+		const r = compileRefinement(text);
+		expect(r.ok).toBe(true);
+		if (r.ok) {
+			const e = r.entries.get("T1-scaffold")!;
+			expect(e.interfaceContracts).toHaveLength(1);
+			const ic = e.interfaceContracts![0]!;
+			expect(ic.id).toBe("IC-todo");
+			expect(ic.boundary).toBe("api_rpc");
+			expect(ic.bindings[0]!.language).toBe("typescript");
+			expect(ic.consumerTaskIds).toEqual(["T2-be", "T3-fe"]);
+			expect(ic.revision).toBe(1);
+		}
+	});
+
+	it("rejects an interfaceContract with an unknown boundary", () => {
+		const text = `<refine>{"tasks":[
+			{"taskId":"T1","allowedGlobs":["src/x.ts"],
+			 "interfaceContracts":[
+			   {"id":"IC","boundary":"nonsense","schema":"s","rules":[],
+			    "bindings":[{"language":"go","files":["x.go"],"definition":"d"}],
+			    "ownerTaskId":"T1","consumerTaskIds":[],"revision":1}]}
+		]}</refine>`;
+		const r = compileRefinement(text);
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.error).toContain("boundary");
+	});
+
+	it("rejects an interfaceContract with no bindings", () => {
+		const text = `<refine>{"tasks":[
+			{"taskId":"T1","allowedGlobs":["src/x.ts"],
+			 "interfaceContracts":[
+			   {"id":"IC","boundary":"data_schema","schema":"s","rules":[],
+			    "bindings":[],"ownerTaskId":"T1","consumerTaskIds":[],"revision":1}]}
+		]}</refine>`;
+		const r = compileRefinement(text);
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.error).toContain("bindings");
 	});
 });

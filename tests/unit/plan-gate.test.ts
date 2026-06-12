@@ -2,13 +2,47 @@ import { describe, expect, it } from "vitest";
 import {
 	compilePlanAudit,
 	extractExecutionPlan,
+	findInterfacePlanViolations,
 	needsPlanApproval,
 } from "../../src/orchestration/index.js";
+import type { InterfaceContract } from "../../src/orchestration/index.js";
 import {
 	getPersona,
 	registerPersonaForTesting,
 	type Persona,
 } from "../../src/personas/index.js";
+
+const ic: InterfaceContract = {
+	id: "IC",
+	boundary: "api_rpc",
+	schema: "s",
+	rules: [],
+	bindings: [{ language: "typescript", files: ["src/shared/api.ts"], definition: "export {}" }],
+	ownerTaskId: "T1-scaffold",
+	consumerTaskIds: ["T2-be"],
+	revision: 1,
+};
+
+describe("findInterfacePlanViolations", () => {
+	it("flags a consumer plan editing an interface file it does not own", () => {
+		const issues = findInterfacePlanViolations(
+			["src/shared/api.ts", "src/backend/handler.ts"],
+			"T2-be",
+			[ic],
+		);
+		expect(issues.some((i) => i.includes("src/shared/api.ts"))).toBe(true);
+	});
+
+	it("allows the owner to edit its own interface file", () => {
+		const issues = findInterfacePlanViolations(["src/shared/api.ts"], "T1-scaffold", [ic]);
+		expect(issues).toEqual([]);
+	});
+
+	it("allows a consumer plan touching only its own files", () => {
+		const issues = findInterfacePlanViolations(["src/backend/handler.ts"], "T2-be", [ic]);
+		expect(issues).toEqual([]);
+	});
+});
 
 describe("extractExecutionPlan", () => {
 	it("pulls the <execution_plan> body", () => {
