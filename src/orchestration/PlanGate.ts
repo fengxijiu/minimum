@@ -1,5 +1,7 @@
 import { extractXmlBlock } from "./TaskRunner.js";
 import { getPersona } from "../personas/PersonaRegistry.js";
+import { matchGlob, normalizeRelPath } from "../tools/policy/PathPolicyEnforcer.js";
+import type { InterfaceContract } from "./TaskContract.js";
 
 /**
  * PlanGate — pure parsing helpers for the W2-plan gate, where a write-capable
@@ -93,3 +95,44 @@ export function needsPlanApproval(
 }
 
 export type PlanMode = "off" | "code_personas" | "all_writes";
+
+/**
+ * Structured input the master audits at the W2-plan gate. Carries the task's
+ * frozen interface contracts so the audit can reject a plan that rewrites a
+ * surface it does not own. (The master prompt renders these fields.)
+ */
+export interface PlanAuditInput {
+	taskId: string;
+	objective: string;
+	allowedGlobs: string[];
+	acceptance: string[];
+	nonGoals: string[];
+	interfaceContracts: InterfaceContract[];
+	executionPlan: string;
+}
+
+/**
+ * Deterministic backstop run before the LLM audit: a plan whose files_to_change
+ * touches a binding file owned by another task is an unauthorized signature
+ * change. Returns a flat list of violations; empty means clean.
+ */
+export function findInterfacePlanViolations(
+	filesToChange: string[],
+	taskId: string,
+	interfaceContracts: InterfaceContract[],
+): string[] {
+	const out: string[] = [];
+	const planned = filesToChange.map((f) => normalizeRelPath(f));
+	for (const ic of interfaceContracts) {
+		if (ic.ownerTaskId === taskId) continue; // owner may edit its own surface
+		const owned = ic.bindings.flatMap((b) => b.files.map((f) => normalizeRelPath(f)));
+		for (const file of planned) {
+			if (owned.some((g) => matchGlob(file, g) || file === g)) {
+				out.push(
+					`plan for ${taskId} edits interface file ${file} owned by ${ic.ownerTaskId} (contract ${ic.id}); return blocked to change the contract`,
+				);
+			}
+		}
+	}
+	return out;
+}

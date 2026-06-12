@@ -31,7 +31,9 @@ export {
 export {
 	compilePlanAudit,
 	extractExecutionPlan,
+	findInterfacePlanViolations,
 	needsPlanApproval,
+	type PlanAuditInput,
 	type PlanMode,
 } from "./PlanGate.js";
 export {
