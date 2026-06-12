@@ -353,4 +353,22 @@ describe("findInterfaceContractIssues", () => {
 		const issues = findInterfaceContractIssues(contracts);
 		expect(issues.some((i) => i.includes("T9-missing"))).toBe(true);
 	});
+
+	it("passes when a consumer depends transitively on the owner", () => {
+		const contracts = [
+			mkContract({ taskId: "T1-scaffold", pathPolicy: { allowedGlobs: ["src/shared/api.ts"], forbiddenGlobs: [] }, interfaceContracts: [ic] }),
+			mkContract({ taskId: "T1b-glue", dependsOn: ["T1-scaffold"], pathPolicy: { allowedGlobs: ["src/glue/**"], forbiddenGlobs: [] } }),
+			mkContract({ taskId: "T2-be", dependsOn: ["T1b-glue"], pathPolicy: { allowedGlobs: ["src/backend/**"], forbiddenGlobs: [] }, interfaceContracts: [ic] }),
+		];
+		expect(findInterfaceContractIssues(contracts)).toEqual([]);
+	});
+
+	it("flags a dangling consumer id", () => {
+		const orphan: InterfaceContract = { ...ic, consumerTaskIds: ["T9-missing"] };
+		const contracts = [
+			mkContract({ taskId: "T1-scaffold", pathPolicy: { allowedGlobs: ["src/shared/api.ts"], forbiddenGlobs: [] }, interfaceContracts: [orphan] }),
+		];
+		const issues = findInterfaceContractIssues(contracts);
+		expect(issues.some((i) => i.includes("T9-missing"))).toBe(true);
+	});
 });

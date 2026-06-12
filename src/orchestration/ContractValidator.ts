@@ -274,7 +274,12 @@ export function findInterfaceContractIssues(contracts: TaskContract[]): string[]
 	return errors;
 }
 
-/** Returns a predicate reaches(from, to): does `from` depend transitively on `to`? */
+/**
+ * Returns a predicate reaches(from, to): does `from` depend transitively on `to`?
+ * Assumes an acyclic dependency graph; the memo guards against infinite recursion
+ * on a malformed cyclic DAG but a cyclic node will report incomplete ancestors.
+ * Callers (refineDag, buildTaskBatches) reject cycles separately (Kahn's sort).
+ */
 function buildReachability(contracts: TaskContract[]): (from: string, to: string) => boolean {
 	const deps = new Map(contracts.map((c) => [c.taskId, c.dependsOn]));
 	const memo = new Map<string, Set<string>>();
