@@ -74,6 +74,9 @@ export interface TaskContract {
 	/** Upstream task ids that must complete before this task starts. */
 	dependsOn: string[];
 
+	/** Scheduling priority hint (P0 highest … P3 lowest); defaults to P2 when absent. */
+	priority?: "P0" | "P1" | "P2" | "P3";
+
 	/** Skills the master granted this task on top of the persona's defaults. */
 	grantedSkills: string[];
 	/** MCP tool names (mcp__server__tool) the master granted this task. */

@@ -461,4 +461,73 @@ describe("DynamicHarness", () => {
 		expect(ran).toContain("T2");
 		expect(results.find((r) => r.taskId === "T2")?.status).toBe("ok");
 	});
+
+	// ── #7: cross-phase launch gate via injected priorResults ─────────────────
+
+	it("defers a task whose cross-phase requirement is unmet, using injected priorResults", async () => {
+		const ran: string[] = [];
+		const executor: WorkerExecutor = {
+			run: async (contract) => {
+				ran.push(contract.taskId);
+				return `<task_report><status>ok</status><summary>done</summary><changed_files>- b.ts</changed_files></task_report>`;
+			},
+		};
+		// T2's launch requirement points at a W1 perception task NOT in this
+		// invocation. The harness must evaluate it against priorResults rather than
+		// silently dropping it — the prior result has no <file_list>, so T2 defers.
+		const b = mkContract({
+			taskId: "T2",
+			pathPolicy: { allowedGlobs: ["b.ts"], forbiddenGlobs: [] },
+			launchRequirements: [{ sourceTaskId: "W1-scout", artifact: "file_list", required: true }],
+		});
+
+		const results = await new DynamicHarness().runToCompletion([b], {
+			projectRoot: dir,
+			executor,
+			priorResults: [{
+				taskId: "W1-scout",
+				personaId: "repo_scout",
+				status: "ok",
+				report: "<task_report><status>ok</status><summary>scanned</summary></task_report>",
+				memoryCandidateBody: undefined,
+				errors: [],
+				durationMs: 1,
+			}],
+		});
+
+		expect(ran).not.toContain("T2");
+		expect(["skipped", "blocked"]).toContain(results.find((r) => r.taskId === "T2")?.status);
+	});
+
+	it("launches a task whose cross-phase requirement is satisfied by priorResults", async () => {
+		const ran: string[] = [];
+		const executor: WorkerExecutor = {
+			run: async (contract) => {
+				ran.push(contract.taskId);
+				return `<task_report><status>ok</status><summary>done</summary><changed_files>- b.ts</changed_files></task_report>`;
+			},
+		};
+		const b = mkContract({
+			taskId: "T2",
+			pathPolicy: { allowedGlobs: ["b.ts"], forbiddenGlobs: [] },
+			launchRequirements: [{ sourceTaskId: "W1-scout", artifact: "file_list", required: true }],
+		});
+
+		const results = await new DynamicHarness().runToCompletion([b], {
+			projectRoot: dir,
+			executor,
+			priorResults: [{
+				taskId: "W1-scout",
+				personaId: "repo_scout",
+				status: "ok",
+				report: "<task_report><status>ok</status><summary>scanned</summary><file_list>src/a.ts</file_list></task_report>",
+				memoryCandidateBody: undefined,
+				errors: [],
+				durationMs: 1,
+			}],
+		});
+
+		expect(ran).toContain("T2");
+		expect(results.find((r) => r.taskId === "T2")?.status).toBe("ok");
+	});
 });

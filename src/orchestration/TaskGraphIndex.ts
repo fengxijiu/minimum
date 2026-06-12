@@ -1,5 +1,6 @@
 import type { PersonaId } from "../personas/Persona.js";
 import type { TaskContract } from "./TaskContract.js";
+import { compareTaskPriority, type PriorityMetrics } from "./taskPriority.js";
 
 /**
  * Runtime status of a task in the Dynamic Ready Queue.
@@ -279,20 +280,22 @@ export class TaskGraphIndex {
 		return diags;
 	}
 
+	/** Graph-derived priority metrics for {@link compareTaskPriority} (shared with ReadyQueue). */
+	priorityMetrics(taskId: string): PriorityMetrics {
+		return {
+			unresolved: this.unresolvedCount.get(taskId) ?? 0,
+			downstream: this.downstream.get(taskId)?.size ?? 0,
+		};
+	}
+
 	// ── Private ────────────────────────────────────────────────────────────
 
 	private comparePriority(a: string, b: string): number {
-		const ca = this.contracts.get(a);
-		const cb = this.contracts.get(b);
-		// Priority hint: lower depDepth first, then alphabetical for determinism
-		const da = this.unresolvedCount.get(a) ?? 0;
-		const db = this.unresolvedCount.get(b) ?? 0;
-		if (da !== db) return da - db;
-		// downstream count: more downstream = higher priority (inverted)
-		const dsa = this.downstream.get(a)?.size ?? 0;
-		const dsb = this.downstream.get(b)?.size ?? 0;
-		if (dsa !== dsb) return dsb - dsa;
-		return a.localeCompare(b);
+		return compareTaskPriority(
+			{ taskId: a, priority: this.contracts.get(a)?.priority },
+			{ taskId: b, priority: this.contracts.get(b)?.priority },
+			(id) => this.priorityMetrics(id),
+		);
 	}
 
 	private detectCycles(contracts: TaskContract[]): void {

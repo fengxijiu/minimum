@@ -1,6 +1,18 @@
 # 方案：统一双调度 / 双 LaunchGate（#7）
 
-> 状态：设计草案，待实现。本文件只覆盖 #7（双系统割裂），不含 #1/#2/#3/#4/#6/#8/#9/#10 的修复（那些已在 `DynamicHarness` / `TaskGraphIndex` / `ResourceManager` 层单独处理）。
+> 状态：**部分实现**。已落地：ResultView/priorResults 跨阶段门控、统一优先级比较器、删除 RunningSet.getActiveGlobs 死代码。**未做**：完全退役 wave 层 `applyLaunchGate`（见 §7 实现发现）。本文件只覆盖 #7（双系统割裂），不含 #1/#2/#3/#4/#6/#8/#9/#10 的修复（已单独处理）。
+
+## 实现发现（§7）— 为什么没有完全删除 `applyLaunchGate`
+
+实现 step 1-2 时发现 wave 层与 harness 的 launch gate **不是简单重复，而是语义相反**，由现有测试锁定：
+
+- **harness（严格）**：cross-phase / intra requirement 未满足 → **立即 defer**，任务不跑（`dynamic-harness.test.ts`「defers a downstream whose required upstream artifact is missing」断言 T2 不执行）。
+- **wave 层（宽松）**：cross-phase requirement 未满足 → **先放行跑一次**（`gate_retry` 事件），只有这次跑回 `blocked` 才 defer（`mimo-pipeline.test.ts` L187/226 锁定 `ran(T2-1)===1` + `gate_retry`/`task_deferred`）。这是喂给 W3.5 修复环的刻意产品行为。
+
+直接删除 `applyLaunchGate` 会把宽松语义换成严格语义，破坏 ~4 个产品行为测试并改变 W3.5 修复环。因此本次采用**安全收敛**而非删除：
+
+- `promote` 改为只门控**源可见**的 requirement（本次 invocation 的 graph/results + 注入的 `priorResults`），源完全未知的留给调用方。消除了原 `intraReqs` 的「静默丢弃跨阶段 requirement」缺陷：注入 `priorResults` 后 harness 就能对跨阶段 requirement 做真实门控（新增两个 `priorResults` 测试覆盖）。
+- 真正退役 wave 层需要把「跨阶段宽松跑一次」语义迁进 harness（gate-retry 预算 + `gate_retry`/`task_deferred` → PipelineEvent 映射 + `knownIssues` 兼容），属于更大的独立改动，保留为后续（见 §3.2 修订）。
 
 ## 1. 问题陈述
 
@@ -40,12 +52,15 @@ export interface ResultView {
 - `DynamicHarness.promote` 评估门控时，合并 `priorResults` + 本次 `results`，**删除 `intraReqs` 过滤**——跨阶段 requirement 不再被静默跳过，而是真正参与门控。
 - `MiMoPipeline.runWaves` 把 `allResults`（含 W1 感知）包成 `ResultView` 传入，于是 wave 层**不再需要**自己跑 `applyLaunchGate`。
 
-### 3.2 退役 wave 层 `applyLaunchGate`
+### 3.2 退役 wave 层 `applyLaunchGate`（修订：后续独立改动，未在本次实现）
+
+> 见 §「实现发现」：wave 层的 cross-phase 宽松语义与 harness 严格语义相反，且被产品测试锁定。完全退役需把宽松语义迁进 harness，步骤如下（待后续）：
 
 `MiMoPipeline.applyLaunchGate` 与 `retryBlockedContextGaps` 的「同合约一次重试」「static_compile defer」逻辑，迁移为 harness 的策略：
 
-- harness 在 `promote` defer 一个任务时，emit 现有的 `resource_wait{resource:"launch_gate"}`，由 `MiMoPipeline` 订阅事件来累计 `knownIssues` —— 单向数据流，不再双向写状态。
-- 「同合约一次重试」做成 harness 的 `gateRetryBudget`（每 taskId 一次），消除 wave 层 `gateRetryKeys` 与 harness 的并行计数。
+- harness 给 cross-phase requirement 一个 `gateRetryBudget`（每 taskId 一次）：gate 失败时**先放行一次**并 emit `gate_retry`，跑回 `blocked` 才 defer —— 复刻 wave 层宽松语义。
+- harness 在 `promote` defer 一个任务时，emit 现有的 `resource_wait{resource:"launch_gate"}` / 新增 `task_deferred`，由 `MiMoPipeline` 订阅事件累计 `knownIssues` —— 单向数据流。
+- 同步更新 `mimo-pipeline.test.ts` L187/226/265 等 ~4 个断言（事件来源从 wave 层变为 harness 转发）。
 
 ### 3.3 统一优先级比较器
 

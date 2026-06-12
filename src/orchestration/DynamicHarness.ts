@@ -6,7 +6,7 @@ import { ResultStore } from "./ResultStore.js";
 import { ArtifactIndex } from "./ArtifactIndex.js";
 import { RunningSet } from "./RunningSet.js";
 import { ResourceManager } from "./ResourceManager.js";
-import { evaluateLaunchGate } from "./LaunchGate.js";
+import { buildArtifactMap, evaluateLaunchGate } from "./LaunchGate.js";
 import type { TaskContract } from "./TaskContract.js";
 import type { TaskResult } from "./TaskRunner.js";
 import { runTaskWithRetry } from "./TaskRunner.js";
@@ -40,7 +40,9 @@ export class DynamicHarness implements DagHarness {
 
 		const emit = options?.onEvent;
 		const graph = new TaskGraphIndex(contracts);
-		const queue = new ReadyQueue();
+		// Queue shares the graph's priority metrics so its ordering matches the
+		// graph's root / newly-ready ordering — one canonical口径 (#7).
+		const queue = new ReadyQueue((id) => graph.priorityMetrics(id));
 		const results = new ResultStore();
 		const artifacts = new ArtifactIndex();
 		const running = new RunningSet();
@@ -69,6 +71,12 @@ export class DynamicHarness implements DagHarness {
 
 		emit?.({ type: "harness_start", taskCount: contracts.length });
 
+		// Cross-phase results (e.g. W1 perception) the launch gate must also see, so
+		// requirements pointing outside this invocation are honoured, not dropped (#7).
+		const priorResults = options?.priorResults ?? [];
+		const priorArtifacts = buildArtifactMap(priorResults);
+		const priorIds = new Set(priorResults.map((r) => r.taskId));
+
 		// Idle detection latch — a stuck queue emits exactly one queue_idle (carrying
 		// diagnostics) before the harness flushes and completes (#10). Declared here
 		// so the main loop and tail share it.
@@ -77,25 +85,32 @@ export class DynamicHarness implements DagHarness {
 		/**
 		 * F1 — Launch Gate. A task whose hard dependencies are satisfied may still
 		 * be missing the structured artifacts its launchRequirements demand (e.g.
-		 * an upstream in this DAG finished `ok` but never emitted `file_list`).
-		 * Evaluate the launch gate before a task enters the ready queue.
+		 * an upstream finished `ok` but never emitted `file_list`). Evaluate the
+		 * launch gate before a task enters the ready queue.
 		 *
-		 * Only requirements whose sourceTaskId is part of THIS invocation are
-		 * gated here — cross-phase requirements (e.g. a W2/3 task depending on a
-		 * W1 perception artifact) are the caller's responsibility and were already
-		 * gated by MiMoPipeline.applyLaunchGate with full cross-phase results.
+		 * The gate evaluates only requirements whose source is VISIBLE to this
+		 * harness — a task in this invocation's graph/results, or one supplied via
+		 * priorResults (e.g. W1 perception). Requirements whose source is entirely
+		 * unknown here are left to the caller (which can make the harness the gate
+		 * authority by injecting priorResults). This honours cross-phase requirements
+		 * against real upstream data instead of silently dropping them (#7), without
+		 * blocking on sources the harness was never told about. postStaticCompile is
+		 * enforced at the tail, not here.
 		 */
 		const promote = (id: string, unlockedBy?: string): void => {
 			const contract = graph.getContract(id);
 			if (!contract) return;
-			const intraReqs = (contract.launchRequirements ?? []).filter(
-				(r) => graph.getContract(r.sourceTaskId) !== undefined,
+			const allReqs = contract.launchRequirements ?? [];
+			const gateableReqs = allReqs.filter(
+				(r) => graph.getContract(r.sourceTaskId) !== undefined || priorIds.has(r.sourceTaskId) || results.has(r.sourceTaskId),
 			);
 			const gateContract =
-				intraReqs.length === (contract.launchRequirements?.length ?? 0)
+				gateableReqs.length === allReqs.length
 					? { ...contract, postStaticCompile: undefined }
-					: { ...contract, launchRequirements: intraReqs, postStaticCompile: undefined };
-			const decision = evaluateLaunchGate(gateContract, results.getAll(), artifacts.asMap());
+					: { ...contract, launchRequirements: gateableReqs, postStaticCompile: undefined };
+			const mergedResults = [...priorResults, ...results.getAll()];
+			const mergedArtifacts = new Map([...priorArtifacts, ...artifacts.asMap()]);
+			const decision = evaluateLaunchGate(gateContract, mergedResults, mergedArtifacts);
 			if (decision.ok) {
 				graph.clearDeferred(id);
 				graph.setStatus(id, "ready");
